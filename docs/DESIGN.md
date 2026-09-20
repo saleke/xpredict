@@ -294,6 +294,11 @@ Status as of the scheduler/tracker iteration:
   graded per market, per-market tracker hit-rates with "one top pick per match"
   as a presentation rule (best-of-N honesty guard). Order: totals → NBA
   spreads → soccer spreads (thin books, quarter lines).
+* 🔜 **Derived metrics (in M2)** — P(BTTS) implied from de-vigged h2h + totals
+  (double-Poisson: λ_t from totals lines, split pinned by 3-way h2h via the
+  Bessel draw form; split anchored with home/away win probs, overdispersion
+  fit). Informational/cross-check only — no BTTS price exists on this feed;
+  becomes an EV input when a second vendor with real BTTS lines lands.
 * ✅ **Leave-one-out EV** — every book's execution EV is measured against a reference
   consensus that excludes that book, so a lagging soft book can no longer dilute the
   consensus it is judged on.

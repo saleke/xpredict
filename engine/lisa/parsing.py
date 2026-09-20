@@ -41,7 +41,8 @@ def parse_sports(payload: Iterable[dict[str, Any]]) -> list[SportInfo]:
 
 
 def parse_odds_payload(payload: Iterable[dict[str, Any]],
-                       *, market_key: str = H2H) -> list[Match]:
+                       *, market_keys: Iterable[str] = (H2H,)) -> list[Match]:
+    wanted = set(market_keys)
     matches: list[Match] = []
     for game in payload:
         try:
@@ -55,16 +56,17 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
         if commence is None:
             continue
 
-        books: list[Book] = []
+        by_market: dict[str, list[Book]] = {key: [] for key in wanted}
         for bm in game.get("bookmakers", []) or []:
             key = str(bm.get("key", ""))
             if not key:
                 continue
-            outcomes: dict[str, float] = {}
-            points: set[float] = set()
             for mkt in bm.get("markets", []) or []:
-                if mkt.get("key") != market_key:
+                mkey = mkt.get("key")
+                if mkey not in wanted:
                     continue
+                outcomes: dict[str, float] = {}
+                points: set[float] = set()
                 for oc in mkt.get("outcomes", []) or []:
                     name = oc.get("name")
                     price = oc.get("price")
@@ -73,25 +75,28 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
                         outcomes[str(name)] = float(price)
                         if isinstance(point, (int, float)):
                             points.add(float(point))
-            if outcomes:
-                books.append(Book(
-                    key=key,
-                    title=str(bm.get("title", key)),
-                    last_update=_parse_iso(bm.get("last_update")),
-                    outcomes=outcomes,
-                    line=points.pop() if len(points) == 1 else None,
-                ))
+                if outcomes:
+                    by_market[mkey].append(Book(
+                        key=key,
+                        title=str(bm.get("title", key)),
+                        last_update=_parse_iso(bm.get("last_update")),
+                        outcomes=outcomes,
+                        line=points.pop() if len(points) == 1 else None,
+                    ))
 
-        matches.append(Match(
-            id=match_id,
-            sport_key=sport_key,
-            commence_time=commence,
-            home_team=home,
-            away_team=away,
-            completed=bool(game.get("completed", False)),
-            market=market_key,
-            bookmakers=tuple(books),
-        ))
+        for mkey, books in by_market.items():
+            if not books:
+                continue
+            matches.append(Match(
+                id=match_id,
+                sport_key=sport_key,
+                commence_time=commence,
+                home_team=home,
+                away_team=away,
+                completed=bool(game.get("completed", False)),
+                market=mkey,
+                bookmakers=tuple(books),
+            ))
     return matches
 
 

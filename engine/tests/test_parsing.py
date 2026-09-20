@@ -55,7 +55,7 @@ def test_h2h_parse_filters_metadata_and_prices():
 
 
 def test_totals_parse_harvests_line():
-    matches = parse_odds_payload([GAME], market_key="totals")
+    matches = parse_odds_payload([GAME], market_keys=("totals",))
     assert len(matches) == 1
     match: Match = matches[0]
     assert match.market == "totals"
@@ -63,10 +63,19 @@ def test_totals_parse_harvests_line():
     assert match.bookmakers[0].line == 2.5
 
 
-def test_non_matching_market_books_are_dropped():
-    matches = parse_odds_payload([GAME], market_key="spreads")
-    assert len(matches) == 1
-    assert matches[0].bookmakers == ()
+def test_de_mux_emits_one_match_per_market():
+    matches = parse_odds_payload([GAME], market_keys=("h2h", "totals"))
+    assert len(matches) == 2
+    by_market = {m.market: m for m in matches}
+    assert set(by_market) == {"h2h", "totals"}
+    assert len(by_market["h2h"].bookmakers) == 2
+    assert len(by_market["totals"].bookmakers) == 1
+    assert by_market["totals"].bookmakers[0].key == "pinnacle"
+    assert by_market["h2h"].id == by_market["totals"].id == "m1"
+
+
+def test_unquoted_market_emits_no_match():
+    assert parse_odds_payload([GAME], market_keys=("spreads",)) == []
 
 
 def test_malformed_game_is_skipped():
