@@ -302,9 +302,9 @@ function renderPicks() {
           </div>
           <div class="locked-overlay">
             <div class="locked-icon">📱</div>
-            <div class="locked-title">Match #${p.rank} — Social Unlock</div>
+            <div class="locked-title">Match #${p.rank} · Social Unlock</div>
             <div class="locked-desc">
-              Join the official LISA Telegram channel to reveal this high-certainty prediction for free.
+              Join official LISA Telegram to reveal this prediction for free.
             </div>
             <button class="btn-social-unlock" onclick="window.openTelegramModal()">
               <span>✈️</span> Unlock via Telegram (Free)
@@ -316,10 +316,10 @@ function renderPicks() {
 
     // Standard Tier 2 Locked Card
     if (isLocked && lockType === 'tier2') {
-      const lockTitle = p.is_pass_advisory ? `Match #${p.rank} — Pass Advisory Locked` : `Match #${p.rank} — Tier 2 Pro Locked`;
+      const lockTitle = p.is_pass_advisory ? `Match #${p.rank} · Pass Advisory` : `Match #${p.rank} · Tier 2 Pro`;
       const lockDesc = p.is_pass_advisory
-        ? 'Unlock full capital preservation advisory, hazard risk breakdown, and sucker bet avoidance analysis.'
-        : 'Unlock all 12 Core Diamonds, Smart Pivots & Pass Advisories with 1-click execution slips and Kelly bankroll management.';
+        ? 'Unlock capital preservation advisory, hazard breakdown, and avoidance metrics.'
+        : 'Unlock all 12 Diamonds, Smart Pivots & Pass Advisories with 1-click slips.';
       return `
         ${headerHtml}
         <div class="pick-card locked-card" id="pick-${p.match_id}">

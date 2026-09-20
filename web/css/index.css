@@ -1100,7 +1100,7 @@ canvas.chart-canvas {
 .pick-card.locked-card {
   position: relative;
   overflow: hidden;
-  border-color: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .pick-card.locked-card .card-content-blur {
@@ -1116,76 +1116,83 @@ canvas.chart-canvas {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(7, 9, 14, 0.65);
+  background: rgba(7, 9, 14, 0.70);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  padding: 24px;
+  padding: 12px 16px;
   text-align: center;
   z-index: 10;
+  box-sizing: border-box;
 }
 
 .locked-icon {
-  font-size: 32px;
-  margin-bottom: 12px;
-  filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.4));
+  font-size: 22px;
+  margin-bottom: 4px;
+  filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.4));
+  line-height: 1;
 }
 
 .locked-title {
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 700;
   color: #ffffff;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
+  line-height: 1.2;
 }
 
 .locked-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  max-width: 280px;
-  margin-bottom: 16px;
-  line-height: 1.4;
+  max-width: 310px;
+  margin-bottom: 8px;
+  line-height: 1.35;
 }
 
 .btn-social-unlock {
   background: linear-gradient(135deg, #0088cc 0%, #00b4d8 100%);
   color: #ffffff;
   border: none;
-  padding: 10px 20px;
+  padding: 7px 18px;
   border-radius: var(--radius-pill);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 0 16px rgba(0, 136, 204, 0.4);
+  box-shadow: 0 0 14px rgba(0, 136, 204, 0.35);
   transition: all 0.2s ease;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  line-height: 1.2;
 }
 
 .btn-social-unlock:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 24px rgba(0, 136, 204, 0.6);
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(0, 136, 204, 0.5);
 }
 
 .btn-upgrade-card {
   background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
   color: #07090e;
   border: none;
-  padding: 10px 22px;
+  padding: 7px 20px;
   border-radius: var(--radius-pill);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 0 0 18px rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.3);
   transition: all 0.2s ease;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
 }
 
 .btn-upgrade-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 26px rgba(245, 158, 11, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
 }
 
 .schedule-notice {
