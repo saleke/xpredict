@@ -1,7 +1,7 @@
 """CLI entry points.
 
   python -m lisa demo          # full cycle + settlement on bundled fixtures
-  python -m lisa run-cycle     # one ingestion pass (needs LISA_ODDS_API_KEY)
+  python -m lisa run-cycle     # one ingestion pass (needs THE_ODDS_API_KEY)
   python -m lisa settle        # grade pending ledger rows (needs key or --fixtures)
   python -m lisa run           # scheduler loop (cron-friendly: --once)
   python -m lisa report        # weekly live-validation summary (needs --metrics trail)
@@ -16,7 +16,7 @@ from datetime import timedelta
 from . import __version__
 from . import config as cfg
 from .client import FixtureClient, OddsApiClient
-from .fixtures import ODDS_PAYLOADS, SCORES_PAYLOADS
+from .fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from .notify import LogNotifier
 from .odds import utcnow
 from .pipeline import CycleReport, Pipeline
@@ -43,8 +43,8 @@ def _make_client(settings: cfg.Settings, fixtures: bool):
     if fixtures:
         return FixtureClient(ODDS_PAYLOADS, SCORES_PAYLOADS)
     if not settings.odds_api_key:
-        raise SystemExit("LISA_ODDS_API_KEY is not set (or pass --fixtures)")
-    return OddsApiClient(settings.odds_api_key)
+        raise SystemExit("THE_ODDS_API_KEY is not set (or pass --fixtures)")
+    return OddsApiClient(settings.odds_api_key, base_url=settings.api_base_url)
 
 
 def _report_dict(report: CycleReport) -> dict:
@@ -72,7 +72,7 @@ def _settlement_dict(rep: SettlementReport) -> dict:
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
-    settings = cfg.Settings()  # deterministic defaults, not env
+    settings = cfg.Settings(sports=FIXTURE_SPORTS)
     client = FixtureClient(ODDS_PAYLOADS, SCORES_PAYLOADS)
     storage = InMemoryStorage()
     pipeline = Pipeline(client, storage, settings, notifier=LogNotifier())

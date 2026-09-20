@@ -49,8 +49,10 @@ class Pipeline:
                   now: Optional[datetime] = None) -> list[CycleReport]:
         """One ingestion+refinement pass over each requested sport."""
         now = now or utcnow()
+        requested = tuple(sport_keys) if sport_keys is not None else self.settings.sports
+        cfg.validate_sports(requested)
         reports: list[CycleReport] = []
-        for sport in sport_keys or self.settings.sports:
+        for sport in requested:
             reports.append(self._run_sport(sport, live=live, now=now))
         return reports
 

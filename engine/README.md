@@ -11,7 +11,7 @@ pipeline runs locally, in CI, or on a $0 machine. Redis/Postgres drivers are opt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install pytest          # dev only
-.venv/bin/python -m pytest -q         # 60 tests
+.venv/bin/python -m pytest -q         # 72 tests
 
 .venv/bin/python -m lisa demo          # full cycle + settlement on bundled fixtures
 ```
@@ -19,7 +19,7 @@ python3 -m venv .venv
 Live API usage (The Odds API key required):
 
 ```bash
-export LISA_ODDS_API_KEY=your_key
+export THE_ODDS_API_KEY=your_key   # LISA_ODDS_API_KEY also accepted
 python -m lisa run-cycle               # one ingestion+refinement pass
 python -m lisa settle                  # grade pending ledger rows
 ```
@@ -58,7 +58,7 @@ LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://localhost:5432/lisa python 
 | `lisa/scheduler.py` | Tick loop with adapted cadence + credit-budget guard |
 | `lisa/tracker.py` | JSONL validation trail + weekly `report` summary |
 | `lisa/fixtures.py` | Deterministic bundled payloads covering every gate outcome |
-| `lisa/config.py` | `LISA_*` env configuration with sane defaults |
+| `lisa/config.py` | `THE_ODDS_*` credentials + `LISA_*` knobs, strict 9-league scope whitelist |
 | `lisa/notify.py` | Log / Telegram notifier |
 
 See [`docs/DESIGN.md`](../docs/DESIGN.md) for the full engineering analysis: the math,

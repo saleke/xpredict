@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 
@@ -34,6 +36,11 @@ def test_cycle_is_idempotent(pipeline):
     assert sum(r.picks_emitted for r in reports) == 0
     assert all(any("already_emitted" in s for s in r.suppressed)
                for r in reports)
+
+
+def test_run_cycle_rejects_out_of_scope_sport(pipeline):
+    with pytest.raises(ValueError, match="chess_open"):
+        pipeline.run_cycle(("chess_open",))
 
 
 def test_notifier_fires_exactly_once_per_pick(pipeline, notifier):

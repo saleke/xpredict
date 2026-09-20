@@ -1,7 +1,9 @@
 """Environment-driven configuration with conservative defaults.
 
-Every knob is overridable via ``LISA_*`` env vars so the same binary can run
-as a $7/month worker or a production deployment without code changes.
+Credentials come from ``THE_ODDS_API_KEY`` / ``THE_ODDS_API_BASE_URL``
+(``LISA_*`` aliases accepted for continuity); every other knob is overridable
+via ``LISA_*`` env vars so the same binary can run as a small worker or a
+production deployment without code changes.
 """
 from __future__ import annotations
 
@@ -33,17 +35,41 @@ def _tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+DEFAULT_API_BASE_URL = "https://api.the-odds-api.com"
+
+SCOPE_LEAGUES: tuple[str, ...] = (
+    "basketball_nba",
+    "basketball_euroleague",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_france_ligue_one",
+    "soccer_italy_serie_a",
+    "soccer_netherlands_eredivisie",
+    "soccer_portugal_primeira_liga",
+    "soccer_epl",
+)
+SCOPE_SET: frozenset[str] = frozenset(SCOPE_LEAGUES)
+
+
+def validate_sports(sports: tuple[str, ...]) -> tuple[str, ...]:
+    unknown = [s for s in sports if s not in SCOPE_SET]
+    if unknown:
+        raise ValueError(
+            "unsupported league keys: "
+            + ", ".join(sorted(unknown))
+            + f"; allowed scope: {list(SCOPE_LEAGUES)}"
+        )
+    return sports
+
+
 @dataclass(frozen=True)
 class Settings:
     # -- Stage 1: data source ------------------------------------------------
     odds_api_key: str = ""
-    regions: str = "eu,uk,us"
+    api_base_url: str = DEFAULT_API_BASE_URL
+    regions: str = "eu,us"
     markets: str = "h2h"
-    sports: tuple[str, ...] = (
-        "basketball_nba",
-        "soccer_spain_la_liga",
-        "soccer_germany_bundesliga",
-    )
+    sports: tuple[str, ...] = SCOPE_LEAGUES
 
     # -- Stage 2: math -------------------------------------------------------
     sharp_keys: tuple[str, ...] = ("pinnacle", "circa")
@@ -98,11 +124,14 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    sports = validate_sports(_tuple("LISA_SPORTS", Settings.sports))
     return Settings(
-        odds_api_key=os.environ.get("LISA_ODDS_API_KEY", ""),
-        regions=os.environ.get("LISA_REGIONS", "eu,uk,us"),
-        markets=os.environ.get("LISA_MARKETS", "h2h"),
-        sports=_tuple("LISA_SPORTS", Settings.sports),
+        odds_api_key=os.getenv("THE_ODDS_API_KEY") or os.getenv("LISA_ODDS_API_KEY", ""),
+        api_base_url=os.getenv("THE_ODDS_API_BASE_URL")
+        or os.getenv("LISA_API_BASE_URL", DEFAULT_API_BASE_URL),
+        regions=os.getenv("LISA_REGIONS", "eu,us"),
+        markets=os.getenv("LISA_MARKETS", "h2h"),
+        sports=sports,
         sharp_keys=_tuple("LISA_SHARP_KEYS", Settings.sharp_keys),
         sharp_multiplier=_float("LISA_SHARP_MULTIPLIER", Settings.sharp_multiplier),
         margin_weighted=_bool("LISA_MARGIN_WEIGHTED", Settings.margin_weighted),

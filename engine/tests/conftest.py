@@ -7,7 +7,7 @@ import pytest
 
 from lisa import config as cfg
 from lisa.client import FixtureClient
-from lisa.fixtures import ODDS_PAYLOADS, SCORES_PAYLOADS
+from lisa.fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from lisa.notify import Notifier
 from lisa.pipeline import Pipeline
 from lisa.storage import InMemoryStorage
@@ -26,7 +26,7 @@ class CollectNotifier(Notifier):
 
 @pytest.fixture
 def settings() -> cfg.Settings:
-    return cfg.Settings()
+    return cfg.Settings(sports=FIXTURE_SPORTS)
 
 
 @pytest.fixture

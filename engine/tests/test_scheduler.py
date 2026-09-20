@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from lisa import config as cfg
+from lisa.fixtures import FIXTURE_SPORTS
 from lisa.scheduler import Scheduler
 
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
@@ -19,7 +20,8 @@ class FakeClock:
 
 
 def _scheduler(client, storage, now_fn, **kw) -> Scheduler:
-    return Scheduler(client, storage, cfg.Settings(), now_fn=now_fn, **kw)
+    return Scheduler(client, storage, cfg.Settings(sports=FIXTURE_SPORTS),
+                     now_fn=now_fn, **kw)
 
 
 def test_first_tick_runs_cycle_and_settlement(fixture_client, storage) -> None:

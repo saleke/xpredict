@@ -28,7 +28,7 @@ python3 -m venv .venv && .venv/bin/pip install pytest
 Live mode needs a [The Odds API](https://the-odds-api.com) key:
 
 ```bash
-export LISA_ODDS_API_KEY=your_key
+export THE_ODDS_API_KEY=your_key   # LISA_ODDS_API_KEY also accepted
 python -m lisa run-cycle              # ingest → refine → gate → persist
 python -m lisa settle                 # grade pending picks (WIN / LOSS / VOID)
 python -m lisa run --once             # scheduler tick (cadence: live/spike/prematch/idle)

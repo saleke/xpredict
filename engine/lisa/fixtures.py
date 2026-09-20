@@ -22,6 +22,12 @@ from __future__ import annotations
 
 _LAST_UPDATE = "2026-09-20T14:00:00Z"
 
+FIXTURE_SPORTS: tuple[str, ...] = (
+    "basketball_nba",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+)
+
 
 def _book(key: str, title: str, prices: dict[str, float],
           last_update: str = _LAST_UPDATE) -> dict:

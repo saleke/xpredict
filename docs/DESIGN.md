@@ -165,13 +165,14 @@ RECALC → TRIGGER_ALERT ─────┼──> CONFIRMED → PENDING_SETTLEM
 | P7 | Fan-out to many subscribers | Alert happens once per pick in the engine; fan-out lives in the delivery layer with its own rate limits (roadmap) |
 | P8 | Observability | `CycleReport`/`SettlementReport` give per-cycle counts, suppression reasons and errors; CLI prints JSON |
 
-## 8. Configuration (all `LISA_*` env vars, sane defaults)
+## 8. Configuration (env-driven, sane defaults)
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LISA_ODDS_API_KEY` | — | The Odds API key (required for `run-cycle`/`settle` without `--fixtures`) |
-| `LISA_REGIONS` / `LISA_MARKETS` | `eu,uk,us` / `h2h` | API query shape |
-| `LISA_SPORTS` | 3 leagues | Comma-separated sport keys |
+| `THE_ODDS_API_KEY` (or `LISA_ODDS_API_KEY`) | — | The Odds API key (required for `run-cycle`/`settle` without `--fixtures`) |
+| `THE_ODDS_API_BASE_URL` (or `LISA_API_BASE_URL`) | `https://api.the-odds-api.com` | API host override; `/v4/` path is appended by `client.py` |
+| `LISA_REGIONS` / `LISA_MARKETS` | `eu,us` / `h2h` | API query shape |
+| `LISA_SPORTS` | the 9 scope leagues | Comma-separated keys; only the 9 scope keys are permitted — unknown keys fail fast at startup |
 | `LISA_GATE_THRESHOLD` | `0.75` | Certainty gate (Finding A) |
 | `LISA_MIN_BOOKS_TELEMETRY` / `LISA_MIN_BOOKS_ALERT` | `3` / `5` | Coverage floors |
 | `LISA_MAX_CV` | `0.10` | Max dispersion for the top outcome |
@@ -184,6 +185,32 @@ RECALC → TRIGGER_ALERT ─────┼──> CONFIRMED → PENDING_SETTLEM
 | `LISA_SETTLE_AFTER_HOURS` / `LISA_SETTLE_GRACE_HOURS` | `3.0` / `24.0` | Settlement schedule |
 | `LISA_ALERT_MIN_DELTA` / `LISA_ALERT_COOLDOWN_SEC` | `0.015` / `600` | Live re-alert policy |
 | `LISA_TELEGRAM_TOKEN` / `LISA_TELEGRAM_CHAT_ID` | — | Telegram notifier |
+
+### Scope boundary (the 9 predictable leagues)
+
+Outgoing calls are hard-limited to this whitelist (`config.SCOPE_LEAGUES`); any
+other key is rejected by `load_settings()` and again by `pipeline.run_cycle()`:
+
+`basketball_nba`, `basketball_euroleague`, `soccer_spain_la_liga`,
+`soccer_germany_bundesliga`, `soccer_france_ligue_one`, `soccer_italy_serie_a`,
+`soccer_netherlands_eredivisie`, `soccer_portugal_primeira_liga`, `soccer_epl`
+
+### Spec-compliance notes (documented deviations)
+
+- **Sync stdlib transport, not async httpx/aiohttp** — the worker polls on a
+  6 h/15 min cadence; async saves seconds on a minutes-to-hours envelope and is
+  a non-factor next to the credit budget. The system stays stdlib-only (zero
+  runtime deps = small supply-chain surface for a money-adjacent worker). If a
+  real-time delivery layer arrives, the client exposes a thin transport seam to
+  swap in an async client without touching the pipeline.
+- **Dataclass validation, not Pydantic v2** — the ingestion boundary has one
+  internal consumer, and `parsing.py` already strictly filters to match
+  metadata + bookmaker h2h decimal prices and drops malformed records. Pydantic
+  earns its keep at a public API surface (the future delivery layer), not here.
+- **Base-URL default corrected** — the spec proposed `https://the-odds-api.com`
+  (the marketing site); the API host is `https://api.the-odds-api.com` with a
+  `/v4/` path and an explicit `markets=h2h` param, per the upstream contract.
+  The env override `THE_ODDS_API_BASE_URL` is honored as specified.
 
 ## 9. Repository layout
 
@@ -215,9 +242,9 @@ architecture/      original product docs (unchanged)
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest   # dev only; runtime is stdlib
-.venv/bin/python -m pytest -q                            # 60 tests
+.venv/bin/python -m pytest -q                            # 72 tests
 .venv/bin/python -m lisa demo                            # full cycle + settlement on fixtures
-export LISA_ODDS_API_KEY=...
+export THE_ODDS_API_KEY=...   # LISA_ODDS_API_KEY also accepted
 .venv/bin/python -m lisa run-cycle                       # live API, one pass
 .venv/bin/python -m lisa settle                          # grade pending rows
 .venv/bin/python -m lisa run                             # scheduler loop (adapted cadence)
