@@ -7,6 +7,7 @@ import { renderReliabilityChart } from './charts.js';
 
 let state = {
   data: null,
+  activeCategoryFilter: 'all',
   activeSportFilter: 'all',
   activeTab: 'picks',
   currentTier: localStorage.getItem('lisa_tier') || 'free',
@@ -152,7 +153,14 @@ function renderPicks() {
   const grid = document.getElementById('picks-grid');
   if (!grid || !state.data) return;
 
-  let picks = state.data.active_picks || [];
+  const allActive = state.data.active_picks || [];
+  const totalCountEl = document.getElementById('total-picks-count');
+  if (totalCountEl) totalCountEl.textContent = allActive.length;
+
+  let picks = allActive;
+  if (state.activeCategoryFilter !== 'all') {
+    picks = picks.filter(p => p.category === state.activeCategoryFilter);
+  }
   if (state.activeSportFilter !== 'all') {
     picks = picks.filter(p => p.sport_key === state.activeSportFilter);
   }
@@ -163,13 +171,44 @@ function renderPicks() {
   if (picks.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1/-1; text-align: center; padding: 48px; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-subtle);">
-        No active picks for selected sport. Switch filter to All Leagues to see imminent matches.
+        No active picks for selected filter. Switch category or league filter to view available opportunities.
       </div>
     `;
     return;
   }
 
+  let seenCoreHeader = false;
+  let seenMarqueeHeader = false;
+
   grid.innerHTML = picks.map(p => {
+    let headerHtml = '';
+    if (state.activeCategoryFilter === 'all') {
+      if (p.category === 'core_top_10' && !seenCoreHeader) {
+        seenCoreHeader = true;
+        headerHtml = `
+          <div class="section-divider-banner">
+            <div class="section-divider-title">
+              <span>💎 Core Top 10 Mathematical Selections</span>
+            </div>
+            <div class="section-divider-sub">
+              Highest-certainty models ranked strictly by cross-book consensus and true probability.
+            </div>
+          </div>
+        `;
+      } else if (p.category === 'marquee_addition' && !seenMarqueeHeader) {
+        seenMarqueeHeader = true;
+        headerHtml = `
+          <div class="section-divider-banner marquee-section">
+            <div class="section-divider-title">
+              <span>🌟 Marquee & Popular Match Additions (Smart Market Pivots)</span>
+            </div>
+            <div class="section-divider-sub">
+              High-profile fixtures where LISA pivots away from 50/50 moneyline sucker bets.
+            </div>
+          </div>
+        `;
+      }
+    }
     // Check lock conditions
     let isLocked = false;
     let lockType = 'tier2'; // 'telegram' or 'tier2'
@@ -210,6 +249,7 @@ function renderPicks() {
     // Social Telegram Unlock Card
     if (isLocked && lockType === 'telegram') {
       return `
+        ${headerHtml}
         <div class="pick-card locked-card" id="pick-${p.match_id}">
           <div class="card-content-blur">
             <div class="card-header">
@@ -239,6 +279,7 @@ function renderPicks() {
     // Standard Tier 2 Locked Card
     if (isLocked && lockType === 'tier2') {
       return `
+        ${headerHtml}
         <div class="pick-card locked-card" id="pick-${p.match_id}">
           <div class="card-content-blur">
             <div class="card-header">
@@ -255,7 +296,7 @@ function renderPicks() {
             <div class="locked-icon">🔒</div>
             <div class="locked-title">Match #${p.rank} — Tier 2 Pro Locked</div>
             <div class="locked-desc">
-              Unlock all 12 daily mathematical consensus predictions, 1-click execution slips, and Kelly bankroll management.
+              Unlock all 10 Core Top Picks + Marquee Matches, 1-click execution slips, and Kelly bankroll management.
             </div>
             <button class="btn-upgrade-card" onclick="window.setTier('tier2')">
               Upgrade to Tier 2 ($49/mo)
@@ -290,6 +331,7 @@ function renderPicks() {
     }
 
     return `
+      ${headerHtml}
       <div class="pick-card ${isDiamond ? 'diamond-pick' : ''}" id="pick-${p.match_id}">
         <div>
           <div class="card-header">
@@ -544,6 +586,16 @@ function setupEventListeners() {
     btn.addEventListener('click', () => {
       const view = btn.getAttribute('data-view').replace('view-', '');
       switchTab(view);
+    });
+  });
+
+  // Category filter pills (All, Core Top 10, Marquee Additions)
+  document.querySelectorAll('.cat-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.cat-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeCategoryFilter = btn.getAttribute('data-category');
+      renderPicks();
     });
   });
 

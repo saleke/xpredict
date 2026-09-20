@@ -119,16 +119,26 @@
     <!-- VIEW 1: Live Consensus & Picks -->
     <section class="view-panel active" id="view-picks">
       <div class="controls-bar">
-        <div class="filter-group" id="sport-filter-group">
-          <button class="pill-filter active" data-sport="all" id="filter-all">All Leagues (12)</button>
+        <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; width: 100%;">
+          <!-- Category Filter Pills -->
+          <div class="category-filter-group" id="category-filter-group">
+            <button class="cat-pill active" data-category="all" id="cat-all">All Opportunities (<span id="total-picks-count">14</span>)</button>
+            <button class="cat-pill" data-category="core_top_10" id="cat-core">💎 Core Top 10 (Most Predictable)</button>
+            <button class="cat-pill" data-category="marquee_addition" id="cat-marquee">🌟 Marquee Additions (Smart Pivots)</button>
+          </div>
+
+          <div class="schedule-notice">
+            <span>🕒 Ranked by Mathematical Certainty · <strong>Today & Tomorrow</strong></span>
+          </div>
+        </div>
+
+        <div class="filter-group" id="sport-filter-group" style="margin-top: 12px;">
+          <button class="pill-filter active" data-sport="all" id="filter-all">All Leagues</button>
           <button class="pill-filter" data-sport="soccer_epl" id="filter-epl">Premier League</button>
           <button class="pill-filter" data-sport="basketball_nba" id="filter-nba">NBA</button>
           <button class="pill-filter" data-sport="soccer_spain_la_liga" id="filter-laliga">La Liga</button>
           <button class="pill-filter" data-sport="soccer_germany_bundesliga" id="filter-bundesliga">Bundesliga</button>
           <button class="pill-filter" data-sport="soccer_italy_serie_a" id="filter-seriea">Serie A</button>
-        </div>
-        <div class="schedule-notice">
-          <span>🕒 Showing 12 Highest-Conviction Matches for <strong>Today & Tomorrow</strong></span>
         </div>
       </div>
 
