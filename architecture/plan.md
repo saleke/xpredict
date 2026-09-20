@@ -72,3 +72,24 @@ Requirements:
    Expose an asynchronous POST endpoint at `/v1/lisa/refine` that accepts the raw ingestion payload, runs the calculations strictly in memory, and returns the processed mathematical metrics object.
 
 Write clean, modular, production-ready code in a single file named `lisa_refinery.py`. Handle potential mathematical boundary exceptions gracefully (e.g., division by zero or non-converging optimization loops). Do not write comments or pseudocode.
+
+To accomodate more leagues
+
+Act as a Principal Software Architect. We have locked down the exact operational scope and data strategy for LISA. Update the Stage 1 Ingestion client and the core configuration settings to exclusively accommodate these 9 globally verified, highly predictable leagues:
+
+1. Basketball Contracts:
+   - 'basketball_nba'
+   - 'basketball_euroleague'
+
+2. Soccer Contracts:
+   - 'soccer_spain_la_liga'
+   - 'soccer_germany_bundesliga'
+   - 'soccer_france_ligue_one'
+   - 'soccer_italy_serie_a'
+   - 'soccer_netherlands_eredivisie'
+   - 'soccer_portugal_primeira_liga'
+   - 'soccer_epl'
+
+3. System Overrides:
+   - Hardcode the baseline `confidence_threshold` to 0.75 (75%).
+   - Keep the multi-book abstraction layer completely closed to protect vendor data. The output must strictly be LISA's proprietary confidence percentage and fair market payout calculation.
