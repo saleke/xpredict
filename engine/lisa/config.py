@@ -109,6 +109,13 @@ class Settings:
     alert_cooldown_sec: int = 600
     alert_min_delta: float = 0.015
 
+    # -- volume controller & waiting room -------------------------------------
+    max_alerts_per_cycle: int = 0          # 0 = unlimited
+    max_alerts_per_sport_cycle: int = 0    # 0 = unlimited
+    conviction_min: float = 0.0            # minimum conviction score required to alert
+    slippage_max_cv_drift: float = 0.03    # max allowed CV increase before flagging volatility spike
+    discord_webhook_url: str = ""          # Discord incoming webhook URL
+
     # -- scheduler cadence ----------------------------------------------------
     cadence_prematch_sec: int = 60 * 60     # quiet pre-match poll
     cadence_spike_sec: int = 15 * 60       # kickoff within spike window
@@ -155,6 +162,11 @@ def load_settings() -> Settings:
         telegram_chat_id=os.environ.get("LISA_TELEGRAM_CHAT_ID", ""),
         alert_cooldown_sec=_int("LISA_ALERT_COOLDOWN_SEC", Settings.alert_cooldown_sec),
         alert_min_delta=_float("LISA_ALERT_MIN_DELTA", Settings.alert_min_delta),
+        max_alerts_per_cycle=_int("LISA_MAX_ALERTS_PER_CYCLE", Settings.max_alerts_per_cycle),
+        max_alerts_per_sport_cycle=_int("LISA_MAX_ALERTS_PER_SPORT_CYCLE", Settings.max_alerts_per_sport_cycle),
+        conviction_min=_float("LISA_CONVICTION_MIN", Settings.conviction_min),
+        slippage_max_cv_drift=_float("LISA_SLIPPAGE_MAX_CV_DRIFT", Settings.slippage_max_cv_drift),
+        discord_webhook_url=os.environ.get("LISA_DISCORD_WEBHOOK_URL", Settings.discord_webhook_url),
         cadence_prematch_sec=_int("LISA_CADENCE_PREMATCH_SEC", Settings.cadence_prematch_sec),
         cadence_spike_sec=_int("LISA_CADENCE_SPIKE_SEC", Settings.cadence_spike_sec),
         cadence_live_sec=_int("LISA_CADENCE_LIVE_SEC", Settings.cadence_live_sec),

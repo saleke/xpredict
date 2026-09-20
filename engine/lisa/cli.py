@@ -89,11 +89,25 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _make_notifier(settings: cfg.Settings):
+    notifiers = [LogNotifier()]
+    if settings.telegram_token and settings.telegram_chat_id:
+        from .notify import TelegramNotifier
+        notifiers.append(TelegramNotifier(settings.telegram_token, settings.telegram_chat_id))
+    if settings.discord_webhook_url:
+        from .notify import DiscordNotifier
+        notifiers.append(DiscordNotifier(settings.discord_webhook_url))
+    if len(notifiers) == 1:
+        return notifiers[0]
+    from .notify import CompositeNotifier
+    return CompositeNotifier(notifiers)
+
+
 def _cmd_run_cycle(args: argparse.Namespace) -> int:
     settings = cfg.load_settings()
     client = _make_client(settings, args.fixtures)
     pipeline = Pipeline(client, _make_storage(settings), settings,
-                        notifier=LogNotifier())
+                        notifier=_make_notifier(settings))
     sports = args.sports or None
     reports = pipeline.run_cycle(sports)
     print(json.dumps({"cycles": [_report_dict(r) for r in reports]}, indent=2))
@@ -113,8 +127,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     settings = cfg.load_settings()
     client = _make_client(settings, args.fixtures)
     storage = _make_storage(settings)
+    notifier = _make_notifier(settings)
     tracker = Tracker(args.metrics or settings.metrics_path, storage)
-    scheduler = Scheduler(client, storage, settings, tracker=tracker)
+    scheduler = Scheduler(client, storage, settings, notifier=notifier, tracker=tracker)
     if args.once:
         scheduler.run_forever(max_ticks=1)
     else:

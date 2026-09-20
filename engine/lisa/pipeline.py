@@ -76,6 +76,8 @@ class Pipeline:
             self.settings.stale_live_sec if live else self.settings.stale_prematch_sec
         )
 
+        waiting_room: list[Pick] = []
+
         for match in matches:
             self._persist_telemetry(match)
 
@@ -111,13 +113,45 @@ class Pipeline:
             if self.storage.insert_pick(pick):
                 report.picks_emitted += 1
                 self._persist_telemetry_pick(pick)      # hot-layer mirror
-                self.notifier.send(pick_alert_text(pick))  # exactly once
+                waiting_room.append(pick)
             else:
                 self._maybe_update_closing(pick, match, consensus, now)
                 if self._maybe_realert(pick, now):
                     report.suppressed.append(f"{match.id}:alert_moved")
                 else:
                     report.suppressed.append(f"{match.id}:already_emitted")
+
+        # -- Volume Controller / Waiting Room Dispatch -----------------------
+        if waiting_room:
+            has_limit = (
+                self.settings.max_alerts_per_cycle > 0
+                or self.settings.max_alerts_per_sport_cycle > 0
+                or self.settings.conviction_min > 0
+            )
+            if has_limit:
+                def _rank_key(p: Pick):
+                    ts = p.commence_time.timestamp() if p.commence_time else 0.0
+                    return (getattr(p, "conviction_score", 0.0), p.p_true, -ts)
+
+                waiting_room.sort(key=_rank_key, reverse=True)
+
+            dispatched_count = 0
+            for pick in waiting_room:
+                score = getattr(pick, "conviction_score", 0.0)
+                if self.settings.conviction_min > 0 and score < self.settings.conviction_min:
+                    report.suppressed.append(f"{pick.match_id}:below_conviction_min")
+                    continue
+
+                if self.settings.max_alerts_per_sport_cycle > 0 and dispatched_count >= self.settings.max_alerts_per_sport_cycle:
+                    report.suppressed.append(f"{pick.match_id}:waiting_room_sport_quota")
+                    continue
+
+                if self.settings.max_alerts_per_cycle > 0 and dispatched_count >= self.settings.max_alerts_per_cycle:
+                    report.suppressed.append(f"{pick.match_id}:waiting_room_cycle_quota")
+                    continue
+
+                self.notifier.send(pick_alert_text(pick))
+                dispatched_count += 1
 
         report.finished = utcnow()
         return report
@@ -139,6 +173,7 @@ class Pipeline:
             "p_true": pick.p_true,
             "fair_odds": pick.fair_odds,
             "line": pick.line,
+            "conviction_score": getattr(pick, "conviction_score", 0.0),
             "state": pick.state,
             "best_book": pick.best_execution.book_key if pick.best_execution else None,
             "emitted_at": utcnow().isoformat(),
