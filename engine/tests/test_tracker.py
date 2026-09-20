@@ -12,7 +12,7 @@ T = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 def test_cycle_and_pick_recording(tmp_path, pipeline) -> None:
     track = Tracker(tmp_path / "m.jsonl", storage=pipeline.storage)
-    reports = pipeline.run_cycle()
+    reports = pipeline.run_cycle(now=T)
     track.record_cycles(reports)
     track.record_picks()
 
@@ -29,7 +29,7 @@ def test_cycle_and_pick_recording(tmp_path, pipeline) -> None:
 
 def test_pick_recording_dedupes_across_cycles(tmp_path, pipeline) -> None:
     track = Tracker(tmp_path / "m.jsonl", storage=pipeline.storage)
-    pipeline.run_cycle()
+    pipeline.run_cycle(now=T)
     track.record_picks()
     track.record_picks()
 

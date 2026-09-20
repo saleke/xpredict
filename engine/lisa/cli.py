@@ -232,6 +232,16 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
 
 def _cmd_export_web(args: argparse.Namespace) -> int:
     import urllib.parse
+    out_path = Path(args.out or "web/data/dashboard.json")
+
+    if args.fixtures:
+        from .fixtures_generator import generate_rolling_commercial_dataset
+        payload = generate_rolling_commercial_dataset(now=utcnow())
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(payload, indent=2))
+        print(f"[export-web] Commercial 4-tier rolling dataset exported to {out_path} ({len(payload['active_picks'])} active, {len(payload['settled_ledger'])} settled)")
+        return 0
+
     settings = cfg.load_settings()
     client = _make_client(settings, args.fixtures)
     storage = _make_storage(settings)
