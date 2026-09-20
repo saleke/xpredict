@@ -621,7 +621,100 @@
         </div>
       </div>
     </div>
+  <!-- Authentication Modal (Sign In & Sign Up) -->
+  <div class="auth-modal-backdrop" id="auth-modal">
+    <div class="auth-modal-card">
+      <button class="auth-modal-close" id="auth-modal-close">&times;</button>
+      
+      <div class="auth-modal-header">
+        <div class="auth-brand-logo">
+          <span class="brand-mark">◈</span>
+          <span class="brand-title">LISA ACCOUNT</span>
+        </div>
+        <div class="auth-modal-subtitle" id="auth-modal-subtitle">
+          Access institutional betting intelligence &amp; syndicate alpha
+        </div>
+      </div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab-btn active" id="tab-btn-signin">Sign In</button>
+        <button class="auth-tab-btn" id="tab-btn-signup">Create Account</button>
+      </div>
+
+      <div class="auth-modal-body">
+        <div class="auth-error-box" id="auth-error-box"></div>
+
+        <!-- Sign In Form -->
+        <form id="form-signin">
+          <div class="auth-form-group">
+            <label class="auth-label" for="signin-email">Email Address</label>
+            <div class="auth-input-wrapper">
+              <span class="auth-input-icon">✉️</span>
+              <input type="email" id="signin-email" class="auth-input" placeholder="name@domain.com" required autocomplete="email">
+            </div>
+          </div>
+
+          <div class="auth-form-group">
+            <label class="auth-label" for="signin-password">Password</label>
+            <div class="auth-input-wrapper">
+              <span class="auth-input-icon">🔒</span>
+              <input type="password" id="signin-password" class="auth-input" placeholder="••••••••" required autocomplete="current-password">
+              <button type="button" class="auth-toggle-pwd" data-target="signin-password">👁️</button>
+            </div>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btn-submit-signin">
+            <span>Sign In to Terminal</span>
+          </button>
+        </form>
+
+        <!-- Sign Up Form (hidden by default) -->
+        <form id="form-signup" style="display: none;">
+          <div class="auth-form-group">
+            <label class="auth-label" for="signup-name">Display Name</label>
+            <div class="auth-input-wrapper">
+              <span class="auth-input-icon">👤</span>
+              <input type="text" id="signup-name" class="auth-input" placeholder="Quantitative Trader" autocomplete="name">
+            </div>
+          </div>
+
+          <div class="auth-form-group">
+            <label class="auth-label" for="signup-email">Email Address</label>
+            <div class="auth-input-wrapper">
+              <span class="auth-input-icon">✉️</span>
+              <input type="email" id="signup-email" class="auth-input" placeholder="name@domain.com" required autocomplete="email">
+            </div>
+          </div>
+
+          <div class="auth-form-group">
+            <label class="auth-label" for="signup-password">Password (8+ chars)</label>
+            <div class="auth-input-wrapper">
+              <span class="auth-input-icon">🔒</span>
+              <input type="password" id="signup-password" class="auth-input" placeholder="Minimum 8 characters" minlength="8" required autocomplete="new-password">
+              <button type="button" class="auth-toggle-pwd" data-target="signup-password">👁️</button>
+            </div>
+          </div>
+
+          <div class="auth-form-group">
+            <label class="auth-label">Select Initial Tier</label>
+            <div class="auth-tier-select" id="signup-tier-select">
+              <div class="auth-tier-chip selected" data-tier="free">Free</div>
+              <div class="auth-tier-chip" data-tier="tier1">Tier 1</div>
+              <div class="auth-tier-chip" data-tier="tier2">Tier 2</div>
+              <div class="auth-tier-chip" data-tier="tier3">Tier 3</div>
+            </div>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btn-submit-signup">
+            <span>Create Free Account</span>
+          </button>
+        </form>
+      </div>
+    </div>
   </div>
+
+  <!-- Toast Notification Container -->
+  <div class="lisa-toast-container" id="toast-container"></div>
 
   <script type="module" src="js/app.js"></script>
 </body>
