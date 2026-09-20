@@ -41,6 +41,28 @@ class Consensus:
     cv: float                  # coefficient of variation (agreement check)
     fair_odds: float
     weights: dict[str, float]  # book_key -> applied weight
+    # blend parameters used to build this consensus — needed by the EV
+    # overlay to recompute a reference that excludes a single book
+    sharp_keys: tuple[str, ...] = ()
+    sharp_multiplier: float = 2.0
+    margin_weighted: bool = True
+    min_margin_floor: float = MIN_POOL_MARGIN
+
+    def loo_probability(self, exclude_key: str) -> Optional[float]:
+        """Leave-one-out consensus probability for the top outcome.
+
+        The reference consensus recomputed over every book *except*
+        ``exclude_key`` — this is what the EV overlay compares a book's
+        price against, so the book's own (possibly biased) probabilities
+        don't dilute the reference it is judged on.
+        """
+        return leave_one_out_probability(
+            self.books, exclude_key, self.top_outcome,
+            sharp_keys=self.sharp_keys,
+            sharp_multiplier=self.sharp_multiplier,
+            margin_weighted=self.margin_weighted,
+            min_margin_floor=self.min_margin_floor,
+        )
 
 
 def is_sharp(book_key: str, sharp_keys) -> bool:
@@ -72,6 +94,51 @@ def _fresh(book: Book, now: datetime, max_age_sec: float) -> bool:
     if book.last_update is None:
         return True  # unknown freshness -> do not penalise
     return (now - book.last_update).total_seconds() <= max_age_sec
+
+
+def _book_weights(btps: tuple[BookTrueProbs, ...], *, sharp_keys,
+                  sharp_multiplier: float, margin_weighted: bool,
+                  min_margin_floor: float) -> dict[str, float]:
+    """Marginal weights: sharp anchors doubled, optionally scaled by 1/margin
+    so tight books (Pinnacle-like) influence the blend more than inflated
+    retail lines."""
+    weights: dict[str, float] = {}
+    for btp in btps:
+        w = sharp_multiplier if is_sharp(btp.book_key, sharp_keys) else 1.0
+        if margin_weighted:
+            w *= 1.0 / max(btp.margin, min_margin_floor)
+        weights[btp.book_key] = w
+    return weights
+
+
+def leave_one_out_probability(
+        btps: tuple[BookTrueProbs, ...], exclude_key: str, outcome: str, *,
+        sharp_keys, sharp_multiplier: float, margin_weighted: bool,
+        min_margin_floor: float) -> Optional[float]:
+    """Blended probability of ``outcome`` over every book except
+    ``exclude_key``, mirroring ``refine``'s weighting and normalisation.
+
+    Returns ``None`` when no usable reference remains (all books excluded).
+    """
+    remaining = tuple(b for b in btps if b.book_key != exclude_key)
+    if not remaining:
+        return None
+    weights = _book_weights(remaining, sharp_keys=sharp_keys,
+                            sharp_multiplier=sharp_multiplier,
+                            margin_weighted=margin_weighted,
+                            min_margin_floor=min_margin_floor)
+    wsum = sum(weights.values())
+    if wsum <= 0.0 or not math.isfinite(wsum):
+        return None
+    outcomes = remaining[0].probs.keys()
+    if outcome not in outcomes:
+        return None
+    p = {o: (sum(weights[b.book_key] * b.probs.get(o, 0.0) for b in remaining)
+              / wsum) for o in outcomes}
+    total = sum(p.values())
+    if total <= 0.0:
+        return None
+    return p[outcome] / total
 
 
 def refine(match: Match, *, now: Optional[datetime] = None,
@@ -118,15 +185,10 @@ def refine(match: Match, *, now: Optional[datetime] = None,
     if len(refined) < min_books:
         return None
 
-    # Weights: sharp anchors get a multiplier; optionally scaled by 1/margin
-    # so tight books (Pinnacle-like) influence the blend more than inflated
-    # retail lines.
-    weights: dict[str, float] = {}
-    for btp in refined:
-        w = sharp_multiplier if is_sharp(btp.book_key, sharp_keys) else 1.0
-        if margin_weighted:
-            w *= 1.0 / max(btp.margin, min_margin_floor)
-        weights[btp.book_key] = w
+    weights = _book_weights(refined, sharp_keys=sharp_keys,
+                            sharp_multiplier=sharp_multiplier,
+                            margin_weighted=margin_weighted,
+                            min_margin_floor=min_margin_floor)
     wsum = sum(weights.values())
     if wsum <= 0.0 or not math.isfinite(wsum):
         return None
@@ -164,4 +226,8 @@ def refine(match: Match, *, now: Optional[datetime] = None,
         cv=cv,
         fair_odds=1.0 / p_top,
         weights=weights,
+        sharp_keys=tuple(sharp_keys),
+        sharp_multiplier=sharp_multiplier,
+        margin_weighted=margin_weighted,
+        min_margin_floor=min_margin_floor,
     )

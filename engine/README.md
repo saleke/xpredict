@@ -11,7 +11,7 @@ pipeline runs locally, in CI, or on a $0 machine. Redis/Postgres drivers are opt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install pytest          # dev only
-.venv/bin/python -m pytest -q         # 55 tests
+.venv/bin/python -m pytest -q         # 60 tests
 
 .venv/bin/python -m lisa demo          # full cycle + settlement on bundled fixtures
 ```
@@ -48,7 +48,7 @@ LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://localhost:5432/lisa python 
 |---|---|
 | `lisa/shin.py` | Shin's method de-vig (2-way closed form, n-way iteration) + proportional fallback |
 | `lisa/consensus.py` | Per-book de-vig → sharp/margin weighted consensus → stdev/CV agreement |
-| `lisa/gate.py` | Quality gate (75% certainty, 5 books, CV ≤ 10%) + EV execution overlay |
+| `lisa/gate.py` | Quality gate (75% certainty, 5 books, CV ≤ 10%) + leave-one-out EV execution overlay |
 | `lisa/pipeline.py` | Stage-1 orchestration: ingest → refine → gate → persist + notify (idempotent) |
 | `lisa/settle.py` | 3h-after-kickoff settlement: WIN / LOSS / VOID |
 | `lisa/storage.py` | `Storage` interface + in-memory / Redis / Postgres drivers |

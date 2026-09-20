@@ -105,6 +105,13 @@ Order of checks (deliberate):
 4. EV overlay: best execution = argmax EV over books with `EV >= ev_min` (0.0);
    `require_positive_ev=true` suppresses the pick when no book clears fair price.
 
+**EV uses a leave-one-out reference.** Each book's edge is measured against the
+consensus recomputed over every book *except itself*
+(`Consensus.loo_probability`): `EV_b = P_top(excl. b) × odds_b − 1`. Otherwise a
+lagging soft book's own (biased) probabilities dilute the very reference it is
+judged against, understating the edge. Gate certainty still uses the all-book
+consensus; only the execution overlay uses the LOO reference.
+
 Suppression reasons feed `CycleReport.suppressed` (`"match_id:reason"`) for observability.
 
 ## 5. State machine & ledger
@@ -197,7 +204,7 @@ engine/            Python package `lisa` (stdlib core)
   lisa/notify.py   LogNotifier / TelegramNotifier + alert text
   lisa/cli.py      `python -m lisa demo|run-cycle|settle|run|report`
   lisa/fixtures.py deterministic bundled Odds API payloads
-  tests/           55 tests: math, consensus, gate, pipeline, settle,
+  tests/           60 tests: math, consensus, gate, pipeline, settle,
                    storage, cadence, scheduler, tracker
 docs/DESIGN.md     this document
 architecture/      original product docs (unchanged)
@@ -208,7 +215,7 @@ architecture/      original product docs (unchanged)
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest   # dev only; runtime is stdlib
-.venv/bin/python -m pytest -q                            # 55 tests
+.venv/bin/python -m pytest -q                            # 60 tests
 .venv/bin/python -m lisa demo                            # full cycle + settlement on fixtures
 export LISA_ODDS_API_KEY=...
 .venv/bin/python -m lisa run-cycle                       # live API, one pass
@@ -233,8 +240,9 @@ Status as of the scheduler/tracker iteration:
   week against the real API, then `lisa report` for pick volume at the gate, the real EV
   distribution (+EV share), settlement accuracy, and credit burn. Answers the product's
   open questions with data instead of fixtures.
-* **Leave-one-out EV**: replace in-consensus EV with per-book EV against a consensus
-  excluding that book.
+* ✅ **Leave-one-out EV** — every book's execution EV is measured against a reference
+  consensus that excludes that book, so a lagging soft book can no longer dilute the
+  consensus it is judged on.
 * **Score settlement robustness**: retry bookkeeping, match rename handling, and multiple
   settlement attempts per row.
 * **Delivery layer**: web dashboard (Next.js), Telegram channel fan-out with per-chat

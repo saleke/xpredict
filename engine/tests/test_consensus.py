@@ -63,3 +63,33 @@ def test_single_book_true_probs_rejects_junk():
     assert abs(sum(btp.probs.values()) - 1.0) < 1e-9
     junk = Book(key="x", title="X", last_update=None, outcomes={"A": 0.5, "B": 2.4})
     assert consensus.single_book_true_probs(junk) is None
+
+
+def test_loo_noop_for_non_member_equals_full_consensus():
+    c = consensus.refine(_match(NBA_ODDS, "nba-a"), now=NOW)
+    assert c is not None
+    # excluding a book that isn't in the set is a no-op: identical reference
+    assert c.loo_probability("nonexistent") == pytest.approx(c.p_top, abs=1e-12)
+
+
+def test_loo_moves_reference_away_from_excluded_soft_book():
+    c = consensus.refine(_match(NBA_ODDS, "nba-a"), now=NOW)
+    assert c is not None
+    # bet365 posts a lagging (higher) price on the favourite -> its own
+    # de-vigged probability is *below* consensus. Excluding it must push the
+    # reference *up*, and the largest single influence is the sharp pinnacle.
+    loo_ref = c.loo_probability("bet365")
+    assert loo_ref is not None
+    assert loo_ref > c.p_top
+    assert abs(c.loo_probability("pinnacle") - c.p_top) < 0.02
+
+
+def test_loo_practical_for_ev_overlay():
+    c = consensus.refine(_match(NBA_ODDS, "nba-a"), now=NOW)
+    assert c is not None
+    bet365 = next(b for b in c.books if b.book_key == "bet365")
+    price = bet365.prices["Celtics"]
+    # EV for the lagging book measured against a reference that excludes it
+    loo_ev = c.loo_probability("bet365") * price - 1.0
+    naive_ev = c.p_top * price - 1.0
+    assert loo_ev > naive_ev  # ignoring its own drag increases the edge

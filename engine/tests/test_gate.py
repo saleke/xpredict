@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from lisa import consensus
 from lisa.fixtures import NBA_ODDS
 from lisa.gate import evaluate
@@ -56,3 +58,18 @@ def test_gate_min_book_requirement():
     res = evaluate(_consensus("nba-a"), threshold=0.75, min_books=6, max_cv=0.10)
     assert res.pick is None
     assert res.reason == "insufficient_books"
+
+
+def test_execution_ev_uses_leave_one_out_reference():
+    c = _consensus("nba-a")
+    res = evaluate(c, threshold=0.75, min_books=5, max_cv=0.10)
+    assert res.reason == "ok"
+    ex = res.pick.best_execution
+    assert ex.book_key == "bet365"
+    bet365 = next(b for b in c.books if b.book_key == "bet365")
+    price = bet365.prices["Celtics"]
+    # execution EV equals the LOO-based value, not the naive all-book EV
+    assert ex.ev == pytest.approx(c.loo_probability("bet365") * price - 1.0,
+                                  abs=1e-12)
+    naive_ev = c.p_top * price - 1.0
+    assert ex.ev > naive_ev  # removing the lagging book's drag raises its edge

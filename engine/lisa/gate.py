@@ -4,9 +4,12 @@ Decisions made with the product owner (architecture review):
   * the certainty gate is P_true >= 75% (85% was shown to be unreachable
     post-de-vig on real markets);
   * an EV overlay selects which book to recommend: only books whose price
-    clears the consensus fair price (EV > 0) get an execution link. The
-    engine itself emits a pick on certainty alone unless the product demands
-    a positive-EV execution (``require_positive_ev``).
+    clears the *leave-one-out* fair price (EV > 0) get an execution link.
+    Each book's EV is measured against a reference consensus that excludes
+    that book, so a lagging soft book can't dilute the reference it is
+    judged against (self-inclusion confound). The engine itself emits a
+    pick on certainty alone unless the product demands a positive-EV
+    execution (``require_positive_ev``).
 """
 from __future__ import annotations
 
@@ -72,7 +75,13 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
         price = btp.prices.get(consensus.top_outcome)
         if price is None or price < MIN_EXEC_PRICE:
             continue
-        ev = consensus.p_top * price - 1.0
+        # EV against the leave-one-out reference: the book's own de-vigged
+        # probabilities are excluded so a lagging line can't dilute the
+        # consensus it is compared to.
+        p_ref = consensus.loo_probability(btp.book_key)
+        if p_ref is None:
+            continue
+        ev = p_ref * price - 1.0
         if ev >= ev_min and (best is None or ev > best.ev):
             best = Execution(book_key=btp.book_key, book_title=btp.book_title,
                              odds=price, ev=ev)

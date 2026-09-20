@@ -21,7 +21,7 @@ engine/         implementation — Python, stdlib-only runtime (see engine/READM
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest
-.venv/bin/python -m pytest -q        # 55 tests
+.venv/bin/python -m pytest -q        # 60 tests
 .venv/bin/python -m lisa demo        # full cycle + settlement on bundled fixtures
 ```
 
@@ -40,8 +40,9 @@ python -m lisa report                 # weekly live-validation metrics summary
 * **Gate is 75%, not 85%** — verified: Shin's correction pushes post-de-vig favourites below
   85% in real markets, so the original 85% gate would emit ~zero picks (see
   [`docs/DESIGN.md`](docs/DESIGN.md), Finding A).
-* **EV overlay** — probability is not edge: the engine only recommends a book when its price
-  clears the consensus fair price (`EV = P_true × odds − 1 > 0`).
+* **EV overlay** — probability is not edge: each book's EV is measured against a
+  *leave-one-out* consensus (every book except itself), and the engine only recommends a
+  book when its price clears that fair price (`EV = P_true(excl. b) × odds − 1 > 0`).
 * **Write-once ledger** — `dedupe_key = match_id::market::outcome`, state machine
   `TRIGGER_ALERT → … → SETTLED (WIN|LOSS) | VOID`; re-running cycles never duplicates.
 * **Zero-infra by default** — in-memory storage + fixture client; Redis/Postgres are opt-in
