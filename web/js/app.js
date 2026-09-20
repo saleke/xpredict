@@ -2,6 +2,8 @@
  * LISA Dashboard Main Controller & State Management
  * Commercial 4-Tier Funnel, Smart Market Pivot, and Tier 3 Syndicate Alpha Terminal
  */
+import { api } from './api.js';
+import { auth } from './auth.js';
 import { initCalculator } from './calculator.js';
 import { renderReliabilityChart } from './charts.js';
 
