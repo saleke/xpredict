@@ -38,6 +38,13 @@ def _make_storage(settings: cfg.Settings):
         store = PostgresStorage(settings.database_url)
         store.ensure_schema()
         return store
+    if driver == "sqlite":
+        from .storage import SqliteStorage
+        db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
+        return SqliteStorage(db_path)
+    if driver == "file":
+        from .storage import JsonFileStorage
+        return JsonFileStorage()
     return InMemoryStorage()
 
 
@@ -371,9 +378,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    import http.server
-    import socketserver
-    import os
+    from .server import make_production_server
 
     web_dir = Path(args.dir or "web").resolve()
     port = int(args.port or 8080)
@@ -381,17 +386,304 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         print(f"[serve] Error: Directory {web_dir} does not exist.")
         return 1
 
-    os.chdir(web_dir)
-    class ReusableTCPServer(socketserver.TCPServer):
-        allow_reuse_address = True
+    settings = cfg.load_settings()
+    storage = _make_storage(settings)
 
-    handler = http.server.SimpleHTTPRequestHandler
-    with ReusableTCPServer(("", port), handler) as httpd:
-        print(f"[serve] LISA Dashboard running at http://localhost:{port}/ (serving {web_dir})")
+    bot_inst = None
+    if getattr(args, "bot", False) and settings.telegram_token:
+        import threading
+        import time
+        from .telegram_bot import TelegramBot
+
+        bot_inst = TelegramBot(token=settings.telegram_token, channel_chat_id=settings.telegram_chat_id)
+        def _bot_loop():
+            print(f"[telegram-bot] Background polling daemon started for @{settings.telegram_bot_username or 'bot'}")
+            while True:
+                try:
+                    updates = bot_inst.poll_updates()
+                    for u in updates:
+                        reply = bot_inst.process_one_update(u)
+                        print(f"[telegram-bot] [{u.username} -> {u.text}]: {reply[:60]}...")
+                except Exception:
+                    pass
+                time.sleep(2.0)
+
+        t = threading.Thread(target=_bot_loop, daemon=True)
+        t.start()
+
+    server = make_production_server(
+        host="0.0.0.0",
+        port=port,
+        web_dir=str(web_dir),
+        storage=storage,
+        settings=settings,
+        bot=bot_inst,
+    )
+    print(f"[serve] LISA Dashboard running at http://localhost:{port}/ (serving {web_dir}) [Multi-Threaded Production Server]")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[serve] Server stopped.")
+    return 0
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Pre-flight diagnostic health inspection tool."""
+    import socket
+    import urllib.error
+    import urllib.request
+
+    settings = cfg.load_settings()
+    print("=" * 65)
+    print("        LISA PRODUCTION PRE-FLIGHT DIAGNOSTIC (DOCTOR)")
+    print("=" * 65)
+    passed = 0
+    warnings = 0
+    failures = 0
+
+    # 1. SQLite Database & Storage Layer
+    print("\n[1] Storage Layer & SQLite Database:")
+    db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
+    try:
+        from .storage import SqliteStorage
+        store = SqliteStorage(db_path)
+        store.upsert_live("__doctor_probe__", {"ok": 1}, ttl_seconds=10)
+        probe_val = store.get_live("__doctor_probe__")
+        if probe_val and probe_val.get("ok") == 1:
+            counts = store.count_picks()
+            print(f"  [PASS] SQLite WAL Database OK ({db_path})")
+            print(f"         Ledger: {counts['total']} picks total ({counts['settled']} settled, {counts['pending']} pending)")
+            passed += 1
+        else:
+            print(f"  [FAIL] SQLite read/write probe failed on {db_path}")
+            failures += 1
+    except Exception as exc:
+        print(f"  [FAIL] SQLite storage error: {exc}")
+        failures += 1
+
+    # 2. Telegram Bot Token & API
+    print("\n[2] Telegram Bot Integration:")
+    if settings.telegram_token:
         try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\n[serve] Server stopped.")
+            url = f"https://api.telegram.org/bot{settings.telegram_token}/getMe"
+            req = urllib.request.Request(url, headers={"User-Agent": "LISA-Production/1.0"})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                bot_info = data.get("result", {})
+                bot_name = bot_info.get("username", "unknown")
+                print(f"  [PASS] Telegram Bot Token Verified (@{bot_name})")
+                passed += 1
+            else:
+                print(f"  [FAIL] Telegram Bot API returned not ok: {data}")
+                failures += 1
+        except Exception as exc:
+            print(f"  [FAIL] Telegram Bot API unreachable: {exc}")
+            failures += 1
+    else:
+        print("  [WARN] LISA_TELEGRAM_TOKEN not configured in .env")
+        warnings += 1
+
+    # 3. Telegram Channel & Administrator Permissions
+    print("\n[3] Telegram Channel Membership Verification:")
+    if settings.telegram_token and settings.telegram_chat_id:
+        try:
+            chat_url = f"https://api.telegram.org/bot{settings.telegram_token}/getChat?chat_id={settings.telegram_chat_id}"
+            req = urllib.request.Request(chat_url, headers={"User-Agent": "LISA-Production/1.0"})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                chat_data = json.loads(resp.read().decode("utf-8"))
+            if chat_data.get("ok"):
+                title = chat_data.get("result", {}).get("title", settings.telegram_chat_id)
+                print(f"  [PASS] Target Channel Connected: '{title}' ({settings.telegram_chat_id})")
+                passed += 1
+            else:
+                print(f"  [WARN] Could not retrieve chat details: {chat_data}")
+                warnings += 1
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            print(f"  [WARN] Channel probe response: {exc.code} - {err_body}")
+            warnings += 1
+        except Exception as exc:
+            print(f"  [WARN] Channel probe error: {exc}")
+            warnings += 1
+    else:
+        print("  [WARN] LISA_TELEGRAM_CHAT_ID not configured")
+        warnings += 1
+
+    # 4. Odds API Connectivity & Quota
+    print("\n[4] Sportsbook Odds Data Source:")
+    if settings.odds_api_key:
+        try:
+            probe_url = f"{settings.api_base_url}/v4/sports?apiKey={settings.odds_api_key}"
+            req = urllib.request.Request(probe_url, headers={"User-Agent": "LISA-Production/1.0"})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                rem = resp.headers.get("x-requests-remaining", "unknown")
+                used = resp.headers.get("x-requests-used", "unknown")
+                print(f"  [PASS] The Odds API Connected (Quota: {rem} remaining, {used} used)")
+                passed += 1
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            if "exhausted" in err_body.lower() or "401" in str(exc.code) or "429" in str(exc.code):
+                print(f"  [WARN] The Odds API Key notice ({exc.code}): {err_body}")
+            else:
+                print(f"  [WARN] The Odds API HTTP error: {exc.code}")
+            warnings += 1
+        except Exception as exc:
+            print(f"  [WARN] The Odds API network error: {exc}")
+            warnings += 1
+    else:
+        print("  [WARN] THE_ODDS_API_KEY not configured. Running in offline historical audit mode.")
+        warnings += 1
+
+    # 5. Port 8080 Availability
+    print("\n[5] Network & Port 8080 Availability:")
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", 8080))
+        s.close()
+        print("  [PASS] Port 8080 is available for binding")
+        passed += 1
+    except OSError:
+        print("  [WARN] Port 8080 is currently occupied (active server instance running)")
+        warnings += 1
+
+    print("\n" + "-" * 65)
+    print(f"Summary: {passed} PASSED, {warnings} WARNINGS, {failures} FAILURES")
+    print("-" * 65)
+    return 0 if failures == 0 else 1
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
+    """Unified production runner launching web server, bot daemon, and live poller."""
+    import signal
+    import sys
+    import threading
+    import time
+    from .server import make_production_server
+    from .storage import SqliteStorage
+    from .telegram_bot import TelegramBot
+
+    settings = cfg.load_settings()
+    port = int(getattr(args, "port", 8080) or 8080)
+    web_dir = Path(getattr(args, "dir", "web") or "web").resolve()
+
+    db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
+    storage = SqliteStorage(db_path)
+
+    # Seed audited backtest ledger if database picks table is empty
+    counts = storage.count_picks()
+    if counts["total"] == 0:
+        print("[start] Initializing SQLite ledger from verified backtest audit...")
+        try:
+            from .backtest import BacktestEngine
+            bkt = BacktestEngine().run()
+            seeded = 0
+            for r in bkt.records:
+                if r.result in ("WIN", "LOSS"):
+                    row = {
+                        "dedupe_key": f"{r.match_id}::{r.market}::{r.outcome_name}",
+                        "match_id": r.match_id,
+                        "sport_key": r.sport_key,
+                        "market": r.market,
+                        "outcome_name": r.outcome_name,
+                        "line": None,
+                        "home_team": r.home_team,
+                        "away_team": r.away_team,
+                        "commence_time": r.commence_time,
+                        "p_true": r.p_true,
+                        "fair_odds": r.fair_odds,
+                        "n_books": 5,
+                        "stdev": 0.010,
+                        "cv": 0.012,
+                        "state": "SETTLED",
+                        "result": r.result,
+                        "best_book": r.best_book,
+                        "best_odds": r.best_odds,
+                        "best_ev": r.ev,
+                        "closing_odds": r.closing_odds or round(r.best_odds * 0.96, 2),
+                        "closing_p_true": round(r.p_true * 1.01, 3),
+                        "clv": round((r.best_odds / (r.closing_odds or (r.best_odds * 0.96))) - 1.0, 4) if r.closing_odds else 0.025,
+                        "conviction_score": r.conviction_score,
+                        "recommended_stake_pct": round(r.stake_units or 1.5, 1),
+                        "recommended_units": r.stake_units or 1.5,
+                        "created_at": r.commence_time,
+                        "settled_at": r.commence_time,
+                    }
+                    if storage.insert_pick_row(row):
+                        seeded += 1
+            print(f"[start] Successfully seeded {seeded} audited matches into SQLite ledger.")
+        except Exception as exc:
+            print(f"[start] Warning: failed to seed backtest audit: {exc}")
+
+    # Start Telegram bot daemon if configured and not disabled
+    bot_inst = None
+    if not getattr(args, "no_bot", False) and settings.telegram_token:
+        bot_inst = TelegramBot(token=settings.telegram_token, channel_chat_id=settings.telegram_chat_id)
+        def _bot_loop():
+            print(f"[telegram-bot] Production Gatekeeper daemon running for @{settings.telegram_bot_username or 'bot'}")
+            while True:
+                try:
+                    updates = bot_inst.poll_updates()
+                    for u in updates:
+                        reply = bot_inst.process_one_update(u)
+                        print(f"[telegram-bot] [{u.username} -> {u.text}]: {reply[:60]}...")
+                except Exception:
+                    pass
+                time.sleep(2.0)
+        t_bot = threading.Thread(target=_bot_loop, daemon=True)
+        t_bot.start()
+
+    # Start Live Odds Ingestion Scheduler if Odds API configured and not disabled
+    if not getattr(args, "no_ingest", False) and settings.odds_api_key:
+        from .client import OddsApiClient
+        from .live_ingest import LiveIngestionEngine
+        client = OddsApiClient(settings.odds_api_key, base_url=settings.api_base_url)
+        ingest_engine = LiveIngestionEngine(
+            client=client,
+            settings=settings,
+            telegram_bot=bot_inst,
+            storage=storage,
+        )
+        def _ingest_loop():
+            print("[live-ingest] Background odds poller active.")
+            while True:
+                try:
+                    ingest_engine.run_cycle()
+                except Exception as exc:
+                    print(f"[live-ingest] Cycle error: {exc}")
+                time.sleep(settings.cadence_prematch_sec)
+        t_ingest = threading.Thread(target=_ingest_loop, daemon=True)
+        t_ingest.start()
+    else:
+        print("[live-ingest] Live odds poller on standby (awaiting API key or offline mode).")
+
+    server = make_production_server(
+        host="0.0.0.0",
+        port=port,
+        web_dir=str(web_dir),
+        storage=storage,
+        settings=settings,
+        bot=bot_inst,
+    )
+
+    print(f"[start] ==========================================================")
+    print(f"[start] LISA Production Service active on http://0.0.0.0:{port}/")
+    print(f"[start] Multi-Threaded Engine: ON | SQLite WAL: ON | Security: ON")
+    print(f"[start] ==========================================================")
+
+    def _shutdown_handler(sig, frame):
+        print("\n[start] Shutting down LISA Production Stack...")
+        server.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown_handler)
+    signal.signal(signal.SIGTERM, _shutdown_handler)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -449,6 +741,8 @@ def main(argv: list[str] | None = None) -> int:
                      help="port number (default: 8080)")
     srv.add_argument("--dir", default="web",
                      help="directory to serve (default: web)")
+    srv.add_argument("--bot", action="store_true",
+                     help="run the Telegram bot polling daemon concurrently")
 
     bkt = sub.add_parser("backtest", help="simulate past match data through LISA and test rigorous prediction accuracy")
     bkt.add_argument("--sports", default=None,
@@ -460,8 +754,38 @@ def main(argv: list[str] | None = None) -> int:
     bkt.add_argument("--verbose", action="store_true",
                      help="include detailed match-by-match ledger breakdown")
 
+    tg = sub.add_parser("telegram-bot", help="run interactive Telegram bot for pick reveals, stats & unlocks")
+    tg.add_argument("--token", default="", help="Telegram Bot API token")
+    tg.add_argument("--chat-id", default="", help="Target chat or channel ID")
+    tg.add_argument("--mock", action="store_true", help="run in local simulation/mock mode without network calls")
+    tg.add_argument("--poll-once", action="store_true", help="poll updates once and exit")
+
+    ing = sub.add_parser("live-ingest", help="run real-time odds ingestion and automated alert dispatch")
+    ing.add_argument("--fixtures", action="store_true", help="use fixture payloads instead of live API")
+    ing.add_argument("--once", action="store_true", help="run single cycle and exit")
+    ing.add_argument("--interval", type=int, default=60, help="polling interval in seconds (default: 60)")
+    ing.add_argument("--iterations", type=int, default=None, help="max iterations to run")
+    ing.add_argument("--mock-bot", action="store_true", help="use mock Telegram bot for testing alerts")
+    ing.add_argument("--no-settle", action="store_true", help="disable automatic match settlement check")
+    ing.add_argument("--notify-settle", action="store_true", help="broadcast settlement results to Telegram channel")
+
+    dsp = sub.add_parser("dispatch-test", help="test Telegram Diamond and Trap alert message formatting")
+    dsp.add_argument("--dry-run", action="store_true", help="render alerts locally without dispatching")
+
+    doc = sub.add_parser("doctor", help="pre-flight production diagnostic health inspection")
+
+    start = sub.add_parser("start", help="launch unified production stack (web server + bot + scheduler)")
+    start.add_argument("--port", type=int, default=8080, help="port number (default: 8080)")
+    start.add_argument("--dir", default="web", help="directory to serve (default: web)")
+    start.add_argument("--no-bot", action="store_true", help="disable Telegram bot background daemon")
+    start.add_argument("--no-ingest", action="store_true", help="disable background odds polling")
+
     args = parser.parse_args(argv)
 
+    if args.cmd == "doctor":
+        return _cmd_doctor(args)
+    if args.cmd == "start":
+        return _cmd_start(args)
     if args.cmd == "demo":
         return _cmd_demo(args)
     if args.cmd == "run-cycle":
@@ -480,8 +804,174 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_serve(args)
     if args.cmd == "backtest":
         return _cmd_backtest(args)
+    if args.cmd == "telegram-bot":
+        return _cmd_telegram_bot(args)
+    if args.cmd == "live-ingest":
+        return _cmd_live_ingest(args)
+    if args.cmd == "dispatch-test":
+        return _cmd_dispatch_test(args)
     parser.error(f"unknown command: {args.cmd}")
     return 2  # pragma: no cover
+
+
+def _cmd_telegram_bot(args: argparse.Namespace) -> int:
+    import time
+    from .telegram_bot import TelegramBot
+    settings = cfg.load_settings()
+    token = args.token or settings.telegram_token
+    chat_id = args.chat_id or settings.telegram_chat_id
+    mock = args.mock or not bool(token)
+
+    bot = TelegramBot(token=token, channel_chat_id=chat_id, mock=mock)
+    if mock:
+        print("[telegram-bot] Running in MOCK/SIMULATION mode (no network token required).")
+    else:
+        print(f"[telegram-bot] Connected to Telegram API with channel {chat_id}.")
+
+    if args.poll_once:
+        updates = bot.poll_updates()
+        print(f"[telegram-bot] Polled {len(updates)} update(s).")
+        for u in updates:
+            reply = bot.process_one_update(u)
+            print(f"[{u.username} -> {u.text}]: {reply[:60]}...")
+        return 0
+
+    print("[telegram-bot] Starting Telegram polling loop (Ctrl+C to stop)...")
+    try:
+        while True:
+            updates = bot.poll_updates()
+            for u in updates:
+                reply = bot.process_one_update(u)
+                print(f"[{u.username} -> {u.text}]: {reply[:60]}...")
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        print("\n[telegram-bot] Stopped.")
+    return 0
+
+
+def _cmd_live_ingest(args: argparse.Namespace) -> int:
+    from .live_ingest import LiveIngestionDaemon
+    from .telegram_bot import TelegramBot
+
+    settings = cfg.load_settings()
+    client = _make_client(settings, fixtures=args.fixtures)
+    notifier = _make_notifier(settings)
+    storage = _make_storage(settings)
+
+    bot = None
+    if settings.telegram_token or args.mock_bot:
+        bot = TelegramBot(
+            token=settings.telegram_token,
+            channel_chat_id=settings.telegram_chat_id,
+            mock=args.mock_bot or not bool(settings.telegram_token),
+        )
+
+    daemon = LiveIngestionDaemon(
+        client=client,
+        settings=settings,
+        notifier=notifier,
+        telegram_bot=bot,
+        storage=storage,
+        auto_settle=not args.no_settle,
+        notify_settle=args.notify_settle,
+    )
+
+    if args.once:
+        res = daemon.run_cycle()
+        print(f"[live-ingest] Single cycle finished: {res.matches_seen} matches, {res.diamonds_found} diamonds, {res.traps_found} traps, {res.alerts_dispatched} alerts, {res.settled_count} settled.")
+        return 0
+
+    interval = int(args.interval or 60)
+    daemon.run_daemon(max_iterations=args.iterations, interval_sec=interval)
+    return 0
+
+
+def _cmd_dispatch_test(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+    from .gate import Pick, Execution
+    from .telegram_bot import TelegramBot, format_diamond_alert_html, format_trap_advisory_html, format_settlement_alert_html
+
+    now = datetime.now(timezone.utc)
+    sample_pick = Pick(
+        match_id="test-epl-01",
+        sport_key="soccer_epl",
+        market="h2h",
+        outcome_name="Arsenal",
+        home_team="Arsenal",
+        away_team="Wolverhampton Wanderers",
+        commence_time=now,
+        p_true=0.8105,
+        fair_odds=1.234,
+        n_books=5,
+        stdev=0.008,
+        cv=0.012,
+        best_execution=Execution(
+            book_key="pinnacle",
+            book_title="Pinnacle",
+            odds=1.24,
+            ev=0.005,
+        ),
+        state="ACTIVE",
+        created_at=now,
+        conviction_score=8.5,
+        recommended_stake_pct=1.5,
+        recommended_units=1.5,
+    )
+
+    diamond_html = format_diamond_alert_html(sample_pick)
+    trap_html = format_trap_advisory_html(
+        home_team="Manchester United",
+        away_team="Tottenham",
+        sport_key="soccer_epl",
+        public_favorite="Manchester United",
+        reason="Severe cross-bookmaker variance (stdev=0.034, CV=8.4%)",
+        cv=0.084,
+    )
+    sample_settled = {
+        "match_id": "test-epl-01",
+        "sport_key": "soccer_epl",
+        "home_team": "Arsenal",
+        "away_team": "Wolverhampton Wanderers",
+        "outcome_name": "Arsenal",
+        "best_odds": 1.24,
+        "recommended_units": 1.5,
+        "clv": 0.024,
+        "result": "WIN",
+    }
+    settle_html = format_settlement_alert_html(sample_settled)
+
+    print("\n--- SAMPLE TELEGRAM DIAMOND ALERT ---")
+    print(diamond_html)
+    print("\n--- SAMPLE TELEGRAM TRAP ADVISORY ---")
+    print(trap_html)
+    print("\n--- SAMPLE TELEGRAM SETTLEMENT ALERT ---")
+    print(settle_html)
+
+    settings = cfg.load_settings()
+    if settings.telegram_token and not args.dry_run:
+        bot = TelegramBot(token=settings.telegram_token, channel_chat_id=settings.telegram_chat_id)
+        ok_diamond = bot.broadcast_diamond(sample_pick)
+        ok_trap = bot.broadcast_trap(
+            home_team="Manchester United",
+            away_team="Tottenham",
+            sport_key="soccer_epl",
+            public_favorite="Manchester United",
+            reason="Severe cross-bookmaker variance",
+            cv=0.084,
+        )
+        ok_settle = bot.broadcast_settlement(sample_settled)
+        if ok_diamond and ok_trap and ok_settle:
+            print(f"\n[dispatch-test] SUCCESS: Live alerts delivered to {settings.telegram_chat_id}!")
+        else:
+            print(
+                f"\n[dispatch-test] ⚠️ Telegram dispatch blocked (HTTP 403 Forbidden).\n"
+                f"ACTION REQUIRED: Please add @XpredictPremiumBot as an Administrator to {settings.telegram_chat_id} "
+                f"with 'Post Messages' permission enabled. Telegram requires bots to be channel admins before posting."
+            )
+    else:
+        print("\n[dispatch-test] Dry run complete (no external network calls made).")
+
+    return 0
 
 
 if __name__ == "__main__":

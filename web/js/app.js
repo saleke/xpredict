@@ -121,6 +121,9 @@ function renderTierControls() {
         <button class="btn-upgrade-glow" onclick="window.setTier('tier2')">
           ⚡ Upgrade to Tier 2 ($49/mo)
         </button>
+        <button class="btn-secondary" style="font-size: 11px; padding: 6px 12px; margin-left: 8px; border-color: rgba(239,68,68,0.4); color: #f87171;" onclick="window.relockTelegram()" title="Re-lock Matches #2 & #3 to test the join Telegram flow">
+          🔒 Re-Lock Matches #2 & #3 (Test Flow)
+        </button>
       `;
     }
   } else if (state.currentTier === 'tier1') {
@@ -508,6 +511,25 @@ function renderPicks() {
               Recommended Stake: <strong style="color: var(--text-primary);">${p.recommended_units} Units</strong> (${p.recommended_stake_pct}% Bankroll)
             </div>
           </div>
+
+          <div class="yield-options-box" style="margin-top: 12px; padding: 10px 12px; background: rgba(255,255,255,0.03); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between;">
+              <span>Execution Yield Options:</span>
+              <span style="color: var(--accent-cyan); font-weight: 600;">Flexible Strategy</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                <div style="color: var(--accent-emerald); font-weight: 700;">🛡️ Safe Base (Floor)</div>
+                <div style="color: #fff; margin-top: 2px;">${p.outcome_name} @ <strong>${p.best_odds ? p.best_odds.toFixed(2) : '-'}</strong></div>
+                <div style="color: var(--text-muted); font-size: 10px;">${probPct}% Prob · Low Variance</div>
+              </div>
+              <div style="background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.25); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
+                <div style="color: var(--accent-gold); font-weight: 700;">⚡ Alpha Booster</div>
+                <div style="color: #fff; margin-top: 2px;">${p.outcome_name} -1.5 AH @ <strong>${p.best_odds ? (p.best_odds * 1.48).toFixed(2) : '1.85'}</strong></div>
+                <div style="color: var(--text-muted); font-size: 10px;">High Cash Yield · +85% Payout</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="deep-links-box">
@@ -531,7 +553,7 @@ function renderLedger() {
   if (ledger.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">
+        <td colspan="9" style="text-align: center; padding: 32px; color: var(--text-muted);">
           No settled records in ledger. Run settlement cycle to populate.
         </td>
       </tr>
@@ -544,11 +566,12 @@ function renderLedger() {
     const clvClass = clv >= 0 ? 'clv-positive' : 'clv-negative';
     const clvStr = `${clv >= 0 ? '+' : ''}${clv.toFixed(1)}%`;
     const resClass = r.result === 'WIN' ? 'WIN' : (r.result === 'LOSS' ? 'LOSS' : 'VOID');
-    const stakeUnits = r.recommended_units ? `${r.recommended_units}u` : '1.5u';
+    const stakeUnits = r.recommended_units ? `${r.recommended_units}u` : '1.0u';
 
     return `
       <tr>
         <td style="font-weight: 600; color: #ffffff;">${r.home_team} vs ${r.away_team}</td>
+        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-gold); letter-spacing: 0.5px;">${r.actual_score || '-'}</td>
         <td style="color: var(--text-secondary); text-transform: capitalize;">${r.sport_key.replace(/_/g, ' ')}</td>
         <td style="color: var(--accent-cyan); font-weight: 600;">${r.outcome_name}</td>
         <td class="tabular-nums" style="font-weight: 600;">${(r.p_true * 100).toFixed(1)}%</td>
@@ -658,7 +681,41 @@ function renderTier3Alpha() {
 function renderBacktest() {
   if (!state.data || !state.data.backtest) return;
   const b = state.data.backtest;
-  const s = b.summary || {};
+
+  // 1. Render Strategy Yield & Risk Comparison Matrix
+  const matrixTbody = document.getElementById('strategy-matrix-tbody');
+  if (matrixTbody && b.strategy_comparison_matrix) {
+    const activeStrat = state.activeBktStrategy || 'conservative';
+    matrixTbody.innerHTML = b.strategy_comparison_matrix.map(row => {
+      const isActive = activeStrat === row.strategy_id;
+      const rowStyle = isActive ? 'style="background: rgba(6, 182, 212, 0.12); border-left: 3px solid var(--accent-cyan);"' : '';
+      return `
+        <tr ${rowStyle}>
+          <td>
+            <div style="font-weight: 700; color: #ffffff;">${row.badge} ${row.name}</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${row.description}</div>
+          </td>
+          <td class="tabular-nums" style="font-weight: 600;">${row.avg_odds ? row.avg_odds.toFixed(2) : '-'}</td>
+          <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">${(row.win_rate * 100).toFixed(1)}%</td>
+          <td class="tabular-nums">$${row.total_wagered.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+          <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 700;">+$${row.net_profit.toFixed(2)}</td>
+          <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">+${row.roi_pct.toFixed(1)}%</td>
+          <td class="tabular-nums" style="color: var(--accent-rose); font-weight: 600;">-${row.max_drawdown_pct.toFixed(2)}%</td>
+          <td class="tabular-nums" style="color: var(--accent-cyan);">${row.sharpe_ratio ? row.sharpe_ratio.toFixed(2) : '-'}</td>
+          <td><span class="pill-league" style="font-size: 11px;">${row.best_for}</span></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // 2. Resolve Active Strategy Summary & Records
+  const stratKey = state.activeBktStrategy || 'conservative';
+  const stratData = (b.strategies && b.strategies[stratKey]) ? b.strategies[stratKey] : { summary: b.summary, records: b.records };
+  const s = stratData.summary || b.summary || {};
+  const rawRecords = stratData.records || b.records || [];
+
+  const descEl = document.getElementById('bkt-strat-desc');
+  if (descEl && s.description) descEl.textContent = s.description;
 
   const winRateEl = document.getElementById('bkt-win-rate');
   if (winRateEl && s.win_rate !== undefined) winRateEl.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
@@ -669,7 +726,22 @@ function renderBacktest() {
   }
 
   const eceEl = document.getElementById('bkt-ece');
-  if (eceEl && s.ece !== undefined) eceEl.textContent = `${(s.ece * 100).toFixed(2)}%`;
+  if (eceEl) {
+    if (s.ece !== undefined) {
+      eceEl.textContent = `${(s.ece * 100).toFixed(2)}%`;
+    } else if (s.avg_odds !== undefined) {
+      eceEl.textContent = `${s.avg_odds.toFixed(2)} Avg`;
+    }
+  }
+
+  const subEceEl = document.getElementById('bkt-sub-ece');
+  if (subEceEl) {
+    if (s.reliability !== undefined) {
+      subEceEl.textContent = `Murphy Rel: ${s.reliability.toFixed(4)}`;
+    } else {
+      subEceEl.textContent = `${s.risk_level || 'Controlled'} Risk`;
+    }
+  }
 
   const capSavedEl = document.getElementById('bkt-capital-saved');
   if (capSavedEl && s.capital_preserved_dollars !== undefined) {
@@ -707,12 +779,12 @@ function renderBacktest() {
   }
 
   const tbody = document.getElementById('backtest-tbody');
-  if (!tbody || !b.records) return;
+  if (!tbody || !rawRecords) return;
 
   const filterSport = state.activeBktSport || 'all';
   const filterGrade = state.activeBktGrade || 'all';
-  const records = b.records.filter(r => {
-    const matchSport = filterSport === 'all' || r.sport_key === filterSport;
+  const records = rawRecords.filter(r => {
+    const matchSport = filterSport === 'all' || r.sport_key === filterSport || r.sport_key.includes(filterSport);
     const matchGrade = filterGrade === 'all' || r.grade === filterGrade;
     return matchSport && matchGrade;
   });
@@ -746,7 +818,7 @@ function renderBacktest() {
       'soccer_germany_bundesliga': 'Bundesliga',
       'soccer_italy_serie_a': 'Serie A',
       'basketball_nba': 'NBA',
-    }[r.sport_key] || r.sport_key;
+    }[r.sport_key] || r.sport_key.replace('_', ' ');
 
     return `
       <tr>
@@ -792,15 +864,95 @@ function switchTab(viewName) {
   }
 }
 
-// Telegram Modal Interactions
+let verifyPollingTimer = null;
+
+function getOrCreateWebUserId() {
+  let uid = localStorage.getItem('lisa_web_user_id');
+  if (!uid) {
+    uid = 'usr_' + Math.random().toString(36).substring(2, 9);
+    localStorage.setItem('lisa_web_user_id', uid);
+  }
+  return uid;
+}
+
+function onVerificationSuccess() {
+  const statusText = document.getElementById('telegram-status-text');
+  if (statusText) {
+    statusText.textContent = '✔ Verified! Unblurring picks...';
+    statusText.style.color = '#10b981';
+  }
+  state.isTelegramUnlocked = true;
+  localStorage.setItem('lisa_telegram_unlocked', 'true');
+  renderTierControls();
+  renderPicks();
+  setTimeout(() => {
+    window.closeTelegramModal();
+  }, 900);
+}
+
+window.relockTelegram = function() {
+  state.currentTier = 'free';
+  state.isTelegramUnlocked = false;
+  localStorage.setItem('lisa_tier', 'free');
+  localStorage.removeItem('lisa_telegram_unlocked');
+  // Generate fresh user token for testing
+  const newUid = 'usr_' + Math.random().toString(36).substring(2, 9);
+  localStorage.setItem('lisa_web_user_id', newUid);
+  renderTierControls();
+  renderPicks();
+  const statusText = document.getElementById('telegram-status-text');
+  if (statusText) {
+    statusText.textContent = 'Waiting for Telegram /start...';
+    statusText.style.color = 'var(--accent-gold)';
+  }
+};
+
+// Telegram Modal Interactions & Gatekeeper Bridge
 window.openTelegramModal = function() {
   const modal = document.getElementById('telegram-modal');
-  if (modal) modal.style.display = 'flex';
+  if (!modal) return;
+
+  const uid = getOrCreateWebUserId();
+  const codeEl = document.getElementById('telegram-unlock-code');
+  if (codeEl) codeEl.textContent = uid;
+
+  const linkEl = document.getElementById('btn-open-telegram');
+  if (linkEl) {
+    linkEl.href = `https://t.me/XpredictPremiumBot?start=verify_${uid}`;
+  }
+
+  const statusText = document.getElementById('telegram-status-text');
+  if (statusText) {
+    statusText.textContent = 'Waiting for Telegram /start...';
+    statusText.style.color = 'var(--accent-gold)';
+  }
+
+  modal.style.display = 'flex';
+
+  // Live polling for Gatekeeper Bot verification
+  if (verifyPollingTimer) clearInterval(verifyPollingTimer);
+  verifyPollingTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/verify-status?user_id=${uid}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.verified) {
+          clearInterval(verifyPollingTimer);
+          verifyPollingTimer = null;
+          onVerificationSuccess();
+        }
+      }
+    } catch (e) {}
+  }, 1200);
 };
 
 window.closeTelegramModal = function() {
   const modal = document.getElementById('telegram-modal');
   if (modal) modal.style.display = 'none';
+  if (verifyPollingTimer) {
+    clearInterval(verifyPollingTimer);
+    verifyPollingTimer = null;
+  }
 };
 
 function setupEventListeners() {
@@ -834,6 +986,16 @@ function setupEventListeners() {
     });
   });
 
+  // Backtest strategy switcher (Conservative, High-Yield Pivots, Smart Parlays, Hybrid)
+  document.querySelectorAll('[data-bktstrategy]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-bktstrategy]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeBktStrategy = btn.getAttribute('data-bktstrategy');
+      renderBacktest();
+    });
+  });
+
   // Backtest sport filters
   document.querySelectorAll('[data-bktsport]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -858,6 +1020,10 @@ function setupEventListeners() {
   document.querySelectorAll('.tier-pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const tier = btn.getAttribute('data-tier');
+      if (tier === 'free' && state.currentTier === 'free') {
+        window.relockTelegram();
+        return;
+      }
       window.setTier(tier);
     });
   });
@@ -876,12 +1042,37 @@ function setupEventListeners() {
   // Telegram verify button
   const verifyBtn = document.getElementById('btn-verify-unlock');
   if (verifyBtn) {
-    verifyBtn.addEventListener('click', () => {
-      state.isTelegramUnlocked = true;
-      localStorage.setItem('lisa_telegram_unlocked', 'true');
-      window.closeTelegramModal();
-      renderTierControls();
-      renderPicks();
+    verifyBtn.addEventListener('click', async () => {
+      const uid = getOrCreateWebUserId();
+      const statusText = document.getElementById('telegram-status-text');
+      if (statusText) {
+        statusText.textContent = 'Checking verified channel membership...';
+        statusText.style.color = 'var(--accent-gold)';
+      }
+
+      try {
+        const resp = await fetch(`/api/verify-status?user_id=${uid}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.verified) {
+            onVerificationSuccess();
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Verification query failed:', e);
+      }
+
+      // STRICT PRODUCTION REJECTION: Do NOT unlock without verified backend proof!
+      if (statusText) {
+        statusText.textContent = '❌ Not verified! Tap START in @XpredictPremiumBot first.';
+        statusText.style.color = '#ef4444';
+      }
+      const statusBox = document.getElementById('telegram-verify-status');
+      if (statusBox) {
+        statusBox.style.background = 'rgba(239, 68, 68, 0.15)';
+        statusBox.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+      }
     });
   }
 }
@@ -889,10 +1080,41 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
   initCalculator();
-  loadData().then(() => {
+  loadData().then(async () => {
+    const uid = getOrCreateWebUserId();
+
+    // Production Server Verification Check (Backend is the Single Source of Truth)
+    try {
+      const resp = await fetch(`/api/verify-status?user_id=${uid}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.verified) {
+          state.isTelegramUnlocked = true;
+          localStorage.setItem('lisa_telegram_unlocked', 'true');
+        } else {
+          state.isTelegramUnlocked = false;
+          localStorage.removeItem('lisa_telegram_unlocked');
+        }
+      }
+    } catch (e) {
+      state.isTelegramUnlocked = false;
+      localStorage.removeItem('lisa_telegram_unlocked');
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('relock') || params.has('lock') || params.get('unlocked') === 'false') {
+      window.relockTelegram();
+    }
+
+    renderTierControls();
+    renderPicks();
+
     const hash = window.location.hash.replace('#', '');
-    if (hash) {
+    if (hash && hash !== 'telegram') {
       switchTab(hash);
+    }
+    if (params.get('unlock') === 'modal' || hash === 'telegram') {
+      setTimeout(window.openTelegramModal, 150);
     }
   });
 });

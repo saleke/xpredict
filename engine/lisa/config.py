@@ -91,7 +91,7 @@ class Settings:
     stale_live_sec: int = 300
 
     # -- Stage 4: storage -----------------------------------------------------
-    storage_driver: str = "inmemory"  # inmemory | redis | postgres
+    storage_driver: str = "sqlite"  # sqlite | inmemory | redis | postgres
     redis_url: str = ""
     database_url: str = ""
     live_ttl_sec: int = 5 * 3600
@@ -104,6 +104,8 @@ class Settings:
     # -- notifications --------------------------------------------------------
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    tier2_telegram_chat_id: str = ""
+    telegram_bot_username: str = ""
 
     # -- alerting policy ------------------------------------------------------
     alert_cooldown_sec: int = 600
@@ -130,7 +132,32 @@ class Settings:
     metrics_path: str = "data/metrics.jsonl"
 
 
+def _load_dotenv(filepath: str = ".env") -> None:
+    """Zero-dependency .env loader that populates os.environ if key not already set."""
+    try:
+        from pathlib import Path
+        for candidate in (
+            Path(filepath),
+            Path.cwd() / filepath,
+            Path(__file__).resolve().parents[2] / filepath,
+        ):
+            if candidate.exists() and candidate.is_file():
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("\"'")
+                    if k and v and k not in os.environ:
+                        os.environ[k] = v
+                break
+    except Exception:
+        pass
+
+
 def load_settings() -> Settings:
+    _load_dotenv()
     sports = validate_sports(_tuple("LISA_SPORTS", Settings.sports))
     return Settings(
         odds_api_key=os.getenv("THE_ODDS_API_KEY") or os.getenv("LISA_ODDS_API_KEY", ""),
@@ -151,7 +178,7 @@ def load_settings() -> Settings:
         require_positive_ev=_bool("LISA_REQUIRE_POSITIVE_EV", Settings.require_positive_ev),
         stale_prematch_sec=_int("LISA_STALE_PREMATCH_SEC", Settings.stale_prematch_sec),
         stale_live_sec=_int("LISA_STALE_LIVE_SEC", Settings.stale_live_sec),
-        storage_driver=os.environ.get("LISA_STORAGE", "inmemory"),
+        storage_driver=os.environ.get("LISA_STORAGE", "sqlite"),
         redis_url=os.environ.get("LISA_REDIS_URL", ""),
         database_url=os.environ.get("LISA_DATABASE_URL", ""),
         live_ttl_sec=_int("LISA_LIVE_TTL_SEC", Settings.live_ttl_sec),
@@ -160,6 +187,8 @@ def load_settings() -> Settings:
         settle_scores_days=_int("LISA_SETTLE_SCORES_DAYS", Settings.settle_scores_days),
         telegram_token=os.environ.get("LISA_TELEGRAM_TOKEN", ""),
         telegram_chat_id=os.environ.get("LISA_TELEGRAM_CHAT_ID", ""),
+        tier2_telegram_chat_id=os.environ.get("LISA_TIER2_TELEGRAM_CHAT_ID", ""),
+        telegram_bot_username=os.environ.get("LISA_TELEGRAM_BOT_USERNAME", ""),
         alert_cooldown_sec=_int("LISA_ALERT_COOLDOWN_SEC", Settings.alert_cooldown_sec),
         alert_min_delta=_float("LISA_ALERT_MIN_DELTA", Settings.alert_min_delta),
         max_alerts_per_cycle=_int("LISA_MAX_ALERTS_PER_CYCLE", Settings.max_alerts_per_cycle),

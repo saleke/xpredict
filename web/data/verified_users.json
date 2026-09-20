@@ -1,0 +1,32 @@
+{
+  "usr_web_42": {
+    "verified": true,
+    "telegram_user_id": "tg_user_1",
+    "username": "trader_joe",
+    "verified_at": 1789946828.666267
+  },
+  "test_valid_user": {
+    "verified": true,
+    "telegram_user_id": "999",
+    "username": "tester",
+    "verified_at": 1789945772.3169205
+  },
+  "user_seed_42": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789946827.804969
+  },
+  "usr_avdtedo": {
+    "verified": true,
+    "telegram_user_id": "8720543490",
+    "username": "user",
+    "verified_at": 1789946562.7648342
+  },
+  "usr_28252o3": {
+    "verified": true,
+    "telegram_user_id": "6423327380",
+    "username": "THEVICTORHOMES",
+    "verified_at": 1789946781.6990585
+  }
+}

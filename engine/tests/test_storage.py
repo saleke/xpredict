@@ -118,3 +118,108 @@ def test_postgres_schema_constant_is_sane():
     assert "CREATE TABLE IF NOT EXISTS picks" in POSTGRES_DDL
     assert "line          DOUBLE PRECISION" in POSTGRES_DDL
     assert "ON CONFLICT" not in POSTGRES_DDL  # PK is the dedupe mechanism
+
+
+def test_json_file_storage(tmp_path):
+    from lisa.storage import JsonFileStorage
+    fpath = str(tmp_path / "storage.json")
+    store = JsonFileStorage(fpath)
+
+    p1 = _pick(match_id="m-file-1", outcome="TeamA")
+    assert store.insert_pick(p1) is True
+    assert store.insert_pick(p1) is False  # dedupe
+
+    pending = store.list_pending_picks()
+    assert len(pending) == 1
+    assert pending[0]["match_id"] == "m-file-1"
+
+    # Settle pick
+    k = pick_key("m-file-1", "h2h", "TeamA")
+    assert store.settle_pick(k, "WIN", utcnow()) is True
+    assert len(store.list_pending_picks()) == 0
+    assert len(store.list_settled_picks()) == 1
+
+    # Reload from disk into fresh instance
+    store2 = JsonFileStorage(fpath)
+    assert len(store2.list_settled_picks()) == 1
+    reloaded = store2.get_pick(k)
+    assert reloaded is not None
+    assert reloaded["result"] == "WIN"
+
+
+def test_sqlite_storage(tmp_path):
+    from lisa.storage import SqliteStorage
+    db_file = str(tmp_path / "test_lisa.db")
+    store = SqliteStorage(db_file)
+
+    # Hot layer TTL
+    store.upsert_live("match:live-1", {"score": "2-1"}, ttl_seconds=1)
+    assert store.get_live("match:live-1") == {"score": "2-1"}
+    assert "match:live-1" in list(store.scan_live_keys())
+
+    # Cold layer write-once pick insert
+    p1 = _pick(match_id="m-sql-1", outcome="Lakers")
+    assert store.insert_pick(p1) is True
+    assert store.insert_pick(p1) is False  # dedupe
+
+    pending = store.list_pending_picks()
+    assert len(pending) == 1
+    assert pending[0]["outcome_name"] == "Lakers"
+
+    # Settle pick
+    k = pick_key("m-sql-1", "h2h", "Lakers")
+    assert store.settle_pick(k, "WIN", utcnow()) is True
+    assert store.settle_pick(k, "LOSS", utcnow()) is False  # write-once guarantee
+    assert len(store.list_pending_picks()) == 0
+    settled = store.list_settled_picks()
+    assert len(settled) == 1
+    assert settled[0]["result"] == "WIN"
+
+    # Closing odds & CLV
+    assert store.update_pick_closing(k, closing_odds=1.15, closing_p_true=0.85, clv=0.095) is True
+    updated = store.get_pick(k)
+    assert updated is not None
+    assert updated["closing_odds"] == 1.15
+    assert updated["clv"] == 0.095
+
+    # Verification session
+    assert store.is_user_verified("user-xyz") is False
+    store.verify_user("user-xyz", telegram_user_id="998877", username="testuser")
+    assert store.is_user_verified("user-xyz") is True
+    session = store.get_verified_user("user-xyz")
+    assert session is not None
+    assert session["username"] == "testuser"
+
+    # Count stats
+    counts = store.count_picks()
+    assert counts["total"] == 1
+    assert counts["settled"] == 1
+    assert counts["won"] == 1
+
+
+def test_sqlite_concurrent_access(tmp_path):
+    import threading
+    from lisa.storage import SqliteStorage
+
+    db_file = str(tmp_path / "concurrent_lisa.db")
+    store = SqliteStorage(db_file)
+    errors = []
+
+    def writer(idx: int):
+        try:
+            p = _pick(match_id=f"m-conc-{idx}", outcome=f"Team-{idx}")
+            store.insert_pick(p)
+            store.verify_user(f"session-{idx}", username=f"user_{idx}")
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(errors) == 0
+    counts = store.count_picks()
+    assert counts["total"] == 20
+    assert counts["pending"] == 20

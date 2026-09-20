@@ -11,8 +11,10 @@ Redis and Postgres drivers activate via ``LISA_STORAGE=redis|postgres``.
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from .gate import Pick
@@ -158,6 +160,370 @@ class InMemoryStorage(Storage):
         row["closing_p_true"] = closing_p_true
         row["clv"] = clv
         return True
+
+
+class JsonFileStorage(InMemoryStorage):
+    """File-backed storage persisting picks to JSON. Zero external dependencies.
+    Survives restarts and preserves the strict write-once ledger state machine."""
+
+    def __init__(self, filepath: str = "data/storage.json") -> None:
+        super().__init__()
+        self.filepath = filepath
+        self._load()
+
+    def _load(self) -> None:
+        if os.path.exists(self.filepath):
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        self._picks = data.get("picks", {})
+            except Exception:
+                self._picks = {}
+
+    def _save(self) -> None:
+        try:
+            folder = os.path.dirname(os.path.abspath(self.filepath))
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            tmp_path = f"{self.filepath}.tmp.{os.getpid()}"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump({"picks": self._picks}, f, indent=2)
+            os.replace(tmp_path, self.filepath)
+        except Exception:
+            pass
+
+    def insert_pick(self, pick: Pick) -> bool:
+        ret = super().insert_pick(pick)
+        if ret:
+            self._save()
+        return ret
+
+    def settle_pick(self, dedupe_key: str, result: str,
+                    settled_at: datetime, state: str = "SETTLED") -> bool:
+        ret = super().settle_pick(dedupe_key, result, settled_at, state=state)
+        if ret:
+            self._save()
+        return ret
+
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        ret = super().update_pick_closing(dedupe_key, closing_odds, closing_p_true, clv)
+        if ret:
+            self._save()
+        return ret
+
+
+SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS picks (
+    dedupe_key    TEXT PRIMARY KEY,
+    match_id      TEXT NOT NULL,
+    sport_key     TEXT NOT NULL,
+    market        TEXT NOT NULL,
+    outcome_name  TEXT NOT NULL,
+    line          REAL,
+    home_team     TEXT,
+    away_team     TEXT,
+    commence_time TEXT,
+    p_true        REAL NOT NULL,
+    fair_odds     REAL NOT NULL,
+    n_books       INTEGER NOT NULL,
+    stdev         REAL,
+    cv            REAL,
+    state         TEXT NOT NULL,
+    result        TEXT,
+    best_book     TEXT,
+    best_odds     REAL,
+    best_ev       REAL,
+    closing_odds  REAL,
+    closing_p_true REAL,
+    clv           REAL,
+    conviction_score REAL DEFAULT 0.0,
+    recommended_stake_pct REAL DEFAULT 0.0,
+    recommended_units REAL DEFAULT 0.0,
+    created_at    TEXT NOT NULL,
+    settled_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_picks_state ON picks(state);
+CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
+CREATE INDEX IF NOT EXISTS idx_picks_created ON picks(created_at);
+
+CREATE TABLE IF NOT EXISTS live_cache (
+    key           TEXT PRIMARY KEY,
+    data          TEXT NOT NULL,
+    expires_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_expires ON live_cache(expires_at);
+
+CREATE TABLE IF NOT EXISTS verified_sessions (
+    web_user_id      TEXT PRIMARY KEY,
+    telegram_user_id TEXT,
+    username         TEXT,
+    verified_at      REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS system_telemetry (
+    key           TEXT PRIMARY KEY,
+    val_json      TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id                TEXT PRIMARY KEY,
+    email             TEXT UNIQUE NOT NULL,
+    password_hash     TEXT NOT NULL,
+    password_salt     TEXT NOT NULL,
+    display_name      TEXT,
+    tier              TEXT NOT NULL DEFAULT 'free',
+    telegram_id       TEXT,
+    telegram_username TEXT,
+    telegram_verified INTEGER NOT NULL DEFAULT 0,
+    created_at        REAL NOT NULL,
+    updated_at        REAL NOT NULL,
+    last_login_at     REAL
+);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id        TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at        REAL NOT NULL,
+    expires_at        REAL NOT NULL,
+    ip_address        TEXT,
+    user_agent        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+"""
+
+
+class SqliteStorage(Storage):
+    """Production-grade relational storage driver using Python's standard library sqlite3.
+    
+    Features:
+      * WAL (Write-Ahead Logging) mode enabled for non-blocking concurrent reads during writes.
+      * Strict write-once audited ledger (picks table with primary key dedupe_key).
+      * High-performance hot live cache table with automatic TTL expiration.
+      * Persistent verified Telegram subscriber session tracking.
+      * Zero external dependencies.
+    """
+
+    def __init__(self, db_path: str = "data/lisa.db") -> None:
+        self.db_path = db_path
+        folder = os.path.dirname(os.path.abspath(self.db_path))
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        self.ensure_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        return conn
+
+    def ensure_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(SQLITE_DDL)
+            conn.commit()
+
+    # -- hot layer -----------------------------------------------------------
+
+    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
+        expires_at = time.time() + ttl_seconds
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO live_cache (key, data, expires_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET data=excluded.data, expires_at=excluded.expires_at",
+                (key, json.dumps(data), expires_at)
+            )
+            conn.commit()
+
+    def get_live(self, key: str) -> Optional[dict]:
+        now = time.time()
+        with self._connect() as conn:
+            cur = conn.execute("SELECT data, expires_at FROM live_cache WHERE key = ?", (key,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            if row["expires_at"] < now:
+                conn.execute("DELETE FROM live_cache WHERE key = ?", (key,))
+                conn.commit()
+                return None
+            return json.loads(row["data"])
+
+    def scan_live_keys(self) -> Iterable[str]:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM live_cache WHERE expires_at < ?", (now,))
+            conn.commit()
+            cur = conn.execute("SELECT key FROM live_cache WHERE expires_at >= ?", (now,))
+            return [r["key"] for r in cur.fetchall()]
+
+    # -- cold layer ----------------------------------------------------------
+
+    def insert_pick(self, pick: Pick) -> bool:
+        r = pick_to_row(pick)
+        return self.insert_pick_row(r)
+
+    def insert_pick_row(self, r: dict) -> bool:
+        sql = """
+            INSERT OR IGNORE INTO picks (
+                dedupe_key, match_id, sport_key, market, outcome_name, line,
+                home_team, away_team, commence_time, p_true, fair_odds,
+                n_books, stdev, cv, state, result, best_book, best_odds,
+                best_ev, closing_odds, closing_p_true, clv,
+                conviction_score, recommended_stake_pct, recommended_units,
+                created_at, settled_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?
+            )
+        """
+        params = (
+            r["dedupe_key"],
+            r.get("match_id", ""),
+            r.get("sport_key", ""),
+            r.get("market", ""),
+            r.get("outcome_name", ""),
+            r.get("line"),
+            r.get("home_team"),
+            r.get("away_team"),
+            r.get("commence_time"),
+            r.get("p_true", 0.0),
+            r.get("fair_odds", 1.0),
+            r.get("n_books", 1),
+            r.get("stdev", 0.0),
+            r.get("cv", 0.0),
+            r.get("state", "TRIGGER_ALERT"),
+            r.get("result"),
+            r.get("best_book"),
+            r.get("best_odds"),
+            r.get("best_ev"),
+            r.get("closing_odds"),
+            r.get("closing_p_true"),
+            r.get("clv"),
+            float(r.get("conviction_score") or 0.0),
+            float(r.get("recommended_stake_pct") or 0.0),
+            float(r.get("recommended_units") or 0.0),
+            r.get("created_at") or r.get("commence_time") or datetime.now(timezone.utc).isoformat(),
+            r.get("settled_at")
+        )
+        with self._connect() as conn:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_pick(self, dedupe_key: str) -> Optional[dict]:
+        with self._connect() as conn:
+            cur = conn.execute("SELECT * FROM picks WHERE dedupe_key = ?", (dedupe_key,))
+            row = cur.fetchone()
+            return dict(row) if row is not None else None
+
+    def list_pending_picks(self) -> list[dict]:
+        placeholders = ",".join("?" for _ in PENDING_STATES)
+        sql = f"SELECT * FROM picks WHERE state IN ({placeholders}) ORDER BY commence_time ASC"
+        with self._connect() as conn:
+            cur = conn.execute(sql, list(PENDING_STATES))
+            return [dict(r) for r in cur.fetchall()]
+
+    def list_settled_picks(self) -> list[dict]:
+        placeholders = ",".join("?" for _ in PENDING_STATES)
+        sql = f"SELECT * FROM picks WHERE state NOT IN ({placeholders}) ORDER BY settled_at DESC, created_at DESC"
+        with self._connect() as conn:
+            cur = conn.execute(sql, list(PENDING_STATES))
+            return [dict(r) for r in cur.fetchall()]
+
+    def settle_pick(self, dedupe_key: str, result: str,
+                    settled_at: datetime, state: str = "SETTLED") -> bool:
+        placeholders = ",".join("?" for _ in PENDING_STATES)
+        sql = f"""
+            UPDATE picks SET state = ?, result = ?, settled_at = ?
+            WHERE dedupe_key = ? AND state IN ({placeholders})
+        """
+        params = [state, result, settled_at.isoformat(), dedupe_key, *PENDING_STATES]
+        with self._connect() as conn:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur.rowcount > 0
+
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        sql = """
+            UPDATE picks SET closing_odds = ?, closing_p_true = ?, clv = ?
+            WHERE dedupe_key = ?
+        """
+        with self._connect() as conn:
+            cur = conn.execute(sql, (closing_odds, closing_p_true, clv, dedupe_key))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # -- sessions & telemetry ------------------------------------------------
+
+    def verify_user(self, web_user_id: str, telegram_user_id: str = "", username: str = "") -> None:
+        if not web_user_id:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO verified_sessions (web_user_id, telegram_user_id, username, verified_at) "
+                "VALUES (?, ?, ?, ?)",
+                (web_user_id.strip(), str(telegram_user_id), username, time.time())
+            )
+            conn.commit()
+
+    def is_user_verified(self, web_user_id: str) -> bool:
+        if not web_user_id:
+            return False
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT 1 FROM verified_sessions WHERE web_user_id = ?",
+                (web_user_id.strip(),)
+            )
+            return cur.fetchone() is not None
+
+    def get_verified_user(self, web_user_id: str) -> Optional[dict]:
+        if not web_user_id:
+            return None
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT web_user_id, telegram_user_id, username, verified_at FROM verified_sessions WHERE web_user_id = ?",
+                (web_user_id.strip(),)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def count_picks(self) -> dict[str, int]:
+        with self._connect() as conn:
+            cur = conn.execute("""
+                SELECT
+                    count(*) as total,
+                    sum(case when state in ('TRIGGER_ALERT', 'CONFIRMED', 'PENDING_SETTLEMENT') then 1 else 0 end) as pending,
+                    sum(case when state not in ('TRIGGER_ALERT', 'CONFIRMED', 'PENDING_SETTLEMENT') then 1 else 0 end) as settled,
+                    sum(case when result = 'WIN' then 1 else 0 end) as won,
+                    sum(case when result = 'LOSS' then 1 else 0 end) as lost,
+                    sum(case when result = 'VOID' then 1 else 0 end) as void
+                FROM picks
+            """)
+            row = cur.fetchone()
+            if not row:
+                return {"total": 0, "pending": 0, "settled": 0, "won": 0, "lost": 0, "void": 0}
+            return {
+                "total": row["total"] or 0,
+                "pending": row["pending"] or 0,
+                "settled": row["settled"] or 0,
+                "won": row["won"] or 0,
+                "lost": row["lost"] or 0,
+                "void": row["void"] or 0,
+            }
+
 
 
 class RedisStorage(Storage):

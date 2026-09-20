@@ -174,6 +174,7 @@
             <thead>
               <tr>
                 <th>Match</th>
+                <th>Actual Score</th>
                 <th>League</th>
                 <th>Selection</th>
                 <th>True Prob</th>
@@ -402,17 +403,41 @@
           </span>
         </div>
 
+        <!-- Multi-Strategy Profile Selector -->
+        <div style="padding: 14px 24px; background: rgba(0,0,0,0.3); border-bottom: 1px solid var(--border-subtle); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span style="font-size: 11px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Strategy Profile:</span>
+            <div class="filter-group" id="bkt-strategy-filter-group" style="margin: 0;">
+              <button class="pill-filter active" data-bktstrategy="conservative" id="bkt-strat-conservative">
+                🛡️ Conservative Singles <span style="font-size: 10px; opacity: 0.8; margin-left: 4px;">(84% Win)</span>
+              </button>
+              <button class="pill-filter" data-bktstrategy="high_yield_pivots" id="bkt-strat-pivots">
+                ⚡ High-Yield Value Pivots <span style="font-size: 10px; opacity: 0.8; margin-left: 4px; color: var(--accent-emerald);">+$1,189</span>
+              </button>
+              <button class="pill-filter" data-bktstrategy="smart_parlays" id="bkt-strat-parlays">
+                🎯 Smart 2-Leg Parlays <span style="font-size: 10px; opacity: 0.8; margin-left: 4px; color: var(--accent-gold);">+$1,708</span>
+              </button>
+              <button class="pill-filter" data-bktstrategy="hybrid_portfolio" id="bkt-strat-hybrid">
+                👑 Syndicate Hybrid (70/30) <span style="font-size: 10px; opacity: 0.8; margin-left: 4px; color: var(--accent-cyan);">+$954</span>
+              </button>
+            </div>
+          </div>
+          <div id="bkt-strat-desc" style="font-size: 12px; color: var(--accent-cyan); font-weight: 600;">
+            Heavy favorites & safe pivots as standalone singles. Minimizes drawdown volatility.
+          </div>
+        </div>
+
         <!-- Backtest Metrics Bar (Institutional Analytics) -->
         <div class="calc-inputs-grid" style="padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));">
           <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Realized Win Rate</div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;" id="bkt-kpi-winrate-lbl">Realized Win Rate</div>
             <div style="font-size: 20px; font-weight: 800; color: var(--accent-emerald);" id="bkt-win-rate">84.0%</div>
             <div style="font-size: 11px; color: var(--text-muted);" id="bkt-ci">95% CI: [71.5%, 91.7%]</div>
           </div>
           <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Expected Calib Error</div>
             <div style="font-size: 20px; font-weight: 800; color: var(--accent-cyan);" id="bkt-ece">3.61%</div>
-            <div style="font-size: 11px; color: var(--accent-emerald);">Murphy Rel: 0.0020</div>
+            <div style="font-size: 11px; color: var(--accent-emerald);" id="bkt-sub-ece">Murphy Rel: 0.0020</div>
           </div>
           <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
             <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Capital Preserved</div>
@@ -430,9 +455,42 @@
             <div style="font-size: 11px; color: var(--text-muted);" id="bkt-sortino">Sortino: 0.16 · PF: 1.15</div>
           </div>
           <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
-            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Kelly Compounded</div>
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;" id="bkt-kpi-roi-lbl">Kelly Compounded</div>
             <div style="font-size: 20px; font-weight: 800; color: var(--accent-gold);" id="bkt-roi">+2.39%</div>
             <div style="font-size: 11px; color: var(--text-muted);" id="bkt-profit">+$143.40 Net Profit</div>
+          </div>
+        </div>
+
+        <!-- Strategy Yield & Risk Comparison Matrix -->
+        <div style="padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); background: rgba(255,255,255,0.012);" id="strategy-matrix-wrapper">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; font-weight: 700; color: #ffffff; display: flex; align-items: center; gap: 8px;">
+              <span>📊 Strategy Yield & Risk Comparison Matrix</span>
+              <span style="font-size: 11px; color: var(--text-muted); font-weight: 400;">(Side-by-side performance across 80 real matches)</span>
+            </div>
+            <div style="font-size: 11px; color: var(--accent-cyan);">
+              Click any strategy button above to switch views
+            </div>
+          </div>
+          <div class="table-responsive" style="max-height: none;">
+            <table class="data-table" style="font-size: 12px;" id="strategy-comparison-table">
+              <thead>
+                <tr>
+                  <th>Strategy Profile</th>
+                  <th>Target Odds</th>
+                  <th>Win Rate</th>
+                  <th>Volume Wagered</th>
+                  <th>Net Cash Won</th>
+                  <th>Realized ROI</th>
+                  <th>Max Peak Drop</th>
+                  <th>Sharpe Ratio</th>
+                  <th>Best For</th>
+                </tr>
+              </thead>
+              <tbody id="strategy-matrix-tbody">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -493,19 +551,29 @@
       </div>
       <div class="modal-body">
         <div class="unlocked-preview-pill">
-          <span>🔓 Unlocks: <strong>Arsenal vs Chelsea Over 1.5 Goals</strong> &amp; <strong>Boston Celtics Moneyline</strong></span>
+          <span>🔓 Unlocks: <strong>Match #2 &amp; Match #3</strong> with full institutional analytics</span>
         </div>
         <ul class="modal-benefits">
-          <li>✓ <strong>Real-time kickoff notifications</strong> 60 minutes before market line movement</li>
-          <li>✓ <strong>1 Free Daily Diamond Pick</strong> dispatched straight to your phone</li>
-          <li>✓ <strong>Sub-second 1-click execution slips</strong> into Bet365, Pinnacle, and DraftKings</li>
+          <li>✓ <strong>Real-time kickoff notifications</strong> dispatched before lines shift</li>
+          <li>✓ <strong>Instant Diamond &amp; Trap alerts</strong> sent directly to your phone</li>
+          <li>✓ <strong>Sub-second 1-click execution slips</strong> into Bet365, Pinnacle, DraftKings</li>
         </ul>
+
+        <div style="background: rgba(0, 136, 204, 0.08); border: 1px dashed rgba(0, 136, 204, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #38bdf8; font-weight: 700; letter-spacing: 0.5px;">Gatekeeper Cryptographic Bridge</div>
+          <div id="telegram-unlock-code" style="font-size: 15px; font-weight: 800; font-family: monospace; color: #ffffff; margin: 4px 0; letter-spacing: 1px;">usr_init</div>
+          <div id="telegram-verify-status" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--accent-gold); margin-top: 4px; padding: 3px 10px; background: rgba(245, 158, 11, 0.1); border-radius: var(--radius-pill);">
+            <span class="live-dot" style="width: 6px; height: 6px; background: var(--accent-gold); border-radius: 50%; display: inline-block;"></span>
+            <span id="telegram-status-text">Waiting for Telegram /start...</span>
+          </div>
+        </div>
+
         <div class="modal-actions">
-          <a href="https://t.me/lisa_sports_alpha" target="_blank" class="btn-telegram" id="btn-open-telegram">
-            <span>✈️</span> Join @LISA_Sports_Alpha on Telegram
+          <a href="https://t.me/XpredictPremiumBot?start=verify" target="_blank" class="btn-telegram" id="btn-open-telegram">
+            <span>✈️</span> 1. Open @XpredictPremiumBot &amp; Tap START
           </a>
           <button class="btn-verify-unlock" id="btn-verify-unlock">
-            I Have Joined — Unlock My Picks
+            🔄 2. Confirm Membership &amp; Unblur Picks
           </button>
         </div>
         <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 10px;">

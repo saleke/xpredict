@@ -154,3 +154,40 @@ def test_cli_backtest_execution(tmp_path: Path):
     assert exit_code == 0
     assert export_file.exists()
     assert export_file.stat().st_size > 0
+
+
+def test_multi_strategy_profiles_and_comparison_matrix():
+    """Verify that multi-strategy profiles and comparison matrix evaluate properly."""
+    engine = BacktestEngine()
+    report = engine.run()
+
+    # 1. Comparison Matrix structure
+    matrix = report.strategy_comparison_matrix
+    assert len(matrix) == 4
+    strategy_ids = [s["strategy_id"] for s in matrix]
+    assert strategy_ids == ["conservative", "high_yield_pivots", "smart_parlays", "hybrid_portfolio"]
+
+    # 2. Conservative baseline preserved
+    cons = report.strategies["conservative"]["summary"]
+    assert cons["win_rate"] == pytest.approx(0.84, abs=0.01)
+    assert cons["net_profit"] == pytest.approx(143.40, abs=0.50)
+    assert cons["max_drawdown_pct"] == pytest.approx(2.89, abs=0.10)
+
+    # 3. High-Yield Pivots produces substantially higher cash profit
+    piv = report.strategies["high_yield_pivots"]["summary"]
+    assert piv["win_rate"] >= 0.75
+    assert piv["net_profit"] > 1000.0  # Much higher cash profit than conservative singles
+    assert piv["avg_odds"] > 1.70
+
+    # 4. Smart Parlays yields high profit while retaining >70% win rate
+    par = report.strategies["smart_parlays"]["summary"]
+    assert par["win_rate"] >= 0.70
+    assert par["net_profit"] > 1500.0
+    assert par["avg_odds"] > 1.85
+
+    # 5. Hybrid Portfolio provides balanced compounding
+    hyb = report.strategies["hybrid_portfolio"]["summary"]
+    assert hyb["win_rate"] >= 0.78
+    assert hyb["net_profit"] > 800.0
+    assert hyb["max_drawdown_pct"] < 4.5
+

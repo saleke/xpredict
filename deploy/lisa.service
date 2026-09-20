@@ -1,0 +1,31 @@
+[Unit]
+Description=LISA Sports Refinery & Production Analytics Engine
+After=network.target
+
+[Service]
+Type=simple
+User=walter
+WorkingDirectory=/home/walter/xpredict
+EnvironmentFile=-/home/walter/xpredict/.env
+Environment=PYTHONPATH=/home/walter/xpredict/engine
+Environment=LISA_STORAGE=sqlite
+Environment=LISA_DATABASE_URL=/home/walter/xpredict/data/lisa.db
+ExecStart=/usr/bin/python3 -m lisa start --port 8080 --dir /home/walter/xpredict/web
+Restart=always
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=10s
+
+# Security sandboxing
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/walter/xpredict/data /home/walter/xpredict/web/data
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lisa
+
+[Install]
+WantedBy=multi-user.target

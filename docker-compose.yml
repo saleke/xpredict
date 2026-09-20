@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  lisa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lisa_sports_engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./web/data:/app/web/data
+    env_file:
+      - .env
+    environment:
+      - LISA_STORAGE=sqlite
+      - LISA_DATABASE_URL=/app/data/lisa.db
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
