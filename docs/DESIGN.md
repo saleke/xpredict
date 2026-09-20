@@ -195,6 +195,25 @@ other key is rejected by `load_settings()` and again by `pipeline.run_cycle()`:
 `soccer_germany_bundesliga`, `soccer_france_ligue_one`, `soccer_italy_serie_a`,
 `soccer_netherlands_eredivisie`, `soccer_portugal_primeira_liga`, `soccer_epl`
 
+### Market scope (M2 — derivative markets)
+
+Probed against the live feed (2026-09-20, free tier, `eu,us`): the valid v4
+market set is `h2h`, `spreads`, `totals` — fetchable together in **one**
+request (zero extra credits). Everything else in earlier drafts was rejected
+with evidence:
+
+- `btts` (both teams to score) → **422 `INVALID_MARKET`** on every league; not
+  a valid v4 key despite being described as bundled. Would need another vendor.
+- Halftime-totals, quarter handicaps, player props — do not exist on the v4
+  odds endpoint.
+- Referee-profile / yellow-card props — need a separate paid data provider;
+  out of scope for the engine MVP.
+
+M2's market whitelist therefore mirrors the league whitelist:
+`SCOPE_MARKETS = h2h, totals, spreads`, fail-fast on unknown keys. Soccer
+`spreads` coverage is thin (4–8 books) with quarter lines that complicate
+settlement — hence M2 order: totals → NBA spreads → soccer spreads.
+
 ### Spec-compliance notes (documented deviations)
 
 - **Sync stdlib transport, not async httpx/aiohttp** — the worker polls on a
@@ -270,6 +289,11 @@ Status as of the scheduler/tracker iteration:
   week against the real API, then `lisa report` for pick volume at the gate, the real EV
   distribution (+EV share), settlement accuracy, and credit burn. Answers the product's
   open questions with data instead of fixtures.
+* 🔜 **M2 — derivative markets**: de-mux `h2h,spreads,totals` into one `Match`
+  per market (via `Book.line`), consensus bucketed by exact line, settlement
+  graded per market, per-market tracker hit-rates with "one top pick per match"
+  as a presentation rule (best-of-N honesty guard). Order: totals → NBA
+  spreads → soccer spreads (thin books, quarter lines).
 * ✅ **Leave-one-out EV** — every book's execution EV is measured against a reference
   consensus that excludes that book, so a lagging soft book can no longer dilute the
   consensus it is judged on.
