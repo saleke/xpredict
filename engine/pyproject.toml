@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lisa-engine"
+version = "0.1.0"
+description = "LISA data-refinery engine: Shin de-vig, multi-book consensus, quality gate, settlement."
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+redis = ["redis>=4"]
+postgres = ["psycopg[binary]>=3"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lisa*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,228 @@
+# LISA — Engine Design & Engineering Analysis
+
+Status: **MVP implemented** (pure-Python engine, stdlib-only, runs with zero infrastructure)
+Companion docs: [`architecture/entry.md`](../architecture/entry.md), [`architecture/plan.md`](../architecture/plan.md)
+
+---
+
+## 1. Problem statement (restated without the marketing)
+
+LISA ingests multi-book betting odds for **NBA, La Liga and Bundesliga 1X2 (h2h) markets**,
+strips each bookmaker's margin with **Shin's method** (which corrects the favourite–longshot
+bias), blends per-book "true probabilities" into a **consensus** with an agreement metric, and
+emits only **Top Picks** that clear a quality gate. Live state lives in a TTL'd **hot cache**;
+picks are written as **write-once ledger rows** that are auto-settled against official results
+(WIN / LOSS / VOID). Delivery (web dashboard, Telegram, Stripe tiers) is downstream of the
+engine and out of scope for the MVP.
+
+The pipeline is four stages:
+
+```
+Stage 1  ingest   – The Odds API, one request per sport per cycle (h2h, decimal)
+Stage 2  math     – Shin de-vig per book → weighted consensus → stdev/CV agreement
+Stage 3  gate     – certainty >= threshold, dispersion <= max_cv, EV overlay for execution
+Stage 4  store    – Redis hot cache (TTL) + Postgres / in-memory write-once ledger,
+                    settlement cron stamps WIN/LOSS/VOID 3h after kickoff
+```
+
+## 2. The three findings that shaped the design
+
+### Finding A — the original 85% gate is mathematically nearly unreachable
+
+Shin's method corrects *downward* the raw implied probability of favourites (that is the
+favourite–longshot bias correction). Verified numbers from this implementation:
+
+| Market | Raw implied fav | Shin true prob |
+|---|---|---|
+| NBA ML `1.16 / 5.20` | 86.2% | **83.5%** |
+| Soccer 1X2 `1.30 / 5.00 / 9.00` | 76.9% | ≈ **75%** |
+
+A post-de-vig `P_true ≥ 85%` essentially never occurs in these leagues: it needs a raw
+favourite shorter than ~`1.13` in a 2-way market, which NBA produces a handful of times per
+season, and 1X2 soccer never. The 85% gate as documented would emit ≈ 0 picks — killing the
+subscription tiers, the premium alerts and the dashboard.
+
+**Decision (product owner, confirmed):** gate at **≥ 75%** post-de-vig consensus — still highly
+selective — and add an **EV overlay** (Finding B) so recommendations are value-driven.
+
+### Finding B — probability ≠ edge
+
+A de-vigged consensus probability is the market's *best estimate*, but betting at the fair
+price is 0 EV and betting at a vigged price is negative EV. The engine therefore computes, for
+every book, `EV = P_true × odds − 1` against the consensus, and only attaches an
+**execution recommendation** to books where EV > 0. The pick itself is emitted on certainty
+alone (`LISA_REQUIRE_POSITIVE_EV=false`); the product layer can hide picks without an
+execution if it wants the value-guarantee story.
+
+> Caveat (documented, leave-one-out is a future refinement): the EV of a book is computed
+> against a consensus that *includes* that book's own line — mildly self-referential. The
+> effect is small: with ≥ 5 books no single book dominates. Leave-one-out EV is a clean
+> follow-up.
+
+### Finding C — polling loses line movement between cycles
+
+Pre-match, a 60 min cadence drops to 15 min in the 90 min before kickoff (docs' design), and
+live windows poll each sport per cycle. `book.last_update` is checked against freshness
+windows (4 h pre-match, 5 min live) so stale lines are down-weighted/dropped, never served
+as fresh.
+
+## 3. The math — Shin's method (verified)
+
+Model: the bookmaker prices against insiders (bet only with edge) and noise bettors; the
+insider share `z` is embedded in every line and skews the margin hardest onto longshots.
+
+Algorithm (verified against the reference implementation `mberk/shin`):
+
+```
+inputs:  decimal odds o_i (i = 1..n, n >= 2)
+io_i = 1 / o_i,  S = Σ io_i
+
+n == 2:  closed form  z = ((S−1)(d²−S)) / (S(d²−1)),  d = io₁ − io₂
+n >= 3:  fixed point  z ← (Σᵢ √(z² + 4(1−z)·ioᵢ²/S) − 2) / (n − 2)
+                     until |Δz| < 1e-12  (max 1000 iters)
+
+pᵢ = (√(z² + 4(1−z)·ioᵢ²/S) − z) / (2(1−z)),  Σp = 1
+```
+
+Guards: `z` clamped to `[0, 0.5]`; probabilities validated (`0 < p < 1`, finite, Σ = 1 within
+1e-9); degenerate/unstable inputs fall back to **proportional de-vig** (`pᵢ = ioᵢ/S`) and the
+fallback is recorded in `ShinResult.method` for observability — a recoverable degradation,
+never an exception storm.
+
+**Consensus:** per-book probs are blended with weights `w_book = sharp_multiplier(2.0) ×
+1/margin` for sharp anchors (pinnacle, circa), else `1 × 1/margin`. Tight lines (sharp) and
+low-margin books dominate. Agreement is the sample stdev / CV of per-book `P_true` for the
+isolated top outcome; `cv > 0.10` ⇒ market is untrustworthy regardless of how high the blend
+looks (plausibility is checked *before* certainty in the gate).
+
+## 4. Quality gate (Stage 3)
+
+Order of checks (deliberate):
+
+1. `n_books >= min_books_alert` (5) — else `insufficient_books`
+2. `cv <= max_cv` (0.10) — else `high_dispersion`  ← **checked before certainty**
+3. `p_top >= gate_threshold` (0.75) — else `below_threshold`
+4. EV overlay: best execution = argmax EV over books with `EV >= ev_min` (0.0);
+   `require_positive_ev=true` suppresses the pick when no book clears fair price.
+
+Suppression reasons feed `CycleReport.suppressed` (`"match_id:reason"`) for observability.
+
+## 5. State machine & ledger
+
+```
+                            ┌────────────  Pending  ────────────┐
+                            │                                  │
+RECALC → TRIGGER_ALERT ─────┼──> CONFIRMED → PENDING_SETTLEMENT ┼──> SETTLED (WIN|LOSS)
+   (per-cycle, never        │                                  │        or VOID
+    persisted alone)        └──────────────────────────────────┘
+```
+
+* Ledger row = **write-once**; `dedupe_key = match_id::market::outcome` is the primary key.
+  `INSERT … ON CONFLICT DO NOTHING` (Postgres) / `SET NX` (Redis) / dict check (memory):
+  re-running a cycle never duplicates.
+* `settle_pick` only transitions rows whose state is pending; terminal rows are immutable.
+* Settlement: 3 h after kickoff (configurable) pull the scores endpoint, stamp WIN/LOSS.
+  `postponed|cancelled|suspended|abandoned` rows go **VOID** once they are past
+  `settle_after + grace (24 h)`. No official score yet ⇒ row stays pending (skipped, counted).
+
+## 6. Edge cases → mitigations
+
+| # | Edge case | Mitigation |
+|---|---|---|
+| E1 | <5 usable books | Telemetry continues from ≥3 (`min_books_telemetry`); alerts need ≥5; never fabricate |
+| E2 | Book missing an outcome / suspended | Book dropped from the pool; consensus over an identical outcome set only |
+| E3 | Alert spam / probability flapping | Picks are emit-once (ledger); live re-alerts gated by `alert_min_delta` (1.5pp) + `alert_cooldown_sec` (600 s) |
+| E4 | 3-way soccer draws | Shin's n-way iteration handles n=3 natively; draw is a first-class outcome in `Score.winner()` |
+| E5 | 85% gate unreachable | Resolved → 75% + EV overlay (Finding A) |
+| E6 | NBA OT / long games | Scores endpoint returns OT totals; settlement reads final `completed` state, not a hard clock |
+| E7 | Postponed / void games | `VOID` state after grace window; never WIN/LOSS |
+| E8 | DST / timezones | All times UTC everywhere; API `commence_time` is ISO-8601 UTC |
+| E9 | Upstream 4xx/5xx/429 | Exponential backoff + retry (transport client); per-sport degradation so one sport never kills the cycle; errors surfaced in `CycleReport` |
+| E10 | Stale lines | `book.last_update` vs `stale_prematch_sec`/`stale_live_sec`; stale books dropped |
+| E11 | Duplicate settlement / races | Idempotent upserts; terminal rows immutable; state-gated UPDATEs |
+| E12 | Odds outliers / junk | Sanity bounds `[1.01, 1001]`; validation errors exclude the book, not the match |
+| E13 | Numerical instability | z clamped, Σp validated, proportional fallback flagged in `method` |
+| E14 | Fixture-level malformed payload | Parsers skip bad records defensively; one bad game never kills a cycle |
+| E15 | Missing `last_update` on a book | Treated as "don't know" → kept (conservative); revisit for live mode |
+
+## 7. Performance bottlenecks → mitigations
+
+| # | Bottleneck | Reality check & fix |
+|---|---|---|
+| P1 | Shin compute | ~200 solves/day, <100 iterations each: non-issue in pure Python; already O(n) per solve |
+| P2 | API credit budget | Free tier = 500 credits/mo: budget **is** the constraint → keep to 1 req/sport/cycle, degrade cadence near kickoff, monitor `x-requests-remaining` (client tracks it). Production: $30/mo 20K tier |
+| P3 | Redis memory / index growth | Trivial footprint; TTL does GC; live-index prunes dead keys on scan |
+| P4 | Postgres writes | Tiny volume; PK dedupe; indexed `state`, `match_id` |
+| P5 | Cron overlap / concurrent cycles | Cycles are idempotent; a scheduler wrapper should add an advisory lock (roadmap) |
+| P6 | Crons firing across DST | UTC + explicit scheduler timezone (roadmap) |
+| P7 | Fan-out to many subscribers | Alert happens once per pick in the engine; fan-out lives in the delivery layer with its own rate limits (roadmap) |
+| P8 | Observability | `CycleReport`/`SettlementReport` give per-cycle counts, suppression reasons and errors; CLI prints JSON |
+
+## 8. Configuration (all `LISA_*` env vars, sane defaults)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LISA_ODDS_API_KEY` | — | The Odds API key (required for `run-cycle`/`settle` without `--fixtures`) |
+| `LISA_REGIONS` / `LISA_MARKETS` | `eu,uk,us` / `h2h` | API query shape |
+| `LISA_SPORTS` | 3 leagues | Comma-separated sport keys |
+| `LISA_GATE_THRESHOLD` | `0.75` | Certainty gate (Finding A) |
+| `LISA_MIN_BOOKS_TELEMETRY` / `LISA_MIN_BOOKS_ALERT` | `3` / `5` | Coverage floors |
+| `LISA_MAX_CV` | `0.10` | Max dispersion for the top outcome |
+| `LISA_EV_MIN` / `LISA_REQUIRE_POSITIVE_EV` | `0.0` / `false` | Execution overlay |
+| `LISA_SHARP_KEYS` / `LISA_SHARP_MULTIPLIER` | `pinnacle,circa` / `2.0` | Sharp anchor weighting |
+| `LISA_MARGIN_WEIGHTED` | `true` | Inverse-margin weighting |
+| `LISA_STALE_PREMATCH_SEC` / `LISA_STALE_LIVE_SEC` | `14400` / `300` | Freshness windows |
+| `LISA_STORAGE` | `inmemory` | `inmemory` \| `redis` \| `postgres` |
+| `LISA_REDIS_URL` / `LISA_DATABASE_URL` | — | Connection strings (lazy-imported deps) |
+| `LISA_SETTLE_AFTER_HOURS` / `LISA_SETTLE_GRACE_HOURS` | `3.0` / `24.0` | Settlement schedule |
+| `LISA_ALERT_MIN_DELTA` / `LISA_ALERT_COOLDOWN_SEC` | `0.015` / `600` | Live re-alert policy |
+| `LISA_TELEGRAM_TOKEN` / `LISA_TELEGRAM_CHAT_ID` | — | Telegram notifier |
+
+## 9. Repository layout
+
+```
+engine/            Python package `lisa` (stdlib core)
+  lisa/odds.py     domain types (Match, Book, Score, Score.winner)
+  lisa/parsing.py  Odds API JSON → domain types (defensive)
+  lisa/client.py   transport (retry/backoff, credit tracking) + FixtureClient
+  lisa/shin.py     Shin's method + proportional fallback
+  lisa/consensus.py  per-book de-vig → weighted consensus → agreement
+  lisa/gate.py     quality gate + EV overlay + Pick/Execution
+  lisa/storage.py  Storage interface: in-memory / redis / postgres
+  lisa/pipeline.py Stage 1+3+4 orchestration (run_cycle)
+  lisa/settle.py   settlement cron (WIN/LOSS/VOID)
+  lisa/notify.py   LogNotifier / TelegramNotifier + alert text
+  lisa/cli.py      `python -m lisa demo|run-cycle|settle`
+  lisa/fixtures.py deterministic bundled Odds API payloads
+  tests/           34 tests: math, consensus, gate, pipeline, settle, storage
+docs/DESIGN.md     this document
+architecture/      original product docs (unchanged)
+```
+
+## 10. Quickstart
+
+```bash
+cd engine
+python3 -m venv .venv && .venv/bin/pip install pytest   # dev only; runtime is stdlib
+.venv/bin/python -m pytest -q                            # 34 tests
+.venv/bin/python -m lisa demo                            # full cycle + settlement on fixtures
+export LISA_ODDS_API_KEY=...
+.venv/bin/python -m lisa run-cycle                       # live API, one pass
+.venv/bin/python -m lisa settle                          # grade pending rows
+# Redis ledger: LISA_STORAGE=redis LISA_REDIS_URL=redis://...  (pip install redis)
+# Postgres ledger: LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://... (pip install 'psycopg[binary]')
+```
+
+## 11. Known limitations & roadmap (next iterations)
+
+* **Live mode**: `run_cycle(live=True)` exists with freshness handling, but the live-updates
+  scheduler (spiked cadence) is a wrapper to build.
+* **Leave-one-out EV**: replace in-consensus EV with per-book EV against a consensus
+  excluding that book.
+* **Score settlement robustness**: retry bookkeeping, match rename handling, and multiple
+  settlement attempts per row.
+* **Delivery layer**: web dashboard (Next.js), Telegram channel fan-out with per-chat
+  throttling, Stripe tiers — separated by design so the engine stays infra-light.
+* **Advisory lock** for multi-worker safety; structured log sink; metrics endpoint.
+* **Legal/compliance**: responsible-gambling notice, terms, jurisdiction review — product
+  concern, tracked here for completeness.
