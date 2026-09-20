@@ -18,15 +18,18 @@ def utcnow() -> datetime:
 
 @dataclass(frozen=True)
 class Book:
-    """One sportsbook's prices for the ``h2h`` market of a match.
+    """One sportsbook's prices for one market of a match.
 
-    ``outcomes`` maps outcome name (team name or "Draw") -> decimal odds.
+    ``outcomes`` maps outcome name (team, "Draw", "Over"/"Under") to decimal
+    odds. ``line`` is the common quoted point for totals/spreads, or ``None``
+    for point-less markets such as h2h.
     """
 
     key: str
     title: str
     last_update: Optional[datetime]
     outcomes: dict[str, float] = field(default_factory=dict)
+    line: Optional[float] = None
 
 
 @dataclass(frozen=True)

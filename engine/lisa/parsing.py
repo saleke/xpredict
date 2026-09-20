@@ -61,20 +61,25 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
             if not key:
                 continue
             outcomes: dict[str, float] = {}
+            points: set[float] = set()
             for mkt in bm.get("markets", []) or []:
                 if mkt.get("key") != market_key:
                     continue
                 for oc in mkt.get("outcomes", []) or []:
                     name = oc.get("name")
                     price = oc.get("price")
+                    point = oc.get("point")
                     if name and isinstance(price, (int, float)):
                         outcomes[str(name)] = float(price)
+                        if isinstance(point, (int, float)):
+                            points.add(float(point))
             if outcomes:
                 books.append(Book(
                     key=key,
                     title=str(bm.get("title", key)),
                     last_update=_parse_iso(bm.get("last_update")),
                     outcomes=outcomes,
+                    line=points.pop() if len(points) == 1 else None,
                 ))
 
         matches.append(Match(

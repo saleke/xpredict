@@ -202,23 +202,26 @@ other key is rejected by `load_settings()` and again by `pipeline.run_cycle()`:
   a non-factor next to the credit budget. The system stays stdlib-only (zero
   runtime deps = small supply-chain surface for a money-adjacent worker). If a
   real-time delivery layer arrives, the client exposes a thin transport seam to
-  swap in an async client without touching the pipeline.
+  swap in an async client without touching the pipeline. The spec's ingestion
+  shape is honored as `client.fetch_league_odds(sport_key, region="eu,us")`.
 - **Dataclass validation, not Pydantic v2** — the ingestion boundary has one
-  internal consumer, and `parsing.py` already strictly filters to match
-  metadata + bookmaker h2h decimal prices and drops malformed records. Pydantic
+  internal consumer, and `parsing.py` strictly filters to match metadata +
+  bookmaker home/away decimal prices and drops malformed records. Pydantic
   earns its keep at a public API surface (the future delivery layer), not here.
 - **Base-URL default corrected** — the spec proposed `https://the-odds-api.com`
   (the marketing site); the API host is `https://api.the-odds-api.com` with a
   `/v4/` path and an explicit `markets=h2h` param, per the upstream contract.
   The env override `THE_ODDS_API_BASE_URL` is honored as specified.
+- **Outcome-line preservation** — `Book.line` keeps the quoted `point` for
+  totals/spreads so the multi-market milestone (M2) needs no parsing rework.
 
 ## 9. Repository layout
 
 ```
 engine/            Python package `lisa` (stdlib core)
-  lisa/odds.py     domain types (Match, Book, Score, Score.winner)
-  lisa/parsing.py  Odds API JSON → domain types (defensive)
-  lisa/client.py   transport (retry/backoff, credit tracking) + FixtureClient
+  lisa/odds.py     domain types (Match, Book, Score, Score.winner, Book.line)
+  lisa/parsing.py  Odds API JSON → domain types (strict, per-market, line-aware)
+  lisa/client.py   transport: fetch_league_odds / get_odds / get_scores (retry/backoff) + FixtureClient
   lisa/shin.py     Shin's method + proportional fallback
   lisa/consensus.py  per-book de-vig → weighted consensus → agreement
   lisa/gate.py     quality gate + EV overlay + Pick/Execution
@@ -242,7 +245,7 @@ architecture/      original product docs (unchanged)
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest   # dev only; runtime is stdlib
-.venv/bin/python -m pytest -q                            # 72 tests
+.venv/bin/python -m pytest -q                            # 85 tests
 .venv/bin/python -m lisa demo                            # full cycle + settlement on fixtures
 export THE_ODDS_API_KEY=...   # LISA_ODDS_API_KEY also accepted
 .venv/bin/python -m lisa run-cycle                       # live API, one pass

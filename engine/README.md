@@ -11,7 +11,7 @@ pipeline runs locally, in CI, or on a $0 machine. Redis/Postgres drivers are opt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install pytest          # dev only
-.venv/bin/python -m pytest -q         # 72 tests
+.venv/bin/python -m pytest -q         # 85 tests
 
 .venv/bin/python -m lisa demo          # full cycle + settlement on bundled fixtures
 ```
@@ -52,8 +52,8 @@ LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://localhost:5432/lisa python 
 | `lisa/pipeline.py` | Stage-1 orchestration: ingest → refine → gate → persist + notify (idempotent) |
 | `lisa/settle.py` | 3h-after-kickoff settlement: WIN / LOSS / VOID |
 | `lisa/storage.py` | `Storage` interface + in-memory / Redis / Postgres drivers |
-| `lisa/client.py` | The Odds API transport (retry/backoff, credit tracking) + fixture client |
-| `lisa/parsing.py` | Defensive Odds-API JSON → domain types |
+| `lisa/client.py` | The Odds API transport (`fetch_league_odds`, retry/backoff, credit tracking) + fixture client |
+| `lisa/parsing.py` | Strict Odds-API JSON → domain types (per-market filter, outcome-line harvest) |
 | `lisa/cadence.py` | Pure schedule-state logic (live / spike / prematch / idle) |
 | `lisa/scheduler.py` | Tick loop with adapted cadence + credit-budget guard |
 | `lisa/tracker.py` | JSONL validation trail + weekly `report` summary |
