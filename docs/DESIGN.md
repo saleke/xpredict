@@ -197,17 +197,36 @@ other key is rejected by `load_settings()` and again by `pipeline.run_cycle()`:
 
 ### Market scope (M2 — derivative markets)
 
-Probed against the live feed (2026-09-20, free tier, `eu,us`): the valid v4
-market set is `h2h`, `spreads`, `totals` — fetchable together in **one**
-request (zero extra credits). Everything else in earlier drafts was rejected
-with evidence:
+Probed against the live feed (2026-09-20, free tier, `eu,us`): at the **bulk**
+`sports/{sport}/odds/` endpoint the valid market set is `h2h`, `spreads`,
+`totals` — fetchable together in **one** request (zero extra credits).
 
-- `btts` (both teams to score) → **422 `INVALID_MARKET`** on every league; not
-  a valid v4 key despite being described as bundled. Would need another vendor.
-- Halftime-totals, quarter handicaps, player props — do not exist on the v4
-  odds endpoint.
-- Referee-profile / yellow-card props — need a separate paid data provider;
-  out of scope for the engine MVP.
+Period/quarter/half keys (`h2h_q1`, `totals_h1`, `spreads_q1`,
+`h2h_h1`…), alternate lines (`alternate_totals`, `alternate_spreads`),
+`team_totals`, `btts` and card/corners markets **all exist in the vendor's
+market catalog but are bulk-inaccessible**: 16/16 probe requests across NBA
+and La Liga returned **422 `INVALID_MARKET`**. They are served only via the
+per-event `/events/{eventId}/odds` endpoint, limited to US sports and selected
+bookmakers, and fan out to ~1 request/event — cost-prohibitive on the free
+plan and a different ingestion architecture. Watch-item, not scope.
+
+Two math boundaries that shaped this scope:
+
+- **First-half soccer markets are not derivable from full-time data** — a
+  full-time O/U line carries no halftime information; there is no
+  full-time→half-time transform. Only per-half data (or history) can price
+  them, so the "first-half goal consensus" examples in draft proposals are
+  unbuildable on this feed.
+- **BTTS *is* derivable** (de-vigged h2h + totals via double-Poisson) — see the
+  derived-metrics roadmap entry. Alternate goal thresholds (Over 1.5 / Under
+  3.5) are already inside the standard `totals` payload as `point` values
+  (verified live: 0.5/1.5/2.5/3.0/3.5 lines) — no key change needed; M2's
+  line-bucket consensus exploits them.
+
+M2's market whitelist therefore mirrors the league whitelist:
+`SCOPE_MARKETS = h2h, totals, spreads`, fail-fast on unknown keys. Soccer
+`spreads` coverage is thin (4–8 books) with quarter lines that complicate
+settlement — hence M2 order: totals → NBA spreads → soccer spreads.
 
 M2's market whitelist therefore mirrors the league whitelist:
 `SCOPE_MARKETS = h2h, totals, spreads`, fail-fast on unknown keys. Soccer
