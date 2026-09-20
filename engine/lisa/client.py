@@ -93,7 +93,7 @@ class OddsApiClient:
     def list_sports(self) -> list[dict]:
         return self._get("/v4/sports/", {"apiKey": self.api_key})
 
-    def get_odds(self, sport_key: str, *, regions: str = "eu,uk,us",
+    def get_odds(self, sport_key: str, *, regions: str = "eu,us",
                  markets: str = "h2h", odds_format: str = "decimal",
                  date_format: str = "iso") -> list[dict]:
         return self._get(
@@ -106,6 +106,14 @@ class OddsApiClient:
                 "dateFormat": date_format,
             },
         )
+
+    def fetch_league_odds(self, sport_key: str, region: str = "eu,us") -> list[dict]:
+        """Ingest one league's Head-to-Head moneyline market.
+
+        Canonical spec-shaped entry point: h2h + decimal odds, with retry and
+        per-league error isolation handled by the transport below.
+        """
+        return self.get_odds(sport_key, regions=region, markets="h2h")
 
     def get_scores(self, sport_key: str, *, days_from: int = 1) -> list[dict]:
         return self._get(
@@ -130,6 +138,9 @@ class FixtureClient:
 
     def get_odds(self, sport_key: str, **kwargs) -> list[dict]:
         return list(self.odds.get(sport_key, []))
+
+    def fetch_league_odds(self, sport_key: str, region: str = "eu,us") -> list[dict]:
+        return self.get_odds(sport_key)
 
     def get_scores(self, sport_key: str, **kwargs) -> list[dict]:
         return list(self.scores.get(sport_key, []))
