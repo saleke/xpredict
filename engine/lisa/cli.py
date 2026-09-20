@@ -340,8 +340,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     os.chdir(web_dir)
+    class ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+
     handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
+    with ReusableTCPServer(("", port), handler) as httpd:
         print(f"[serve] LISA Dashboard running at http://localhost:{port}/ (serving {web_dir})")
         try:
             httpd.serve_forever()
