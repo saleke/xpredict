@@ -89,6 +89,9 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                         "outcome_name": row.get("outcome_name"),
                         "p_true": row.get("p_true"),
                         "line": row.get("line"),
+                        "best_odds": row.get("best_odds"),
+                        "closing_odds": row.get("closing_odds"),
+                        "clv": row.get("clv"),
                         "result": "VOID",
                         "state": "VOID",
                     })
@@ -112,6 +115,9 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                     "outcome_name": row.get("outcome_name"),
                     "p_true": row.get("p_true"),
                     "line": row.get("line"),
+                    "best_odds": row.get("best_odds"),
+                    "closing_odds": row.get("closing_odds"),
+                    "clv": row.get("clv"),
                     "result": "VOID",
                     "state": "VOID",
                 })
@@ -130,9 +136,13 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                     "outcome_name": row.get("outcome_name"),
                     "p_true": row.get("p_true"),
                     "line": row.get("line"),
+                    "best_odds": row.get("best_odds"),
+                    "closing_odds": row.get("closing_odds"),
+                    "clv": row.get("clv"),
                     "result": grade,
                     "state": "SETTLED",
                 })
+
 
     return report
 

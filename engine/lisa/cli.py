@@ -144,7 +144,10 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_calibrate(args: argparse.Namespace) -> int:
-    from .calibration import evaluate_calibration, evaluate_by_market, format_calibration_report
+    from .calibration import (
+        evaluate_calibration, evaluate_by_market, format_calibration_report,
+        compute_clv_metrics, evaluate_clv_by_market
+    )
 
     records: list[dict] = []
     settings = cfg.load_settings()
@@ -177,22 +180,37 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
 
     if args.json:
         if args.by_market:
-            reports = evaluate_by_market(records)
-            print(json.dumps({m: rep.to_dict() for m, rep in reports.items()}, indent=2))
+            cal_reports = evaluate_by_market(records)
+            clv_reports = evaluate_clv_by_market(records)
+            payload = {}
+            for m in cal_reports:
+                payload[m] = {
+                    "calibration": cal_reports[m].to_dict(),
+                    "clv": clv_reports.get(m, compute_clv_metrics([])).to_dict(),
+                }
+            print(json.dumps(payload, indent=2))
         else:
             rep = evaluate_calibration(records)
-            print(json.dumps(rep.to_dict(), indent=2))
+            clv_rep = compute_clv_metrics(records)
+            print(json.dumps({
+                "calibration": rep.to_dict(),
+                "clv": clv_rep.to_dict(),
+            }, indent=2))
         return 0
 
     if args.by_market:
-        reports = evaluate_by_market(records)
-        for m, rep in reports.items():
-            print(format_calibration_report(rep, title=f"LISA Calibration — Market: {m}"))
+        cal_reports = evaluate_by_market(records)
+        clv_reports = evaluate_clv_by_market(records)
+        for m, rep in cal_reports.items():
+            print(format_calibration_report(
+                rep, clv_report=clv_reports.get(m),
+                title=f"LISA Calibration & CLV — Market: {m}"))
             print()
     else:
-        title = f"LISA Calibration — Market: {args.market}" if args.market else "LISA Global Calibration Report"
+        title = f"LISA Calibration & CLV — Market: {args.market}" if args.market else "LISA Global Calibration & CLV Report"
         rep = evaluate_calibration(records)
-        print(format_calibration_report(rep, title=title))
+        clv_rep = compute_clv_metrics(records)
+        print(format_calibration_report(rep, clv_report=clv_rep, title=title))
 
     return 0
 

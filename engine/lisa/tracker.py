@@ -80,6 +80,9 @@ class Tracker:
                 "outcome": p.get("outcome_name"),
                 "p_true": p.get("p_true"),
                 "line": p.get("line"),
+                "best_odds": p.get("best_odds"),
+                "closing_odds": p.get("closing_odds"),
+                "clv": p.get("clv"),
                 "result": p.get("result"),
                 "state": p.get("state"),
             }, ts=ts)
@@ -124,9 +127,13 @@ class Tracker:
                 "outcome": row["outcome_name"],
                 "p_true": row["p_true"],
                 "line": row.get("line"),
+                "best_odds": row.get("best_odds"),
+                "closing_odds": row.get("closing_odds"),
+                "clv": row.get("clv"),
                 "result": row.get("result"),
                 "state": row.get("state"),
             }, ts=ts)
+
 
     # -- summary --------------------------------------------------------------
 
@@ -150,6 +157,8 @@ class Tracker:
             },
             "calibration": None,
             "calibration_by_market": {},
+            "clv": None,
+            "clv_by_market": {},
             "span_hours": 0.0,
             "picks_per_week": None,
         }
@@ -162,11 +171,19 @@ class Tracker:
             if self.storage is not None:
                 settled_from_store = self.storage.list_settled_picks()
                 if settled_from_store:
-                    from .calibration import evaluate_calibration, evaluate_by_market
+                    from .calibration import (
+                        evaluate_calibration, evaluate_by_market,
+                        compute_clv_metrics, evaluate_clv_by_market
+                    )
                     out["calibration"] = evaluate_calibration(settled_from_store).to_dict()
                     out["calibration_by_market"] = {
                         m: rep.to_dict()
                         for m, rep in evaluate_by_market(settled_from_store).items()
+                    }
+                    out["clv"] = compute_clv_metrics(settled_from_store).to_dict()
+                    out["clv_by_market"] = {
+                        m: rep.to_dict()
+                        for m, rep in evaluate_clv_by_market(settled_from_store).items()
                     }
             return out
 
@@ -244,19 +261,20 @@ class Tracker:
             p["best_ev_mean"] = sum(evs) / len(evs)
             p["positive_ev_share"] = sum(1 for e in evs if e > 0) / len(evs)
 
-        from .calibration import evaluate_calibration, evaluate_by_market
-        if settled_records:
-            out["calibration"] = evaluate_calibration(settled_records).to_dict()
+        from .calibration import (
+            evaluate_calibration, evaluate_by_market,
+            compute_clv_metrics, evaluate_clv_by_market
+        )
+        target_records = settled_records or (self.storage.list_settled_picks() if self.storage is not None else [])
+        if target_records:
+            out["calibration"] = evaluate_calibration(target_records).to_dict()
             out["calibration_by_market"] = {
                 m: rep.to_dict()
-                for m, rep in evaluate_by_market(settled_records).items()
+                for m, rep in evaluate_by_market(target_records).items()
             }
-        elif self.storage is not None:
-            settled_from_store = self.storage.list_settled_picks()
-            if settled_from_store:
-                out["calibration"] = evaluate_calibration(settled_from_store).to_dict()
-                out["calibration_by_market"] = {
-                    m: rep.to_dict()
-                    for m, rep in evaluate_by_market(settled_from_store).items()
-                }
+            out["clv"] = compute_clv_metrics(target_records).to_dict()
+            out["clv_by_market"] = {
+                m: rep.to_dict()
+                for m, rep in evaluate_clv_by_market(target_records).items()
+            }
         return out

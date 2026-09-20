@@ -15,8 +15,10 @@ Metrics implemented:
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Iterable, Optional, Sequence
+
 
 
 DEFAULT_GATE_BINS: list[tuple[float, float]] = [
@@ -313,7 +315,8 @@ def evaluate_by_market(records: Iterable[dict],
 
 
 def format_calibration_report(report: CalibrationReport,
-                              title: str = "LISA Calibration Report") -> str:
+                              title: str = "LISA Calibration Report",
+                              clv_report: Optional["CLVReport"] = None) -> str:
     """Format calibration metrics into a clean, human-readable terminal table."""
     lines: list[str] = [
         f"=== {title} ===",
@@ -353,4 +356,133 @@ def format_calibration_report(report: CalibrationReport,
             err_str = f"{b.error * 100:.1f}%" if b.error is not None else "--"
             lines.append(f"{rng:<14} | {b.count:>5} | {p_str:>9} | {w_str:>8} | {bias_str:>6} | {err_str:>6}")
 
+    if clv_report is not None and clv_report.count > 0:
+        lines.append("")
+        lines.append(format_clv_report(clv_report))
+
     return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class CLVReport:
+    """Quantitative Closing Line Value (CLV) analytics report."""
+    count: int
+    mean_clv: Optional[float]
+    median_clv: Optional[float]
+    positive_clv_share: Optional[float]
+    min_clv: Optional[float]
+    max_clv: Optional[float]
+    win_rate_positive_clv: Optional[float]
+    win_rate_negative_clv: Optional[float]
+
+    def to_dict(self) -> dict:
+        return {
+            "count": self.count,
+            "mean_clv": self.mean_clv,
+            "median_clv": self.median_clv,
+            "positive_clv_share": self.positive_clv_share,
+            "min_clv": self.min_clv,
+            "max_clv": self.max_clv,
+            "win_rate_positive_clv": self.win_rate_positive_clv,
+            "win_rate_negative_clv": self.win_rate_negative_clv,
+        }
+
+
+def compute_clv_metrics(records: Iterable[dict]) -> CLVReport:
+    """Compute summary Closing Line Value metrics over picks with recorded CLV.
+
+    Expected fields per record:
+      - 'clv': float (e.g. (best_odds / closing_odds) - 1.0)
+      - 'result': 'WIN', 'LOSS', or 'VOID' (optional, for correlation)
+    """
+    clvs: list[float] = []
+    pos_res: list[bool] = []
+    neg_res: list[bool] = []
+
+    for r in records:
+        clv_val = r.get("clv")
+        if clv_val is None:
+            continue
+        try:
+            val = float(clv_val)
+        except (ValueError, TypeError):
+            continue
+        clvs.append(val)
+
+        res = r.get("result")
+        if res in ("WIN", "LOSS"):
+            is_win = (res == "WIN")
+            if val > 0:
+                pos_res.append(is_win)
+            else:
+                neg_res.append(is_win)
+
+    n = len(clvs)
+    if n == 0:
+        return CLVReport(
+            count=0,
+            mean_clv=None,
+            median_clv=None,
+            positive_clv_share=None,
+            min_clv=None,
+            max_clv=None,
+            win_rate_positive_clv=None,
+            win_rate_negative_clv=None,
+        )
+
+    return CLVReport(
+        count=n,
+        mean_clv=sum(clvs) / n,
+        median_clv=statistics.median(clvs),
+        positive_clv_share=sum(1 for v in clvs if v > 0) / n,
+        min_clv=min(clvs),
+        max_clv=max(clvs),
+        win_rate_positive_clv=(sum(pos_res) / len(pos_res)) if pos_res else None,
+        win_rate_negative_clv=(sum(neg_res) / len(neg_res)) if neg_res else None,
+    )
+
+
+def evaluate_clv_by_market(records: Iterable[dict]) -> dict[str, CLVReport]:
+    """Segment CLV metrics by market ('h2h', 'totals', 'spreads') and 'overall'."""
+    by_market: dict[str, list[dict]] = {}
+    all_records: list[dict] = []
+
+    for r in records:
+        all_records.append(r)
+        m = str(r.get("market") or "unknown")
+        by_market.setdefault(m, []).append(r)
+
+    out: dict[str, CLVReport] = {
+        "overall": compute_clv_metrics(all_records)
+    }
+    for m, recs in sorted(by_market.items()):
+        out[m] = compute_clv_metrics(recs)
+
+    return out
+
+
+def format_clv_report(report: CLVReport,
+                      title: str = "LISA Closing Line Value (CLV) Performance") -> str:
+    """Format CLV metrics into a clean, human-readable terminal table."""
+    lines: list[str] = [
+        f"--- {title} ---",
+        f"Picks Evaluated: {report.count}",
+    ]
+    if report.count == 0:
+        lines.append("No picks with CLV metrics available to evaluate.")
+        return "\n".join(lines)
+
+    mean_s = f"{report.mean_clv * 100:+.2f}%" if report.mean_clv is not None else "N/A"
+    med_s = f"{report.median_clv * 100:+.2f}%" if report.median_clv is not None else "N/A"
+    share_s = f"{report.positive_clv_share * 100:.1f}%" if report.positive_clv_share is not None else "N/A"
+    min_s = f"{report.min_clv * 100:+.2f}%" if report.min_clv is not None else "N/A"
+    max_s = f"{report.max_clv * 100:+.2f}%" if report.max_clv is not None else "N/A"
+
+    wr_pos = f"{report.win_rate_positive_clv * 100:.1f}%" if report.win_rate_positive_clv is not None else "N/A"
+    wr_neg = f"{report.win_rate_negative_clv * 100:.1f}%" if report.win_rate_negative_clv is not None else "N/A"
+
+    lines.append(f"Mean CLV:        {mean_s:>8}  |  Median CLV:         {med_s:>8}")
+    lines.append(f"Beat-Close Share:{share_s:>8}  |  CLV Range: [{min_s} .. {max_s}]")
+    lines.append(f"Win Rate (+CLV): {wr_pos:>8}  |  Win Rate (<=0 CLV): {wr_neg:>8}")
+    return "\n".join(lines)
+

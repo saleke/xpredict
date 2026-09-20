@@ -9,7 +9,7 @@ the same data never duplicates ledger rows or alerts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 
 from . import config as cfg
@@ -112,10 +112,12 @@ class Pipeline:
                 report.picks_emitted += 1
                 self._persist_telemetry_pick(pick)      # hot-layer mirror
                 self.notifier.send(pick_alert_text(pick))  # exactly once
-            elif self._maybe_realert(pick, now):
-                report.suppressed.append(f"{match.id}:alert_moved")
             else:
-                report.suppressed.append(f"{match.id}:already_emitted")
+                self._maybe_update_closing(pick, match, consensus, now)
+                if self._maybe_realert(pick, now):
+                    report.suppressed.append(f"{match.id}:alert_moved")
+                else:
+                    report.suppressed.append(f"{match.id}:already_emitted")
 
         report.finished = utcnow()
         return report
@@ -164,3 +166,69 @@ class Pipeline:
             hot, self.settings.live_ttl_sec)
         self.notifier.send(pick_alert_text(pick))
         return True
+
+    def _maybe_update_closing(self, pick: Pick, match: Match,
+                              consensus, now: datetime) -> None:
+        """If this pick was already emitted and kickoff hasn't occurred, update
+        the pre-kickoff closing odds snapshot and calculate CLV."""
+        commence = match.commence_time
+        if commence.tzinfo is None and now.tzinfo is not None:
+            commence = commence.replace(tzinfo=timezone.utc)
+        elif commence.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        if now > commence:
+            return  # pre-match closing snapshot is locked once match starts
+
+        key = pick_key(pick.match_id, pick.market, pick.outcome_name)
+        existing = self.storage.get_pick(key)
+
+        target_outcome = pick.outcome_name
+        exec_book = None
+        emit_odds = None
+        if existing:
+            exec_book = existing.get("best_book")
+            if existing.get("best_odds") is not None:
+                emit_odds = float(existing["best_odds"])
+
+        if exec_book is None and pick.best_execution:
+            exec_book = pick.best_execution.book_key
+        if emit_odds is None:
+            emit_odds = pick.best_execution.odds if pick.best_execution else pick.fair_odds
+
+        closing_odds = None
+
+        # Prioritize odds from the original execution bookmaker
+        if exec_book:
+            for b in match.bookmakers:
+                if pick.line is not None and b.line is not None and abs(b.line - pick.line) > 1e-4:
+                    continue
+                if b.key == exec_book and target_outcome in b.outcomes:
+                    closing_odds = b.outcomes[target_outcome]
+                    break
+
+        # Fallback to best available odds among bookmakers in this line bucket
+        if closing_odds is None:
+            candidate_odds = []
+            for b in match.bookmakers:
+                if pick.line is not None and b.line is not None and abs(b.line - pick.line) > 1e-4:
+                    continue
+                if target_outcome in b.outcomes:
+                    candidate_odds.append(b.outcomes[target_outcome])
+            if candidate_odds:
+                closing_odds = max(candidate_odds)
+
+        if closing_odds is None or closing_odds <= 0:
+            return
+
+        closing_p_true = consensus.p.get(target_outcome, pick.p_true)
+        clv = (emit_odds / closing_odds) - 1.0 if closing_odds > 0 else 0.0
+
+        self.storage.update_pick_closing(key, closing_odds=closing_odds,
+                                         closing_p_true=closing_p_true, clv=clv)
+
+        hot = self.storage.get_live(f"pick:{key}")
+        if hot:
+            hot["closing_odds"] = closing_odds
+            hot["closing_p_true"] = closing_p_true
+            hot["clv"] = clv
+            self.storage.upsert_live(f"pick:{key}", hot, self.settings.live_ttl_sec)

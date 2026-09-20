@@ -46,6 +46,9 @@ def pick_to_row(pick: Pick) -> dict:
         "best_book": exec_.book_key if exec_ else None,
         "best_odds": exec_.odds if exec_ else None,
         "best_ev": exec_.ev if exec_ else None,
+        "closing_odds": exec_.odds if exec_ else None,
+        "closing_p_true": pick.p_true,
+        "clv": 0.0 if exec_ else None,
         "created_at": pick.created_at.isoformat(),
         "settled_at": None,
     }
@@ -76,6 +79,14 @@ class Storage:
 
     def settle_pick(self, dedupe_key: str, result: str,
                     settled_at: datetime, state: str = "SETTLED") -> bool:
+        raise NotImplementedError
+
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        raise NotImplementedError
+
+    def get_pick(self, dedupe_key: str) -> Optional[dict]:
         raise NotImplementedError
 
 
@@ -114,6 +125,10 @@ class InMemoryStorage(Storage):
         self._picks[row["dedupe_key"]] = row
         return True
 
+    def get_pick(self, dedupe_key: str) -> Optional[dict]:
+        row = self._picks.get(dedupe_key)
+        return dict(row) if row is not None else None
+
     def list_pending_picks(self) -> list[dict]:
         return [r for r in self._picks.values() if r["state"] in PENDING_STATES]
 
@@ -128,6 +143,17 @@ class InMemoryStorage(Storage):
         row["state"] = state
         row["result"] = result
         row["settled_at"] = settled_at.isoformat()
+        return True
+
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        row = self._picks.get(dedupe_key)
+        if row is None:
+            return False
+        row["closing_odds"] = closing_odds
+        row["closing_p_true"] = closing_p_true
+        row["clv"] = clv
         return True
 
 
@@ -183,6 +209,12 @@ class RedisStorage(Storage):
             self.r.sadd(self.PICK_INDEX, row["dedupe_key"])
         return bool(created)
 
+    def get_pick(self, dedupe_key: str) -> Optional[dict]:
+        raw = self.r.get(self.PICK_PREFIX + dedupe_key)
+        if not raw:
+            return None
+        return json.loads(raw)
+
     def list_pending_picks(self) -> list[dict]:
         out: list[dict] = []
         for key in self.r.smembers(self.PICK_INDEX):
@@ -219,6 +251,19 @@ class RedisStorage(Storage):
         self.r.set(self.PICK_PREFIX + dedupe_key, json.dumps(row))
         return True
 
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        raw = self.r.get(self.PICK_PREFIX + dedupe_key)
+        if not raw:
+            return False
+        row = json.loads(raw)
+        row["closing_odds"] = closing_odds
+        row["closing_p_true"] = closing_p_true
+        row["clv"] = clv
+        self.r.set(self.PICK_PREFIX + dedupe_key, json.dumps(row))
+        return True
+
 
 POSTGRES_DDL = """
 CREATE TABLE IF NOT EXISTS picks (
@@ -241,6 +286,9 @@ CREATE TABLE IF NOT EXISTS picks (
     best_book     TEXT,
     best_odds     DOUBLE PRECISION,
     best_ev       DOUBLE PRECISION,
+    closing_odds  DOUBLE PRECISION,
+    closing_p_true DOUBLE PRECISION,
+    clv           DOUBLE PRECISION,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     settled_at    TIMESTAMPTZ
 );
@@ -267,6 +315,9 @@ class PostgresStorage(Storage):
         with self.conn.cursor() as cur:
             cur.execute(POSTGRES_DDL)
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS line DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_odds DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_p_true DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS clv DOUBLE PRECISION;")
         self.conn.commit()
 
     # -- hot layer (not supported: Postgres is the cold layer) ---------------
@@ -294,20 +345,31 @@ class PostgresStorage(Storage):
             "INSERT INTO picks (dedupe_key, match_id, sport_key, market, "
             "outcome_name, line, home_team, away_team, commence_time, p_true, "
             "fair_odds, n_books, stdev, cv, state, result, best_book, "
-            "best_odds, best_ev, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "best_odds, best_ev, closing_odds, closing_p_true, clv, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (dedupe_key) DO NOTHING"
         )
         params = (r["dedupe_key"], r["match_id"], r["sport_key"], r["market"],
                   r["outcome_name"], r["line"], r["home_team"], r["away_team"],
                   r["commence_time"], r["p_true"], r["fair_odds"], r["n_books"],
                   r["stdev"], r["cv"], r["state"], r["result"], r["best_book"],
-                  r["best_odds"], r["best_ev"], r["created_at"])
+                  r["best_odds"], r["best_ev"], r["closing_odds"],
+                  r["closing_p_true"], r["clv"], r["created_at"])
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
             inserted = cur.rowcount > 0
         self.conn.commit()
         return inserted
+
+    def get_pick(self, dedupe_key: str) -> Optional[dict]:
+        sql = "SELECT * FROM picks WHERE dedupe_key = %s"
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (dedupe_key,))
+            r = cur.fetchone()
+            if not r:
+                return None
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, r))
 
     def list_pending_picks(self) -> list[dict]:
         sql = "SELECT * FROM picks WHERE state = ANY(%s)"
@@ -334,6 +396,19 @@ class PostgresStorage(Storage):
         with self.conn.cursor() as cur:
             cur.execute(sql, (state, result, settled_at, dedupe_key,
                               list(PENDING_STATES)))
+            updated = cur.rowcount > 0
+        self.conn.commit()
+        return updated
+
+    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
+                            closing_p_true: Optional[float] = None,
+                            clv: Optional[float] = None) -> bool:
+        sql = (
+            "UPDATE picks SET closing_odds = %s, closing_p_true = %s, clv = %s "
+            "WHERE dedupe_key = %s"
+        )
+        with self.conn.cursor() as cur:
+            cur.execute(sql, (closing_odds, closing_p_true, clv, dedupe_key))
             updated = cur.rowcount > 0
         self.conn.commit()
         return updated
