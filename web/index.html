@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LISA — Institutional Sports Prediction & Valuation Platform</title>
+  <meta name="description" content="Institutional sports-prediction and quantitative valuation platform featuring Shin de-vigging, sharp consensus convergence, fractional Kelly staking, and closing line value (CLV) analytics.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/index.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-block">
+        <div class="logo-badge" id="logo-badge">L</div>
+        <div class="brand-text">
+          <h1>LISA <span style="font-weight: 400; font-size: 15px; color: var(--accent-cyan);">Institutional Alpha</span></h1>
+          <div class="brand-sub">Linear Intelligence & Systemic Analytics</div>
+        </div>
+      </div>
+      <div class="system-status" id="system-status-indicator">
+        <span class="status-dot"></span>
+        <span>Math Refinery Active · Zero Vig Consensus</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Executive KPI Grid -->
+    <section class="kpi-grid" id="kpi-overview">
+      <div class="kpi-card" id="kpi-card-winrate">
+        <div class="kpi-title">Verified Win Rate <span>📈</span></div>
+        <div class="kpi-value tabular-nums" id="kpi-win-rate">100.0%</div>
+        <div class="kpi-sub">Across audited settled ledger</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-brier">
+        <div class="kpi-title">Brier Calibration Score <span>🎯</span></div>
+        <div class="kpi-value tabular-nums" id="kpi-brier">0.0384</div>
+        <div class="kpi-sub">Strict probability calibration</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-ece">
+        <div class="kpi-title">Expected Calibration Error <span>⚖️</span></div>
+        <div class="kpi-value tabular-nums" id="kpi-ece">19.5%</div>
+        <div class="kpi-sub">Binned reliability curve error</div>
+      </div>
+
+      <div class="kpi-card" id="kpi-card-clv">
+        <div class="kpi-title">Mean Closing Line Value <span>💎</span></div>
+        <div class="kpi-value tabular-nums" id="kpi-clv">+0.00%</div>
+        <div class="kpi-sub">Systematic market beat rate</div>
+      </div>
+    </section>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-bar" id="main-nav-tabs">
+      <button class="tab-btn active" id="tab-btn-picks" data-view="view-picks">
+        <span>🔥</span> Live Consensus & Picks
+      </button>
+      <button class="tab-btn" id="tab-btn-ledger" data-view="view-ledger">
+        <span>📊</span> Public Audited Ledger
+      </button>
+      <button class="tab-btn" id="tab-btn-calibration" data-view="view-calibration">
+        <span>🎯</span> Calibration & Reliability
+      </button>
+      <button class="tab-btn" id="tab-btn-calculator" data-view="view-calculator">
+        <span>🧮</span> Kelly Bankroll Advisor
+      </button>
+    </nav>
+
+    <!-- VIEW 1: Live Consensus & Picks -->
+    <section class="view-panel active" id="view-picks">
+      <div class="controls-bar">
+        <div class="filter-group" id="sport-filter-group">
+          <button class="pill-filter active" data-sport="all" id="filter-all">All Leagues (9)</button>
+          <button class="pill-filter" data-sport="basketball_nba" id="filter-nba">NBA</button>
+          <button class="pill-filter" data-sport="soccer_germany_bundesliga" id="filter-bundesliga">Bundesliga</button>
+          <button class="pill-filter" data-sport="soccer_spain_la_liga" id="filter-laliga">La Liga</button>
+          <button class="pill-filter" data-sport="soccer_epl" id="filter-epl">Premier League</button>
+        </div>
+      </div>
+
+      <div class="picks-grid" id="picks-grid">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
+    <!-- VIEW 2: Public Audited Ledger -->
+    <section class="view-panel" id="view-ledger">
+      <div class="table-card">
+        <div style="padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Permanent Audited Ledger</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">Immutable, write-once record of graded predictions with closing odds and CLV generation.</p>
+          </div>
+          <span style="font-size: 12px; padding: 4px 10px; background: rgba(255, 255, 255, 0.05); border-radius: var(--radius-pill); color: var(--text-secondary);">
+            🔒 Cryptographically Verifiable
+          </span>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table" id="ledger-table">
+            <thead>
+              <tr>
+                <th>Match</th>
+                <th>League</th>
+                <th>Selection</th>
+                <th>True Prob</th>
+                <th>Emit Odds</th>
+                <th>Closing Odds (CLV)</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-tbody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 3: Calibration & Reliability Visualizer -->
+    <section class="view-panel" id="view-calibration">
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-header">
+            <div class="chart-title">Empirical Reliability Diagram</div>
+            <span style="font-size: 12px; color: var(--accent-cyan); font-weight: 600;">Dotted Line: Ideal Calibration</span>
+          </div>
+          <canvas class="chart-canvas" id="reliability-chart"></canvas>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 12px; text-align: center;">
+            Plots observed win rate against forecast true probability. Close proximity to 45° line indicates superior probabilistic sharpness.
+          </p>
+        </div>
+
+        <div class="chart-card" style="display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div class="chart-header">
+              <div class="chart-title">Murphy (1973) Decomposition</div>
+              <span style="font-size: 12px; color: var(--accent-emerald); font-weight: 600;">BS = Rel - Res + Unc</span>
+            </div>
+            <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px;">
+              Decomposes the mean squared error (Brier Score) into calibration components:
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div style="display: flex; justify-content: space-between; padding: 12px; background: var(--bg-surface); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+                <div>
+                  <strong style="color: var(--accent-cyan);">Reliability (Rel)</strong>
+                  <div style="font-size: 11px; color: var(--text-muted);">Calibration penalty (lower is better, ideal 0)</div>
+                </div>
+                <div class="tabular-nums" style="font-size: 18px; font-weight: 700; color: var(--text-primary);" id="murphy-rel">0.0384</div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; padding: 12px; background: var(--bg-surface); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+                <div>
+                  <strong style="color: var(--accent-emerald);">Resolution (Res)</strong>
+                  <div style="font-size: 11px; color: var(--text-muted);">Ability to discriminate events (higher is better)</div>
+                </div>
+                <div class="tabular-nums" style="font-size: 18px; font-weight: 700; color: var(--text-primary);" id="murphy-res">0.0000</div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; padding: 12px; background: var(--bg-surface); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+                <div>
+                  <strong style="color: var(--accent-amber);">Uncertainty (Unc)</strong>
+                  <div style="font-size: 11px; color: var(--text-muted);">Inherent outcome entropy: p_base * (1 - p_base)</div>
+                </div>
+                <div class="tabular-nums" style="font-size: 18px; font-weight: 700; color: var(--text-primary);" id="murphy-unc">0.0000</div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; padding: 12px; background: var(--bg-surface); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+                <div>
+                  <strong style="color: var(--accent-rose);">Max Calibration Error (MCE)</strong>
+                  <div style="font-size: 11px; color: var(--text-muted);">Maximum bin departure from empirical win rate</div>
+                </div>
+                <div class="tabular-nums" style="font-size: 18px; font-weight: 700; color: var(--text-primary);" id="cal-mce">21.4%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: Kelly Bankroll Advisor -->
+    <section class="view-panel" id="view-calculator">
+      <div class="calc-card" id="calc-card">
+        <div class="calc-header">
+          <h2 class="calc-title">Fractional Kelly Bankroll Advisor</h2>
+          <p class="calc-desc">
+            Calculate mathematically optimal wager allocation based on the Kelly Criterion with uncertainty shrinkage and drawdown protection.
+          </p>
+        </div>
+
+        <div class="calc-inputs-grid">
+          <div class="input-field">
+            <label for="calc-bankroll">Total Bankroll ($)</label>
+            <input type="number" id="calc-bankroll" value="10000" min="100" step="100">
+          </div>
+
+          <div class="input-field">
+            <label for="calc-fraction">Risk Profile (Fraction)</label>
+            <select id="calc-fraction">
+              <option value="0.125">Conservative (1/8 Kelly)</option>
+              <option value="0.25" selected>Institutional Standard (1/4 Kelly)</option>
+              <option value="0.5">Aggressive Alpha (1/2 Kelly)</option>
+            </select>
+          </div>
+
+          <div class="input-field">
+            <label for="calc-prob">True Probability (%)</label>
+            <input type="number" id="calc-prob" value="78.6" min="1" max="99" step="0.1">
+          </div>
+
+          <div class="input-field">
+            <label for="calc-odds">Execution Odds (Decimal)</label>
+            <input type="number" id="calc-odds" value="1.30" min="1.02" max="50" step="0.01">
+          </div>
+
+          <div class="input-field">
+            <label for="calc-cv">Consensus Dispersion CV (%)</label>
+            <input type="number" id="calc-cv" value="2.7" min="0.1" max="15" step="0.1">
+          </div>
+        </div>
+
+        <div class="calc-output-box" id="calc-output-box">
+          <div class="calc-rec-units" id="rec-units">1.4 Units</div>
+          <div class="calc-rec-amount" id="rec-amount">$140.00</div>
+          <div class="calc-advice" id="rec-advice">Standard Execution: Moderate edge allocation</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;" id="rec-ev">
+            Expected Value: +2.2% | Full Kelly: 5.6%
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

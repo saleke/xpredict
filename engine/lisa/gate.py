@@ -65,6 +65,8 @@ class Pick:
     created_at: datetime
     line: Optional[float] = None
     conviction_score: float = 0.0
+    recommended_stake_pct: float = 0.0
+    recommended_units: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,15 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
     best_ev = best.ev if best else 0.0
     conviction = compute_conviction_score(consensus.p_top, threshold, consensus.cv, best_ev)
 
+    from .staking import compute_kelly_stake
+    exec_odds = best.odds if best else consensus.fair_odds
+    kelly = compute_kelly_stake(
+        p_true=consensus.p_top,
+        odds=exec_odds,
+        cv=consensus.cv,
+        max_cv=max_cv,
+    )
+
     pick = Pick(
         match_id=consensus.match.id,
         sport_key=consensus.match.sport_key,
@@ -255,5 +266,7 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
         state="TRIGGER_ALERT",
         created_at=utcnow(),
         conviction_score=conviction,
+        recommended_stake_pct=round(kelly.stake_fraction * 100.0, 2),
+        recommended_units=kelly.recommended_units,
     )
     return GateResult(pick, "ok")

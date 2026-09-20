@@ -230,6 +230,126 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_web(args: argparse.Namespace) -> int:
+    import urllib.parse
+    settings = cfg.load_settings()
+    client = _make_client(settings, args.fixtures)
+    storage = _make_storage(settings)
+    pipeline = Pipeline(client, storage, settings, notifier=LogNotifier())
+
+    # Populate live picks and settlement
+    pipeline.run_cycle(now=utcnow())
+    run_settlement(client, storage, settings)
+
+    pending = storage.list_pending_picks()
+    settled = storage.list_settled_picks()
+
+    from .calibration import evaluate_calibration, compute_clv_metrics
+
+    cal_rep = evaluate_calibration(settled).to_dict() if settled else None
+    clv_rep = compute_clv_metrics(settled).to_dict() if settled else None
+
+    active_picks_data = []
+    for p in pending:
+        exec_book = p.get("best_book") or "pinnacle"
+        odds_val = float(p.get("best_odds") or p.get("fair_odds", 1.0))
+        fair_val = float(p.get("fair_odds", 1.0))
+        ev_val = float(p.get("best_ev") or 0.0)
+
+        if odds_val > fair_val:
+            freshness = "FRESH"
+            badge_color = "emerald"
+            gauge_text = f"Optimal Entry (+{ev_val*100:.1f}% EV)"
+        elif abs(odds_val - fair_val) < 0.01:
+            freshness = "FAIR"
+            badge_color = "amber"
+            gauge_text = "Fair Value Entry"
+        else:
+            freshness = "SLIPPED"
+            badge_color = "rose"
+            gauge_text = "Decayed / Slippage"
+
+        deep_links = {
+            "pinnacle": f"https://www.pinnacle.com/en/search/{urllib.parse.quote(str(p['home_team']))}",
+            "bet365": f"https://www.bet365.com/#/AX/K^{urllib.parse.quote(str(p['home_team']))}/",
+            "draftkings": f"https://sportsbook.draftkings.com/search?q={urllib.parse.quote(str(p['home_team']))}",
+        }
+
+        active_picks_data.append({
+            "dedupe_key": p.get("dedupe_key"),
+            "match_id": p.get("match_id"),
+            "sport_key": p.get("sport_key"),
+            "home_team": p.get("home_team"),
+            "away_team": p.get("away_team"),
+            "commence_time": p.get("commence_time"),
+            "market": p.get("market"),
+            "outcome_name": p.get("outcome_name"),
+            "line": p.get("line"),
+            "p_true": p.get("p_true"),
+            "fair_odds": fair_val,
+            "best_book": exec_book,
+            "best_odds": odds_val,
+            "best_ev": ev_val,
+            "conviction_score": p.get("conviction_score", 0.0),
+            "recommended_stake_pct": p.get("recommended_stake_pct", 0.0),
+            "recommended_units": p.get("recommended_units", 0.0),
+            "freshness": freshness,
+            "badge_color": badge_color,
+            "gauge_text": gauge_text,
+            "deep_links": deep_links,
+        })
+
+    payload = {
+        "meta": {
+            "generated_at": utcnow().isoformat(),
+            "version": __version__,
+            "total_sports": len(settings.sports),
+            "scope_leagues": list(settings.sports),
+        },
+        "summary": {
+            "active_picks_count": len(active_picks_data),
+            "settled_picks_count": len(settled),
+            "win_rate": cal_rep.get("win_rate") if cal_rep else None,
+            "brier_score": cal_rep.get("brier_score") if cal_rep else None,
+            "ece": cal_rep.get("ece") if cal_rep else None,
+            "mean_clv": clv_rep.get("mean_clv") if clv_rep else None,
+            "positive_clv_share": clv_rep.get("positive_clv_share") if clv_rep else None,
+        },
+        "active_picks": active_picks_data,
+        "settled_ledger": settled,
+        "calibration": cal_rep,
+        "clv": clv_rep,
+    }
+
+    out_path = Path(args.out or "web/data/dashboard.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2))
+    print(f"[export-web] Dashboard data exported to {out_path} ({len(active_picks_data)} active, {len(settled)} settled)")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import http.server
+    import socketserver
+    import os
+
+    web_dir = Path(args.dir or "web").resolve()
+    port = int(args.port or 8080)
+    if not web_dir.exists():
+        print(f"[serve] Error: Directory {web_dir} does not exist.")
+        return 1
+
+    os.chdir(web_dir)
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        print(f"[serve] LISA Dashboard running at http://localhost:{port}/ (serving {web_dir})")
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[serve] Server stopped.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lisa", description=f"LISA data-refinery engine v{__version__}")
@@ -273,6 +393,18 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("--json", action="store_true",
                      help="output JSON instead of formatted text table")
 
+    exp = sub.add_parser("export-web", help="export live consensus and settled metrics to web dashboard JSON")
+    exp.add_argument("--out", default="web/data/dashboard.json",
+                     help="output JSON path (default: web/data/dashboard.json)")
+    exp.add_argument("--fixtures", action="store_true",
+                     help="use bundled fixture data instead of live API")
+
+    srv = sub.add_parser("serve", help="launch local HTTP server for the web dashboard")
+    srv.add_argument("--port", type=int, default=8080,
+                     help="port number (default: 8080)")
+    srv.add_argument("--dir", default="web",
+                     help="directory to serve (default: web)")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "demo":
@@ -287,6 +419,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_report(args)
     if args.cmd == "calibrate":
         return _cmd_calibrate(args)
+    if args.cmd == "export-web":
+        return _cmd_export_web(args)
+    if args.cmd == "serve":
+        return _cmd_serve(args)
     parser.error(f"unknown command: {args.cmd}")
     return 2  # pragma: no cover
 

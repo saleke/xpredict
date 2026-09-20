@@ -6,5 +6,6 @@ __pycache__/
 .env
 .api_key
 data/
+!web/data/
 dist/
 build/

@@ -50,6 +50,8 @@ def pick_to_row(pick: Pick) -> dict:
         "closing_p_true": pick.p_true,
         "clv": 0.0 if exec_ else None,
         "conviction_score": getattr(pick, "conviction_score", 0.0),
+        "recommended_stake_pct": getattr(pick, "recommended_stake_pct", 0.0),
+        "recommended_units": getattr(pick, "recommended_units", 0.0),
         "created_at": pick.created_at.isoformat(),
         "settled_at": None,
     }
@@ -291,6 +293,8 @@ CREATE TABLE IF NOT EXISTS picks (
     closing_p_true DOUBLE PRECISION,
     clv           DOUBLE PRECISION,
     conviction_score DOUBLE PRECISION,
+    recommended_stake_pct DOUBLE PRECISION,
+    recommended_units DOUBLE PRECISION,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     settled_at    TIMESTAMPTZ
 );
@@ -321,6 +325,8 @@ class PostgresStorage(Storage):
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_p_true DOUBLE PRECISION;")
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS clv DOUBLE PRECISION;")
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS conviction_score DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS recommended_stake_pct DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS recommended_units DOUBLE PRECISION;")
         self.conn.commit()
 
     # -- hot layer (not supported: Postgres is the cold layer) ---------------
@@ -348,8 +354,9 @@ class PostgresStorage(Storage):
             "INSERT INTO picks (dedupe_key, match_id, sport_key, market, "
             "outcome_name, line, home_team, away_team, commence_time, p_true, "
             "fair_odds, n_books, stdev, cv, state, result, best_book, "
-            "best_odds, best_ev, closing_odds, closing_p_true, clv, conviction_score, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "best_odds, best_ev, closing_odds, closing_p_true, clv, conviction_score, "
+            "recommended_stake_pct, recommended_units, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (dedupe_key) DO NOTHING"
         )
         params = (r["dedupe_key"], r["match_id"], r["sport_key"], r["market"],
@@ -357,7 +364,9 @@ class PostgresStorage(Storage):
                   r["commence_time"], r["p_true"], r["fair_odds"], r["n_books"],
                   r["stdev"], r["cv"], r["state"], r["result"], r["best_book"],
                   r["best_odds"], r["best_ev"], r["closing_odds"],
-                  r["closing_p_true"], r["clv"], r.get("conviction_score", 0.0), r["created_at"])
+                  r["closing_p_true"], r["clv"], r.get("conviction_score", 0.0),
+                  r.get("recommended_stake_pct", 0.0), r.get("recommended_units", 0.0),
+                  r["created_at"])
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
             inserted = cur.rowcount > 0

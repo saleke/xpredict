@@ -107,10 +107,14 @@ def pick_alert_text(pick: Pick) -> str:
     if getattr(pick, "conviction_score", 0.0) > 0:
         conviction_str = f" [Conviction: {pick.conviction_score:.1f}]"
 
+    stake_part = ""
+    if getattr(pick, "recommended_units", 0.0) > 0:
+        stake_part = f" | Stake: {pick.recommended_units:.1f}u ({pick.recommended_stake_pct:.1f}%)"
+
     return (
         f"LISA ALERT{conviction_str}: {pick.home_team} vs {pick.away_team}\n"
         f"Top Pick: {selection}\n"
         f"True probability: {pick.p_true:.1%}  Fair odds: {pick.fair_odds:.2f}"
         f"  (books: {pick.n_books}, cv: {pick.cv:.2%})"
-        f"{exec_part}"
+        f"{exec_part}{stake_part}"
     )
