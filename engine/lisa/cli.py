@@ -5,6 +5,7 @@
   python -m lisa settle        # grade pending ledger rows (needs key or --fixtures)
   python -m lisa run           # scheduler loop (cron-friendly: --once)
   python -m lisa report        # weekly live-validation summary (needs --metrics trail)
+  python -m lisa calibrate     # calibration metrics (Brier, ECE) on settled picks
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import argparse
 import json
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 from . import __version__
 from . import config as cfg
@@ -141,6 +143,60 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_calibrate(args: argparse.Namespace) -> int:
+    from .calibration import evaluate_calibration, evaluate_by_market, format_calibration_report
+
+    records: list[dict] = []
+    settings = cfg.load_settings()
+
+    if args.fixtures:
+        settings = cfg.Settings(sports=FIXTURE_SPORTS)
+        client = FixtureClient(ODDS_PAYLOADS, SCORES_PAYLOADS)
+        storage = InMemoryStorage()
+        pipeline = Pipeline(client, storage, settings, notifier=LogNotifier())
+        pipeline.run_cycle()
+        run_settlement(client, storage, settings)
+        records = storage.list_settled_picks()
+    else:
+        metrics_file = args.metrics or settings.metrics_path
+        if metrics_file and Path(metrics_file).exists():
+            with Path(metrics_file).open(encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    if rec.get("kind") == "settled_pick":
+                        records.append(rec)
+        if not records:
+            storage = _make_storage(settings)
+            records = storage.list_settled_picks()
+
+    if args.market:
+        records = [r for r in records if r.get("market") == args.market]
+
+    if args.json:
+        if args.by_market:
+            reports = evaluate_by_market(records)
+            print(json.dumps({m: rep.to_dict() for m, rep in reports.items()}, indent=2))
+        else:
+            rep = evaluate_calibration(records)
+            print(json.dumps(rep.to_dict(), indent=2))
+        return 0
+
+    if args.by_market:
+        reports = evaluate_by_market(records)
+        for m, rep in reports.items():
+            print(format_calibration_report(rep, title=f"LISA Calibration — Market: {m}"))
+            print()
+    else:
+        title = f"LISA Calibration — Market: {args.market}" if args.market else "LISA Global Calibration Report"
+        rep = evaluate_calibration(records)
+        print(format_calibration_report(rep, title=title))
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lisa", description=f"LISA data-refinery engine v{__version__}")
@@ -172,6 +228,18 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--metrics", default=None,
                         help="JSONL trail to aggregate")
 
+    cal = sub.add_parser("calibrate", help="measure calibration (Brier score, ECE) on settled picks")
+    cal.add_argument("--metrics", default=None,
+                     help="JSONL trail to aggregate")
+    cal.add_argument("--market", default=None,
+                     help="filter to specific market (e.g. h2h, totals, spreads)")
+    cal.add_argument("--by-market", action="store_true",
+                     help="break down calibration per market")
+    cal.add_argument("--fixtures", action="store_true",
+                     help="evaluate on bundled fixture matches")
+    cal.add_argument("--json", action="store_true",
+                     help="output JSON instead of formatted text table")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "demo":
@@ -184,6 +252,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run(args)
     if args.cmd == "report":
         return _cmd_report(args)
+    if args.cmd == "calibrate":
+        return _cmd_calibrate(args)
     parser.error(f"unknown command: {args.cmd}")
     return 2  # pragma: no cover
 

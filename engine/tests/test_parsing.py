@@ -108,3 +108,26 @@ def test_non_numeric_price_is_dropped():
 def test_missing_commence_time_is_skipped():
     game = {k: v for k, v in GAME.items() if k != "commence_time"}
     assert parse_odds_payload([game]) == []
+
+
+def test_spreads_parse_harvests_home_line():
+    game = {
+        "id": "m-spr",
+        "sport_key": "basketball_nba",
+        "home_team": "Celtics",
+        "away_team": "Knicks",
+        "commence_time": "2026-09-22T20:00:00Z",
+        "bookmakers": [{
+            "key": "pinnacle",
+            "title": "Pinnacle",
+            "markets": [{"key": "spreads", "outcomes": [
+                {"name": "Celtics", "price": 1.91, "point": -4.5},
+                {"name": "Knicks", "price": 1.91, "point": 4.5}]}],
+        }],
+    }
+    matches = parse_odds_payload([game], market_keys=("spreads",))
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.market == "spreads"
+    assert m.bookmakers[0].line == -4.5
+    assert m.bookmakers[0].outcomes == {"Celtics": 1.91, "Knicks": 1.91}

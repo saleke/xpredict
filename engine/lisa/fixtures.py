@@ -20,6 +20,8 @@ cover every gate outcome:
 """
 from __future__ import annotations
 
+from typing import Any, Optional
+
 _LAST_UPDATE = "2026-09-20T14:00:00Z"
 
 FIXTURE_SPORTS: tuple[str, ...] = (
@@ -30,15 +32,25 @@ FIXTURE_SPORTS: tuple[str, ...] = (
 
 
 def _book(key: str, title: str, prices: dict[str, float],
-          last_update: str = _LAST_UPDATE) -> dict:
+          last_update: str = _LAST_UPDATE,
+          market: str = "h2h",
+          point: Optional[float] = None,
+          points: Optional[dict[str, float]] = None) -> dict:
+    outcomes: list[dict[str, Any]] = []
+    for name, price in prices.items():
+        oc: dict[str, Any] = {"name": name, "price": price}
+        if points is not None and name in points:
+            oc["point"] = points[name]
+        elif point is not None:
+            oc["point"] = point
+        outcomes.append(oc)
     return {
         "key": key,
         "title": title,
         "last_update": last_update,
         "markets": [{
-            "key": "h2h",
-            "outcomes": [{"name": name, "price": price}
-                         for name, price in prices.items()],
+            "key": market,
+            "outcomes": outcomes,
         }],
     }
 
@@ -198,6 +210,69 @@ NBA_SCORES: list[dict] = [
 LA_LIGA_SCORES: list[dict] = [
     _score("lig-a", "soccer_spain_la_liga", "2026-09-22T17:00:00Z",
            "Real Madrid", "Elche", 2, 1),
+]
+
+NBA_TOTALS_ODDS: list[dict] = [
+    _game("nba-tot-a", "basketball_nba", "Celtics", "Knicks",
+          "2026-09-21T00:00:00Z", [
+              # Line 220.5: 5 books (densest)
+              _book("pinnacle", "Pinnacle", {"Over": 1.18, "Under": 5.00},
+                    market="totals", point=220.5),
+              _book("bet365", "Bet365", {"Over": 1.22, "Under": 4.50},
+                    market="totals", point=220.5),
+              _book("draftkings", "DraftKings", {"Over": 1.19, "Under": 4.80},
+                    market="totals", point=220.5),
+              _book("fanduel", "FanDuel", {"Over": 1.17, "Under": 5.10},
+                    market="totals", point=220.5),
+              _book("betmgm", "BetMGM", {"Over": 1.18, "Under": 4.90},
+                    market="totals", point=220.5),
+              # Line 221.5: 2 books (sparse)
+              _book("unibet", "Unibet", {"Over": 1.30, "Under": 3.60},
+                    market="totals", point=221.5),
+              _book("williamhill", "William Hill", {"Over": 1.28, "Under": 3.70},
+                    market="totals", point=221.5),
+          ]),
+]
+
+LA_LIGA_TOTALS_ODDS: list[dict] = [
+    _game("lig-tot-a", "soccer_spain_la_liga", "Real Madrid", "Elche",
+          "2026-09-22T17:00:00Z", [
+              # Line 2.5: 5 books (densest)
+              _book("pinnacle", "Pinnacle", {"Over": 1.22, "Under": 4.50},
+                    market="totals", point=2.5),
+              _book("bet365", "Bet365", {"Over": 1.25, "Under": 4.20},
+                    market="totals", point=2.5),
+              _book("unibet", "Unibet", {"Over": 1.23, "Under": 4.40},
+                    market="totals", point=2.5),
+              _book("williamhill", "William Hill", {"Over": 1.21, "Under": 4.60},
+                    market="totals", point=2.5),
+              _book("betfair", "Betfair", {"Over": 1.22, "Under": 4.50},
+                    market="totals", point=2.5),
+              # Line 3.0: 3 books (sparse)
+              _book("draftkings", "DraftKings", {"Over": 1.65, "Under": 2.30},
+                    market="totals", point=3.0),
+              _book("fanduel", "FanDuel", {"Over": 1.62, "Under": 2.35},
+                    market="totals", point=3.0),
+              _book("betmgm", "BetMGM", {"Over": 1.64, "Under": 2.32},
+                    market="totals", point=3.0),
+          ]),
+]
+
+NBA_SPREADS_ODDS: list[dict] = [
+    _game("nba-spr-a", "basketball_nba", "Celtics", "Knicks",
+          "2026-09-21T00:00:00Z", [
+              # Line -4.5 on Celtics (+4.5 on Knicks): 5 books
+              _book("pinnacle", "Pinnacle", {"Celtics": 1.18, "Knicks": 5.00},
+                    market="spreads", points={"Celtics": -4.5, "Knicks": 4.5}),
+              _book("bet365", "Bet365", {"Celtics": 1.22, "Knicks": 4.50},
+                    market="spreads", points={"Celtics": -4.5, "Knicks": 4.5}),
+              _book("draftkings", "DraftKings", {"Celtics": 1.19, "Knicks": 4.80},
+                    market="spreads", points={"Celtics": -4.5, "Knicks": 4.5}),
+              _book("fanduel", "FanDuel", {"Celtics": 1.17, "Knicks": 5.10},
+                    market="spreads", points={"Celtics": -4.5, "Knicks": 4.5}),
+              _book("betmgm", "BetMGM", {"Celtics": 1.18, "Knicks": 4.90},
+                    market="spreads", points={"Celtics": -4.5, "Knicks": 4.5}),
+          ]),
 ]
 
 BUNDESLIGA_SCORES: list[dict] = []

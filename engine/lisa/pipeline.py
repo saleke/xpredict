@@ -68,7 +68,8 @@ class Pipeline:
             report.finished = utcnow()
             return report
 
-        matches = parse_odds_payload(payload)
+        market_keys = tuple(m.strip() for m in self.settings.markets.split(",") if m.strip())
+        matches = parse_odds_payload(payload, market_keys=market_keys)
         report.matches = tuple(matches)
         report.matches_seen = len(matches)
         max_book_age = (
@@ -135,6 +136,7 @@ class Pipeline:
         self.storage.upsert_live(f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name)}", {
             "p_true": pick.p_true,
             "fair_odds": pick.fair_odds,
+            "line": pick.line,
             "state": pick.state,
             "best_book": pick.best_execution.book_key if pick.best_execution else None,
             "emitted_at": utcnow().isoformat(),

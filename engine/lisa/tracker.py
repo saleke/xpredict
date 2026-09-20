@@ -30,6 +30,7 @@ class Tracker:
         self.path = Path(path)
         self.storage = storage
         self._seen_picks: set[str] = set()
+        self._seen_settled: set[str] = set()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     # -- recording ------------------------------------------------------------
@@ -65,6 +66,23 @@ class Tracker:
             "skipped_not_due": report.skipped_not_due,
             "errors": report.errors,
         }, ts=ts)
+        for p in report.settled_picks:
+            key = p["dedupe_key"]
+            if key in self._seen_settled:
+                continue
+            self._seen_settled.add(key)
+            self._append({
+                "kind": "settled_pick",
+                "dedupe_key": key,
+                "match_id": p.get("match_id"),
+                "sport": p.get("sport_key"),
+                "market": p.get("market"),
+                "outcome": p.get("outcome_name"),
+                "p_true": p.get("p_true"),
+                "line": p.get("line"),
+                "result": p.get("result"),
+                "state": p.get("state"),
+            }, ts=ts)
 
     def record_picks(self, ts: Optional[datetime] = None) -> None:
         """Snapshot every newly-seen pending pick once (deduped by key)."""
@@ -88,6 +106,28 @@ class Tracker:
                 "best_ev": row["best_ev"],
             }, ts=ts)
 
+    def record_settled_picks(self, ts: Optional[datetime] = None) -> None:
+        """Snapshot every newly-seen settled pick once (deduped by key)."""
+        if self.storage is None:
+            return
+        for row in self.storage.list_settled_picks():
+            key = row["dedupe_key"]
+            if key in self._seen_settled:
+                continue
+            self._seen_settled.add(key)
+            self._append({
+                "kind": "settled_pick",
+                "dedupe_key": key,
+                "match_id": row["match_id"],
+                "sport": row["sport_key"],
+                "market": row.get("market"),
+                "outcome": row["outcome_name"],
+                "p_true": row["p_true"],
+                "line": row.get("line"),
+                "result": row.get("result"),
+                "state": row.get("state"),
+            }, ts=ts)
+
     # -- summary --------------------------------------------------------------
 
     def summarize(self) -> dict:
@@ -108,17 +148,30 @@ class Tracker:
                 "runs": 0, "won": 0, "lost": 0, "void": 0,
                 "settled": 0, "pending_last": 0,
             },
+            "calibration": None,
+            "calibration_by_market": {},
             "span_hours": 0.0,
             "picks_per_week": None,
         }
         times: list[datetime] = []
         evs: list[float] = []
         p_trues: list[float] = []
+        settled_records: list[dict] = []
 
         if not self.path.exists():
+            if self.storage is not None:
+                settled_from_store = self.storage.list_settled_picks()
+                if settled_from_store:
+                    from .calibration import evaluate_calibration, evaluate_by_market
+                    out["calibration"] = evaluate_calibration(settled_from_store).to_dict()
+                    out["calibration_by_market"] = {
+                        m: rep.to_dict()
+                        for m, rep in evaluate_by_market(settled_from_store).items()
+                    }
             return out
 
         seen_pick_keys: set[str] = set()
+        seen_settled_keys: set[str] = set()
         seen_suppression: set[tuple[str, str]] = set()
 
         with self.path.open(encoding="utf-8") as fh:
@@ -158,6 +211,12 @@ class Tracker:
                     s["settled"] += rec.get("settled", 0)
                     s["pending_last"] = rec.get("pending", 0)
                     out["errors"] += len(rec.get("errors", []))
+                elif kind == "settled_pick":
+                    key = rec.get("dedupe_key")
+                    if key in seen_settled_keys:
+                        continue
+                    seen_settled_keys.add(key)
+                    settled_records.append(rec)
                 elif kind == "pick":
                     key = rec.get("dedupe_key")
                     if key in seen_pick_keys:
@@ -184,4 +243,20 @@ class Tracker:
         if evs:
             p["best_ev_mean"] = sum(evs) / len(evs)
             p["positive_ev_share"] = sum(1 for e in evs if e > 0) / len(evs)
+
+        from .calibration import evaluate_calibration, evaluate_by_market
+        if settled_records:
+            out["calibration"] = evaluate_calibration(settled_records).to_dict()
+            out["calibration_by_market"] = {
+                m: rep.to_dict()
+                for m, rep in evaluate_by_market(settled_records).items()
+            }
+        elif self.storage is not None:
+            settled_from_store = self.storage.list_settled_picks()
+            if settled_from_store:
+                out["calibration"] = evaluate_calibration(settled_from_store).to_dict()
+                out["calibration_by_market"] = {
+                    m: rep.to_dict()
+                    for m, rep in evaluate_by_market(settled_from_store).items()
+                }
         return out

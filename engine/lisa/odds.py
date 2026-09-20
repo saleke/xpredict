@@ -76,3 +76,50 @@ class Score:
         if self.away_score > self.home_score:
             return self.away_team
         return "Draw"
+
+    def grade_pick(self, market: str, outcome_name: str,
+                   line: Optional[float] = None) -> Optional[str]:
+        """Grade a pick row against this official score.
+
+        Returns "WIN", "LOSS", "VOID", or None when the score is not final/decidable.
+        """
+        if not self.completed or self.home_score is None or self.away_score is None:
+            return None
+
+        if market == H2H:
+            w = self.winner()
+            if w is None:
+                return None
+            return "WIN" if w == outcome_name else "LOSS"
+
+        if market == "totals":
+            if line is None:
+                return None
+            total = self.home_score + self.away_score
+            diff = total - line
+            if abs(diff) < 1e-6:
+                return "VOID"
+            name_lower = outcome_name.strip().lower()
+            if name_lower == "over":
+                return "WIN" if diff > 0 else "LOSS"
+            if name_lower == "under":
+                return "WIN" if diff < 0 else "LOSS"
+            return None
+
+        if market == "spreads":
+            if line is None:
+                return None
+            if outcome_name == self.home_team:
+                team_score = self.home_score
+                opp_score = self.away_score
+            elif outcome_name == self.away_team:
+                team_score = self.away_score
+                opp_score = self.home_score
+            else:
+                return None
+            diff = (team_score + line) - opp_score
+            if abs(diff) < 1e-6:
+                return "VOID"
+            return "WIN" if diff > 0 else "LOSS"
+
+        return None

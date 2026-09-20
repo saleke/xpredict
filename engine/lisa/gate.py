@@ -49,6 +49,7 @@ class Pick:
     best_execution: Optional[Execution]
     state: str
     created_at: datetime
+    line: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,11 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
     if require_positive_ev and best is None:
         return GateResult(None, "no_positive_ev")
 
+    pick_line = consensus.line
+    if consensus.match.market == "spreads" and consensus.line is not None:
+        if consensus.top_outcome == consensus.match.away_team:
+            pick_line = -consensus.line
+
     pick = Pick(
         match_id=consensus.match.id,
         sport_key=consensus.match.sport_key,
@@ -97,6 +103,7 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
         commence_time=consensus.match.commence_time,
         market=consensus.match.market,
         outcome_name=consensus.top_outcome,
+        line=pick_line,
         p_true=consensus.p_top,
         fair_odds=consensus.fair_odds,
         n_books=consensus.n_books,

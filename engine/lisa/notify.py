@@ -46,9 +46,16 @@ def pick_alert_text(pick: Pick) -> str:
     if pick.best_execution is not None:
         exec_part = (f" | execute @ {pick.best_execution.book_title} "
                      f"({pick.best_execution.odds:.2f}, EV {pick.best_execution.ev:+.1%})")
+    if pick.line is not None:
+        if pick.market == "spreads":
+            selection = f"{pick.outcome_name} {pick.line:+g}"
+        else:
+            selection = f"{pick.outcome_name} {pick.line}"
+    else:
+        selection = pick.outcome_name
     return (
         f"LISA ALERT: {pick.home_team} vs {pick.away_team}\n"
-        f"Top Pick: {pick.outcome_name}\n"
+        f"Top Pick: {selection}\n"
         f"True probability: {pick.p_true:.1%}  Fair odds: {pick.fair_odds:.2f}"
         f"  (books: {pick.n_books}, cv: {pick.cv:.2%})"
         f"{exec_part}"

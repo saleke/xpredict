@@ -29,6 +29,7 @@ class SettlementReport:
     skipped_no_scores: int = 0
     skipped_not_due: int = 0
     errors: list[str] = field(default_factory=list)
+    settled_picks: list[dict] = field(default_factory=list)
 
 
 def _parse_dt(value) -> Optional[datetime]:
@@ -80,22 +81,58 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                     >= settings.settle_after_hours + settings.settle_grace_hours):
                 if storage.settle_pick(dedupe, "VOID", now, state="VOID"):
                     report.void += 1
+                    report.settled_picks.append({
+                        "dedupe_key": dedupe,
+                        "match_id": row.get("match_id"),
+                        "sport_key": row.get("sport_key"),
+                        "market": row.get("market"),
+                        "outcome_name": row.get("outcome_name"),
+                        "p_true": row.get("p_true"),
+                        "line": row.get("line"),
+                        "result": "VOID",
+                        "state": "VOID",
+                    })
             else:
                 report.skipped_not_due += 1
             continue
 
-        winner = score.winner()
-        if winner is None:
+        grade = score.grade_pick(row["market"], row["outcome_name"], row.get("line"))
+        if grade is None:
             report.skipped_no_scores += 1
             continue
 
-        result = "WIN" if winner == row["outcome_name"] else "LOSS"
-        if storage.settle_pick(dedupe, result, now):
-            report.settled += 1
-            if result == "WIN":
-                report.won += 1
-            else:
-                report.lost += 1
+        if grade == "VOID":
+            if storage.settle_pick(dedupe, "VOID", now, state="VOID"):
+                report.void += 1
+                report.settled_picks.append({
+                    "dedupe_key": dedupe,
+                    "match_id": row.get("match_id"),
+                    "sport_key": row.get("sport_key"),
+                    "market": row.get("market"),
+                    "outcome_name": row.get("outcome_name"),
+                    "p_true": row.get("p_true"),
+                    "line": row.get("line"),
+                    "result": "VOID",
+                    "state": "VOID",
+                })
+        else:
+            if storage.settle_pick(dedupe, grade, now, state="SETTLED"):
+                report.settled += 1
+                if grade == "WIN":
+                    report.won += 1
+                else:
+                    report.lost += 1
+                report.settled_picks.append({
+                    "dedupe_key": dedupe,
+                    "match_id": row.get("match_id"),
+                    "sport_key": row.get("sport_key"),
+                    "market": row.get("market"),
+                    "outcome_name": row.get("outcome_name"),
+                    "p_true": row.get("p_true"),
+                    "line": row.get("line"),
+                    "result": grade,
+                    "state": "SETTLED",
+                })
 
     return report
 

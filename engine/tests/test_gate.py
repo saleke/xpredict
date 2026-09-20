@@ -73,3 +73,21 @@ def test_execution_ev_uses_leave_one_out_reference():
                                   abs=1e-12)
     naive_ev = c.p_top * price - 1.0
     assert ex.ev > naive_ev  # removing the lagging book's drag raises its edge
+
+
+def test_gate_carries_line_into_pick():
+    # h2h: pick.line is None
+    res_h2h = evaluate(_consensus("nba-a"), threshold=0.75, min_books=5, max_cv=0.10)
+    assert res_h2h.reason == "ok"
+    assert res_h2h.pick.line is None
+
+    # totals: pick.line is the consensus point line (220.5)
+    from lisa.fixtures import NBA_TOTALS_ODDS
+    tot_match = parse_odds_payload(NBA_TOTALS_ODDS, market_keys=("totals",))[0]
+    c_tot = consensus.refine(tot_match, now=NOW, min_books=5)
+    assert c_tot is not None
+    assert c_tot.line == 220.5
+    res_tot = evaluate(c_tot, threshold=0.75, min_books=5, max_cv=0.10)
+    assert res_tot.reason == "ok"
+    assert res_tot.pick is not None
+    assert res_tot.pick.line == 220.5

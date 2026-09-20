@@ -47,6 +47,7 @@ class Consensus:
     sharp_multiplier: float = 2.0
     margin_weighted: bool = True
     min_margin_floor: float = MIN_POOL_MARGIN
+    line: Optional[float] = None
 
     def loo_probability(self, exclude_key: str) -> Optional[float]:
         """Leave-one-out consensus probability for the top outcome.
@@ -149,85 +150,113 @@ def refine(match: Match, *, now: Optional[datetime] = None,
            min_margin_floor: float = MIN_POOL_MARGIN,
            max_book_age_sec: Optional[float] = None,
            lo: float = 1.01, hi: float = 1001.0) -> Optional[Consensus]:
-    """Blend all usable books into one consensus.
+    """Blend usable books for a match into one consensus.
 
-    Returns ``None`` when there aren't enough fresh, complete books — the
-    caller should treat that as "no signal this cycle" rather than an error.
+    Books are bucketed by their exact quoted point line (``Book.line``).
+    The densest fresh complete bucket is selected (tiebreak: lower CV,
+    then lower line value). For point-less markets like h2h, all books
+    share ``line = None``, maintaining byte-identical single-bucket behavior.
+
+    Returns ``None`` when there aren't enough fresh, complete books in any
+    line bucket — the caller should treat that as "no signal this cycle"
+    rather than an error.
     """
     if now is None:
         now = utcnow()
     if not match.bookmakers:
         return None
 
-    outcomes: set[str] = set()
     usable: list[Book] = []
     for book in match.bookmakers:
         if max_book_age_sec is not None and not _fresh(book, now, max_book_age_sec):
             continue
         if len(book.outcomes) < 2:
             continue
-        outcomes.update(book.outcomes.keys())
         usable.append(book)
 
-    if not outcomes or not usable:
+    if not usable:
         return None
 
-    # completeness: only keep books that price every outcome in the union, so
-    # the consensus is computed over an identical outcome set.
-    complete = [b for b in usable if set(b.outcomes.keys()) == outcomes]
+    # Group usable books into buckets by exact quoted line.
+    # For h2h, book.line is None (single bucket).
+    buckets: dict[Optional[float], list[Book]] = {}
+    for book in usable:
+        buckets.setdefault(book.line, []).append(book)
 
-    refined: list[BookTrueProbs] = []
-    for book in complete:
-        btp = single_book_true_probs(book, lo=lo, hi=hi)
-        if btp is not None:
-            refined.append(btp)
+    candidates: list[Consensus] = []
+    for line, books in buckets.items():
+        outcomes: set[str] = set()
+        for b in books:
+            outcomes.update(b.outcomes.keys())
+        if not outcomes:
+            continue
 
-    if len(refined) < min_books:
+        # completeness: only keep books that price every outcome in the bucket's union
+        complete = [b for b in books if set(b.outcomes.keys()) == outcomes]
+
+        refined: list[BookTrueProbs] = []
+        for book in complete:
+            btp = single_book_true_probs(book, lo=lo, hi=hi)
+            if btp is not None:
+                refined.append(btp)
+
+        if len(refined) < min_books:
+            continue
+
+        weights = _book_weights(refined, sharp_keys=sharp_keys,
+                                sharp_multiplier=sharp_multiplier,
+                                margin_weighted=margin_weighted,
+                                min_margin_floor=min_margin_floor)
+        wsum = sum(weights.values())
+        if wsum <= 0.0 or not math.isfinite(wsum):
+            continue
+
+        p: dict[str, float] = {}
+        for outcome in outcomes:
+            acc = 0.0
+            for btp in refined:
+                acc += weights[btp.book_key] * btp.probs[outcome]
+            p[outcome] = acc / wsum
+
+        total = sum(p.values())
+        if total <= 0.0:
+            continue
+        p = {k: v / total for k, v in p.items()}
+
+        top_outcome = max(p, key=p.get)
+        p_top = p[top_outcome]
+
+        # Agreement: sample stdev across books for the top outcome.
+        stdev = (
+            statistics.stdev([b.probs[top_outcome] for b in refined])
+            if len(refined) >= 2 else 0.0
+        )
+        cv = stdev / p_top if p_top > 0.0 else float("inf")
+
+        candidates.append(Consensus(
+            match=match,
+            books=tuple(refined),
+            p=p,
+            top_outcome=top_outcome,
+            p_top=p_top,
+            n_books=len(refined),
+            stdev=stdev,
+            cv=cv,
+            fair_odds=1.0 / p_top,
+            weights=weights,
+            sharp_keys=tuple(sharp_keys),
+            sharp_multiplier=sharp_multiplier,
+            margin_weighted=margin_weighted,
+            min_margin_floor=min_margin_floor,
+            line=line,
+        ))
+
+    if not candidates:
         return None
 
-    weights = _book_weights(refined, sharp_keys=sharp_keys,
-                            sharp_multiplier=sharp_multiplier,
-                            margin_weighted=margin_weighted,
-                            min_margin_floor=min_margin_floor)
-    wsum = sum(weights.values())
-    if wsum <= 0.0 or not math.isfinite(wsum):
-        return None
-
-    p: dict[str, float] = {}
-    for outcome in outcomes:
-        acc = 0.0
-        for btp in refined:
-            acc += weights[btp.book_key] * btp.probs[outcome]
-        p[outcome] = acc / wsum
-
-    total = sum(p.values())
-    if total <= 0.0:
-        return None
-    p = {k: v / total for k, v in p.items()}
-
-    top_outcome = max(p, key=p.get)
-    p_top = p[top_outcome]
-
-    # Agreement: sample stdev across books for the top outcome.
-    stdev = (
-        statistics.stdev([b.probs[top_outcome] for b in refined])
-        if len(refined) >= 2 else 0.0
-    )
-    cv = stdev / p_top if p_top > 0.0 else float("inf")
-
-    return Consensus(
-        match=match,
-        books=tuple(refined),
-        p=p,
-        top_outcome=top_outcome,
-        p_top=p_top,
-        n_books=len(refined),
-        stdev=stdev,
-        cv=cv,
-        fair_odds=1.0 / p_top,
-        weights=weights,
-        sharp_keys=tuple(sharp_keys),
-        sharp_multiplier=sharp_multiplier,
-        margin_weighted=margin_weighted,
-        min_margin_floor=min_margin_floor,
-    )
+    # Densest bucket wins, tie -> lower CV -> lower line
+    return min(candidates, key=lambda c: (
+        -c.n_books,
+        float("inf") if not math.isfinite(c.cv) else c.cv,
+        float("-inf") if c.line is None else c.line,
+    ))

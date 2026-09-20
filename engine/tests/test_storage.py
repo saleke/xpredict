@@ -51,6 +51,29 @@ def test_void_state():
     assert row["state"] == "VOID" and row["result"] == "VOID"
 
 
+def test_list_settled_picks():
+    s = InMemoryStorage()
+    s.insert_pick(_pick(match_id="m1", outcome="A"))
+    s.insert_pick(_pick(match_id="m2", outcome="B"))
+    s.insert_pick(_pick(match_id="m3", outcome="C"))
+
+    assert len(s.list_pending_picks()) == 3
+    assert len(s.list_settled_picks()) == 0
+
+    key1 = pick_key("m1", "h2h", "A")
+    key2 = pick_key("m2", "h2h", "B")
+    s.settle_pick(key1, "WIN", utcnow(), state="SETTLED")
+    s.settle_pick(key2, "VOID", utcnow(), state="VOID")
+
+    assert len(s.list_pending_picks()) == 1
+    settled = s.list_settled_picks()
+    assert len(settled) == 2
+    settled_keys = {r["dedupe_key"] for r in settled}
+    assert key1 in settled_keys
+    assert key2 in settled_keys
+
+
+
 def test_pick_key_identity_and_ledger_columns():
     from lisa.storage import pick_to_row
     row = pick_to_row(_pick())
@@ -59,9 +82,39 @@ def test_pick_key_identity_and_ledger_columns():
     assert row["best_ev"] == 0.008
     assert row["state"] == "TRIGGER_ALERT"
     assert row["result"] is None and row["settled_at"] is None
+    assert row["line"] is None
+
+    # Totals/spreads pick with a line
+    tot_pick = Pick(
+        match_id="m1", sport_key="basketball_nba",
+        home_team="A", away_team="B", commence_time=utcnow(), market="totals",
+        outcome_name="Over", p_true=0.8, fair_odds=1.25, n_books=5,
+        stdev=0.01, cv=0.0125,
+        best_execution=Execution("pinnacle", "Pinnacle", 1.26, 0.008),
+        state="TRIGGER_ALERT", created_at=utcnow(), line=220.5,
+    )
+    tot_row = pick_to_row(tot_pick)
+    assert tot_row["line"] == 220.5
+
+
+def test_pick_storage_preserves_line():
+    s = InMemoryStorage()
+    p = Pick(
+        match_id="m-tot", sport_key="basketball_nba",
+        home_team="A", away_team="B", commence_time=utcnow(), market="totals",
+        outcome_name="Over", p_true=0.8, fair_odds=1.25, n_books=5,
+        stdev=0.01, cv=0.0125,
+        best_execution=Execution("pinnacle", "Pinnacle", 1.26, 0.008),
+        state="TRIGGER_ALERT", created_at=utcnow(), line=220.5,
+    )
+    assert s.insert_pick(p) is True
+    key = pick_key("m-tot", "totals", "Over")
+    saved = s._picks[key]
+    assert saved["line"] == 220.5
 
 
 def test_postgres_schema_constant_is_sane():
     from lisa.storage import POSTGRES_DDL
     assert "CREATE TABLE IF NOT EXISTS picks" in POSTGRES_DDL
+    assert "line          DOUBLE PRECISION" in POSTGRES_DDL
     assert "ON CONFLICT" not in POSTGRES_DDL  # PK is the dedupe mechanism

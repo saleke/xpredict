@@ -32,6 +32,7 @@ def pick_to_row(pick: Pick) -> dict:
         "sport_key": pick.sport_key,
         "market": pick.market,
         "outcome_name": pick.outcome_name,
+        "line": pick.line,
         "home_team": pick.home_team,
         "away_team": pick.away_team,
         "commence_time": pick.commence_time.isoformat(),
@@ -68,6 +69,9 @@ class Storage:
         raise NotImplementedError
 
     def list_pending_picks(self) -> list[dict]:
+        raise NotImplementedError
+
+    def list_settled_picks(self) -> list[dict]:
         raise NotImplementedError
 
     def settle_pick(self, dedupe_key: str, result: str,
@@ -112,6 +116,9 @@ class InMemoryStorage(Storage):
 
     def list_pending_picks(self) -> list[dict]:
         return [r for r in self._picks.values() if r["state"] in PENDING_STATES]
+
+    def list_settled_picks(self) -> list[dict]:
+        return [r for r in self._picks.values() if r["state"] not in PENDING_STATES]
 
     def settle_pick(self, dedupe_key: str, result: str,
                     settled_at: datetime, state: str = "SETTLED") -> bool:
@@ -187,6 +194,17 @@ class RedisStorage(Storage):
                 out.append(row)
         return out
 
+    def list_settled_picks(self) -> list[dict]:
+        out: list[dict] = []
+        for key in self.r.smembers(self.PICK_INDEX):
+            raw = self.r.get(self.PICK_PREFIX + key)
+            if not raw:
+                continue
+            row = json.loads(raw)
+            if row["state"] not in PENDING_STATES:
+                out.append(row)
+        return out
+
     def settle_pick(self, dedupe_key: str, result: str,
                     settled_at: datetime, state: str = "SETTLED") -> bool:
         raw = self.r.get(self.PICK_PREFIX + dedupe_key)
@@ -209,6 +227,7 @@ CREATE TABLE IF NOT EXISTS picks (
     sport_key     TEXT NOT NULL,
     market        TEXT NOT NULL,
     outcome_name  TEXT NOT NULL,
+    line          DOUBLE PRECISION,
     home_team     TEXT,
     away_team     TEXT,
     commence_time TIMESTAMPTZ,
@@ -247,6 +266,7 @@ class PostgresStorage(Storage):
     def ensure_schema(self) -> None:
         with self.conn.cursor() as cur:
             cur.execute(POSTGRES_DDL)
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS line DOUBLE PRECISION;")
         self.conn.commit()
 
     # -- hot layer (not supported: Postgres is the cold layer) ---------------
@@ -272,14 +292,14 @@ class PostgresStorage(Storage):
         r = pick_to_row(pick)
         sql = (
             "INSERT INTO picks (dedupe_key, match_id, sport_key, market, "
-            "outcome_name, home_team, away_team, commence_time, p_true, "
+            "outcome_name, line, home_team, away_team, commence_time, p_true, "
             "fair_odds, n_books, stdev, cv, state, result, best_book, "
             "best_odds, best_ev, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON CONFLICT (dedupe_key) DO NOTHING"
         )
         params = (r["dedupe_key"], r["match_id"], r["sport_key"], r["market"],
-                  r["outcome_name"], r["home_team"], r["away_team"],
+                  r["outcome_name"], r["line"], r["home_team"], r["away_team"],
                   r["commence_time"], r["p_true"], r["fair_odds"], r["n_books"],
                   r["stdev"], r["cv"], r["state"], r["result"], r["best_book"],
                   r["best_odds"], r["best_ev"], r["created_at"])
@@ -293,6 +313,14 @@ class PostgresStorage(Storage):
         sql = "SELECT * FROM picks WHERE state = ANY(%s)"
         with self.conn.cursor() as cur:
             cur.execute(sql, (list(PENDING_STATES),))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        return rows
+
+    def list_settled_picks(self) -> list[dict]:
+        sql = "SELECT * FROM picks WHERE state NOT IN ('PENDING')"
+        with self.conn.cursor() as cur:
+            cur.execute(sql)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         return rows
