@@ -21,7 +21,7 @@ engine/         implementation — Python, stdlib-only runtime (see engine/READM
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest
-.venv/bin/python -m pytest -q        # 34 tests
+.venv/bin/python -m pytest -q        # 55 tests
 .venv/bin/python -m lisa demo        # full cycle + settlement on bundled fixtures
 ```
 
@@ -31,6 +31,8 @@ Live mode needs a [The Odds API](https://the-odds-api.com) key:
 export LISA_ODDS_API_KEY=your_key
 python -m lisa run-cycle              # ingest → refine → gate → persist
 python -m lisa settle                 # grade pending picks (WIN / LOSS / VOID)
+python -m lisa run --once             # scheduler tick (cadence: live/spike/prematch/idle)
+python -m lisa report                 # weekly live-validation metrics summary
 ```
 
 ## Design highlights

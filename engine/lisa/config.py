@@ -83,6 +83,19 @@ class Settings:
     alert_cooldown_sec: int = 600
     alert_min_delta: float = 0.015
 
+    # -- scheduler cadence ----------------------------------------------------
+    cadence_prematch_sec: int = 60 * 60     # quiet pre-match poll
+    cadence_spike_sec: int = 15 * 60       # kickoff within spike window
+    cadence_live_sec: int = 15 * 60        # match(es) in progress
+    cadence_idle_sec: int = 6 * 60 * 60    # nothing upcoming in horizon
+    cadence_settle_sec: int = 60 * 60      # grading poll
+    spike_window_sec: int = 90 * 60        # before kickoff
+    live_window_hours: float = 4.0         # post-kickoff "in progress" buffer
+    horizon_hours: float = 36.0            # how far ahead cadence cares
+    credit_warn: int = 100                 # degrade below this remaining
+    credit_stop: int = 20                  # only settlement below this
+    metrics_path: str = "data/metrics.jsonl"
+
 
 def load_settings() -> Settings:
     return Settings(
@@ -113,4 +126,15 @@ def load_settings() -> Settings:
         telegram_chat_id=os.environ.get("LISA_TELEGRAM_CHAT_ID", ""),
         alert_cooldown_sec=_int("LISA_ALERT_COOLDOWN_SEC", Settings.alert_cooldown_sec),
         alert_min_delta=_float("LISA_ALERT_MIN_DELTA", Settings.alert_min_delta),
+        cadence_prematch_sec=_int("LISA_CADENCE_PREMATCH_SEC", Settings.cadence_prematch_sec),
+        cadence_spike_sec=_int("LISA_CADENCE_SPIKE_SEC", Settings.cadence_spike_sec),
+        cadence_live_sec=_int("LISA_CADENCE_LIVE_SEC", Settings.cadence_live_sec),
+        cadence_idle_sec=_int("LISA_CADENCE_IDLE_SEC", Settings.cadence_idle_sec),
+        cadence_settle_sec=_int("LISA_CADENCE_SETTLE_SEC", Settings.cadence_settle_sec),
+        spike_window_sec=_int("LISA_SPIKE_WINDOW_SEC", Settings.spike_window_sec),
+        live_window_hours=_float("LISA_LIVE_WINDOW_HOURS", Settings.live_window_hours),
+        horizon_hours=_float("LISA_HORIZON_HOURS", Settings.horizon_hours),
+        credit_warn=_int("LISA_CREDIT_WARN", Settings.credit_warn),
+        credit_stop=_int("LISA_CREDIT_STOP", Settings.credit_stop),
+        metrics_path=os.environ.get("LISA_METRICS_PATH", Settings.metrics_path),
     )

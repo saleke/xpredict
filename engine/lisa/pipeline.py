@@ -31,6 +31,7 @@ class CycleReport:
     suppressed: list[str] = field(default_factory=list)  # "match_id: reason"
     finished: Optional[datetime] = None
     errors: list[str] = field(default_factory=list)
+    matches: tuple[Match, ...] = ()  # parsed matches, for cadence/tracking
 
 
 class Pipeline:
@@ -66,6 +67,7 @@ class Pipeline:
             return report
 
         matches = parse_odds_payload(payload)
+        report.matches = tuple(matches)
         report.matches_seen = len(matches)
         max_book_age = (
             self.settings.stale_live_sec if live else self.settings.stale_prematch_sec

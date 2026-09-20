@@ -191,10 +191,14 @@ engine/            Python package `lisa` (stdlib core)
   lisa/storage.py  Storage interface: in-memory / redis / postgres
   lisa/pipeline.py Stage 1+3+4 orchestration (run_cycle)
   lisa/settle.py   settlement cron (WIN/LOSS/VOID)
+  lisa/cadence.py  pure schedule-state logic (live/spike/prematch/idle)
+  lisa/scheduler.py tick loop + credit-budget guard (run_forever / tick)
+  lisa/tracker.py  JSONL validation trail + weekly summary
   lisa/notify.py   LogNotifier / TelegramNotifier + alert text
-  lisa/cli.py      `python -m lisa demo|run-cycle|settle`
+  lisa/cli.py      `python -m lisa demo|run-cycle|settle|run|report`
   lisa/fixtures.py deterministic bundled Odds API payloads
-  tests/           34 tests: math, consensus, gate, pipeline, settle, storage
+  tests/           55 tests: math, consensus, gate, pipeline, settle,
+                   storage, cadence, scheduler, tracker
 docs/DESIGN.md     this document
 architecture/      original product docs (unchanged)
 ```
@@ -204,19 +208,31 @@ architecture/      original product docs (unchanged)
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install pytest   # dev only; runtime is stdlib
-.venv/bin/python -m pytest -q                            # 34 tests
+.venv/bin/python -m pytest -q                            # 55 tests
 .venv/bin/python -m lisa demo                            # full cycle + settlement on fixtures
 export LISA_ODDS_API_KEY=...
 .venv/bin/python -m lisa run-cycle                       # live API, one pass
 .venv/bin/python -m lisa settle                          # grade pending rows
+.venv/bin/python -m lisa run                             # scheduler loop (adapted cadence)
+.venv/bin/python -m lisa run --once                      # single tick (cron-friendly)
+.venv/bin/python -m lisa report --metrics data/metrics.jsonl  # weekly validation summary
 # Redis ledger: LISA_STORAGE=redis LISA_REDIS_URL=redis://...  (pip install redis)
 # Postgres ledger: LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://... (pip install 'psycopg[binary]')
 ```
 
-## 11. Known limitations & roadmap (next iterations)
+## 11. Roadmap
 
-* **Live mode**: `run_cycle(live=True)` exists with freshness handling, but the live-updates
-  scheduler (spiked cadence) is a wrapper to build.
+Status as of the scheduler/tracker iteration:
+
+* ✅ **Live mode + scheduler** — `run_cycle(live=True)` with freshness handling, wrapped by
+  `lisa/scheduler.py`: cadence adapts to the schedule seen in the last fetch (live →
+  spike → prematch → idle), settlement grades on its own cadence, and the credit budget
+  degrades polling below `credit_warn` and gates everything but settlement below
+  `credit_stop`.
+* 🔬 **Live-fire validation (active)** — run `lisa run --metrics data/metrics.jsonl` for a
+  week against the real API, then `lisa report` for pick volume at the gate, the real EV
+  distribution (+EV share), settlement accuracy, and credit burn. Answers the product's
+  open questions with data instead of fixtures.
 * **Leave-one-out EV**: replace in-consensus EV with per-book EV against a consensus
   excluding that book.
 * **Score settlement robustness**: retry bookkeeping, match rename handling, and multiple

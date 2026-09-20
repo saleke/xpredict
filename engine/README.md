@@ -11,7 +11,7 @@ pipeline runs locally, in CI, or on a $0 machine. Redis/Postgres drivers are opt
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install pytest          # dev only
-.venv/bin/python -m pytest -q         # 34 tests
+.venv/bin/python -m pytest -q         # 55 tests
 
 .venv/bin/python -m lisa demo          # full cycle + settlement on bundled fixtures
 ```
@@ -22,6 +22,15 @@ Live API usage (The Odds API key required):
 export LISA_ODDS_API_KEY=your_key
 python -m lisa run-cycle               # one ingestion+refinement pass
 python -m lisa settle                  # grade pending ledger rows
+```
+
+Scheduler (adapted cadence: live → spike → prematch → idle) and live-validation metrics:
+
+```bash
+python -m lisa run                     # scheduler loop, runs until stopped
+python -m lisa run --once              # single tick (drop into cron)
+python -m lisa run --duration 168 --metrics data/metrics.jsonl   # one validation week
+python -m lisa report --metrics data/metrics.jsonl               # weekly summary
 ```
 
 Optional storage drivers:
@@ -45,6 +54,9 @@ LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://localhost:5432/lisa python 
 | `lisa/storage.py` | `Storage` interface + in-memory / Redis / Postgres drivers |
 | `lisa/client.py` | The Odds API transport (retry/backoff, credit tracking) + fixture client |
 | `lisa/parsing.py` | Defensive Odds-API JSON → domain types |
+| `lisa/cadence.py` | Pure schedule-state logic (live / spike / prematch / idle) |
+| `lisa/scheduler.py` | Tick loop with adapted cadence + credit-budget guard |
+| `lisa/tracker.py` | JSONL validation trail + weekly `report` summary |
 | `lisa/fixtures.py` | Deterministic bundled payloads covering every gate outcome |
 | `lisa/config.py` | `LISA_*` env configuration with sane defaults |
 | `lisa/notify.py` | Log / Telegram notifier |
