@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/index.css">
+  <link rel="stylesheet" href="css/auth.css">
 </head>
 <body>
 
@@ -49,6 +50,45 @@
       <div class="system-status" id="system-status-indicator">
         <span class="status-dot"></span>
         <span id="system-status-text">Math Refinery Active · 12 Imminent Matches</span>
+      </div>
+
+      <!-- User Auth / Profile Section -->
+      <div class="header-auth" id="header-auth-container">
+        <!-- Logged out state -->
+        <div id="auth-logged-out" style="display: flex; gap: 8px;">
+          <button class="btn-auth-signin" id="btn-header-signin">Sign In</button>
+          <button class="btn-auth-signup" id="btn-header-signup">Join Free</button>
+        </div>
+
+        <!-- Logged in state -->
+        <div id="auth-logged-in" style="display: none; position: relative;">
+          <div class="user-profile-pill" id="user-profile-pill">
+            <div class="user-avatar-circle" id="user-avatar-initial">U</div>
+            <span class="user-name-text" id="user-profile-name">User</span>
+            <span class="user-tier-tag tier-tag-free" id="user-profile-tier-tag">Free</span>
+            <span class="user-chevron">▼</span>
+          </div>
+
+          <!-- Account Dropdown Menu -->
+          <div class="user-dropdown-menu" id="user-dropdown-menu">
+            <div class="dropdown-user-header">
+              <div style="font-weight: 700; color: #fff; font-size: 13px;" id="dropdown-display-name">User Name</div>
+              <div class="dropdown-email" id="dropdown-email">user@example.com</div>
+              <div class="dropdown-tier-row">
+                <span style="color: var(--text-muted);">Tier:</span>
+                <span style="font-weight: 700; color: var(--accent-cyan);" id="dropdown-tier-label">Free Tier</span>
+              </div>
+            </div>
+
+            <div class="dropdown-section-title">Change Subscription</div>
+            <button class="dropdown-btn-item" onclick="window.switchUserTier('free')">⚪ Free Tier (1 + 2 Social)</button>
+            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier1')">🔵 Tier 1 ($19/mo)</button>
+            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier2')">🟢 Tier 2 Pro ($49/mo)</button>
+            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier3')">🟡 Tier 3 VIP Syndicate</button>
+
+            <button class="dropdown-btn-item logout" id="btn-header-logout">🚪 Sign Out</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
