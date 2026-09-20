@@ -118,6 +118,9 @@ class Tracker:
         if not self.path.exists():
             return out
 
+        seen_pick_keys: set[str] = set()
+        seen_suppression: set[tuple[str, str]] = set()
+
         with self.path.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
@@ -138,7 +141,12 @@ class Tracker:
                     out["picks_emitted"] += rec.get("picks_emitted", 0)
                     out["errors"] += len(rec.get("errors", []))
                     for why in rec.get("suppressed", []):
-                        reason = why.split(":", 1)[1] if ":" in why else why
+                        # dedupe by (match, reason): a restarted daemon re-sees
+                        # the same matches without a persistent seen-set
+                        match_id, _, reason = why.partition(":")
+                        if (match_id, reason) in seen_suppression:
+                            continue
+                        seen_suppression.add((match_id, reason))
                         out["suppression"][reason] = (
                             out["suppression"].get(reason, 0) + 1)
                 elif kind == "settlement":
@@ -151,6 +159,10 @@ class Tracker:
                     s["pending_last"] = rec.get("pending", 0)
                     out["errors"] += len(rec.get("errors", []))
                 elif kind == "pick":
+                    key = rec.get("dedupe_key")
+                    if key in seen_pick_keys:
+                        continue  # same pick re-recorded after a restart
+                    seen_pick_keys.add(key)
                     p = out["picks"]
                     p["count"] += 1
                     p_trues.append(float(rec["p_true"]))

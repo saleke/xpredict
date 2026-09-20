@@ -88,6 +88,45 @@ def test_summarize_empty_and_missing_file(tmp_path) -> None:
     assert summary["settlement"]["runs"] == 0
 
 
+def test_restart_resilience_dedupes_picks_and_suppression(tmp_path) -> None:
+    """A daemon restart re-records the same matches; the report must not
+    double-count pick volume or suppression."""
+    track = Tracker(tmp_path / "m.jsonl")
+    # two "pre-restart" cycle records for the same match
+    track.record_cycles([
+        _report_with_suppressed(["m1:below_threshold"]),
+    ], ts=T)
+    # simulate a restart: same match re-suppressed, pick logged twice
+    rep = _report_with_suppressed(["m1:below_threshold"])
+    rep.picks_emitted = 1
+    track.record_cycles([rep], ts=T + timedelta(hours=1))
+    track.record_picks()
+
+    # inject the duplicated pick lines directly (as a fresh daemon would)
+    from lisa.pipeline import CycleReport
+    track.record_cycles([CycleReport(sport_key="basketball_nba", began=T,
+                                     matches_seen=1, picks_emitted=1)],
+                        ts=T + timedelta(hours=2))
+    _write_pick(track.path, "m1::h2h::TeamA", p_true=0.8, ts=T + timedelta(hours=2))
+    _write_pick(track.path, "m1::h2h::TeamA", p_true=0.8, ts=T + timedelta(hours=3))
+
+    summary = track.summarize()
+    assert summary["picks"]["count"] == 1          # deduped by key
+    assert summary["suppression"]["below_threshold"] == 1  # deduped by match+reason
+
+
+def _write_pick(path, key: str, p_true: float, ts) -> None:
+    import json
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "kind": "pick", "dedupe_key": key, "match_id": "m1",
+            "sport": "basketball_nba", "outcome": "TeamA",
+            "p_true": p_true, "fair_odds": 1.2, "cv": 0.01,
+            "best_book": "pinnacle", "best_ev": 0.01,
+            "ts": ts.isoformat(),
+        }, sort_keys=True) + "\n")
+
+
 def _report_with_suppressed(suppressed: list[str]) -> CycleReport:
     return CycleReport(sport_key="basketball_nba", began=T,
                        suppressed=suppressed)
