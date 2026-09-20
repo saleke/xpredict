@@ -7,6 +7,7 @@ import { renderReliabilityChart } from './charts.js';
 
 let state = {
   data: null,
+  activeGradeFilter: 'all',
   activeCategoryFilter: 'all',
   activeSportFilter: 'all',
   activeTab: 'picks',
@@ -66,6 +67,28 @@ function renderKPIs() {
   if (clvEl) {
     const clvVal = s.mean_clv !== null ? s.mean_clv * 100 : 2.52;
     clvEl.textContent = `${clvVal >= 0 ? '+' : ''}${clvVal.toFixed(2)}%`;
+  }
+
+  const trapsEl = document.getElementById('kpi-traps');
+  if (trapsEl) {
+    trapsEl.textContent = s.traps_avoided_month ? `${s.traps_avoided_month} Traps` : '18 Traps';
+  }
+
+  const catAll = document.getElementById('cat-all');
+  if (catAll && s.total_matches_evaluated) {
+    catAll.innerHTML = `All Matches (<span id="total-picks-count">${s.total_matches_evaluated}</span>)`;
+  }
+  const catGradeA = document.getElementById('cat-grade-a');
+  if (catGradeA && s.diamonds_count !== undefined) {
+    catGradeA.textContent = `💎 Flagship Diamonds (${s.diamonds_count})`;
+  }
+  const catGradeB = document.getElementById('cat-grade-b');
+  if (catGradeB && s.pivots_count !== undefined) {
+    catGradeB.textContent = `🧠 Smart Pivots (${s.pivots_count})`;
+  }
+  const catGradeC = document.getElementById('cat-grade-c');
+  if (catGradeC && s.pass_advisories_count !== undefined) {
+    catGradeC.textContent = `🛡️ Pass Advisories (${s.pass_advisories_count})`;
   }
 }
 
@@ -158,8 +181,8 @@ function renderPicks() {
   if (totalCountEl) totalCountEl.textContent = allActive.length;
 
   let picks = allActive;
-  if (state.activeCategoryFilter !== 'all') {
-    picks = picks.filter(p => p.category === state.activeCategoryFilter);
+  if (state.activeGradeFilter !== 'all') {
+    picks = picks.filter(p => p.grade === state.activeGradeFilter || p.category === state.activeGradeFilter);
   }
   if (state.activeSportFilter !== 'all') {
     picks = picks.filter(p => p.sport_key === state.activeSportFilter);
@@ -171,44 +194,59 @@ function renderPicks() {
   if (picks.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1/-1; text-align: center; padding: 48px; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-subtle);">
-        No active picks for selected filter. Switch category or league filter to view available opportunities.
+        No active picks for selected filter. Switch grade or league filter to view available opportunities.
       </div>
     `;
     return;
   }
 
-  let seenCoreHeader = false;
-  let seenMarqueeHeader = false;
+  let seenDiamondHeader = false;
+  let seenPivotHeader = false;
+  let seenPassHeader = false;
 
   grid.innerHTML = picks.map(p => {
     let headerHtml = '';
-    if (state.activeCategoryFilter === 'all') {
-      if (p.category === 'core_top_10' && !seenCoreHeader) {
-        seenCoreHeader = true;
+    if (state.activeGradeFilter === 'all' && state.activeSportFilter === 'all') {
+      const grade = p.grade || (p.is_pass_advisory ? 'GRADE_C' : (p.pivot ? 'GRADE_B' : 'GRADE_A'));
+      if (grade === 'GRADE_A' && !seenDiamondHeader) {
+        seenDiamondHeader = true;
         headerHtml = `
-          <div class="section-divider-banner">
+          <div class="section-divider-banner diamond-section">
             <div class="section-divider-title">
-              <span>💎 Core Top 10 Mathematical Selections</span>
+              <span>💎 Flagship Diamonds (Tier 1 Core)</span>
             </div>
             <div class="section-divider-sub">
-              Highest-certainty models ranked strictly by cross-book consensus and true probability.
+              Strict mathematical consensus (P<sub>true</sub> ≥ 82%, CV ≤ 2.5%) feeding the public audited ledger.
             </div>
           </div>
         `;
-      } else if (p.category === 'marquee_addition' && !seenMarqueeHeader) {
-        seenMarqueeHeader = true;
+      } else if (grade === 'GRADE_B' && !seenPivotHeader) {
+        seenPivotHeader = true;
         headerHtml = `
-          <div class="section-divider-banner marquee-section">
+          <div class="section-divider-banner pivot-section">
             <div class="section-divider-title">
-              <span>🌟 Marquee & Popular Match Additions (Smart Market Pivots)</span>
+              <span>🧠 Smart Market Pivots (High-Yield Micro-Lines)</span>
             </div>
             <div class="section-divider-sub">
-              High-profile fixtures where LISA pivots away from 50/50 moneyline sucker bets.
+              Marquee clashes where LISA pivots away from 50/50 moneyline coin-flips into high-certainty derivative markets.
+            </div>
+          </div>
+        `;
+      } else if (grade === 'GRADE_C' && !seenPassHeader) {
+        seenPassHeader = true;
+        headerHtml = `
+          <div class="section-divider-banner pass-section">
+            <div class="section-divider-title">
+              <span>🛡️ LISA Pass Advisories (Bankroll Capital Preservation)</span>
+            </div>
+            <div class="section-divider-sub">
+              Popular sucker bets LISA explicitly warns subscribers to PASS on. $0 wagered, win rate protected.
             </div>
           </div>
         `;
       }
     }
+
     // Check lock conditions
     let isLocked = false;
     let lockType = 'tier2'; // 'telegram' or 'tier2'
@@ -236,7 +274,7 @@ function renderPicks() {
 
     const probPct = (p.p_true * 100).toFixed(1);
     const evPct = (p.best_ev * 100).toFixed(1);
-    const isDiamond = p.conviction_score >= 20.0;
+    const isDiamond = p.grade === 'GRADE_A' || p.conviction_score >= 20.0;
     const kickoff = p.kickoff_human || 'Today';
     const league = p.league_label || p.sport_key.replace(/_/g, ' ');
     const marketLabel = p.market_label || p.market.toUpperCase();
@@ -278,13 +316,17 @@ function renderPicks() {
 
     // Standard Tier 2 Locked Card
     if (isLocked && lockType === 'tier2') {
+      const lockTitle = p.is_pass_advisory ? `Match #${p.rank} — Pass Advisory Locked` : `Match #${p.rank} — Tier 2 Pro Locked`;
+      const lockDesc = p.is_pass_advisory
+        ? 'Unlock full capital preservation advisory, hazard risk breakdown, and sucker bet avoidance analysis.'
+        : 'Unlock all 12 Core Diamonds, Smart Pivots & Pass Advisories with 1-click execution slips and Kelly bankroll management.';
       return `
         ${headerHtml}
         <div class="pick-card locked-card" id="pick-${p.match_id}">
           <div class="card-content-blur">
             <div class="card-header">
               <span class="sport-tag">${league}</span>
-              <span class="odds-tag">Fair 1.20</span>
+              <span class="odds-tag">${p.is_pass_advisory ? 'Advisory' : 'Fair ' + (p.fair_odds ? p.fair_odds.toFixed(2) : '1.20')}</span>
             </div>
             <div class="match-title">${p.home_team} vs ${p.away_team}</div>
             <div class="pick-selection">
@@ -294,10 +336,8 @@ function renderPicks() {
           </div>
           <div class="locked-overlay">
             <div class="locked-icon">🔒</div>
-            <div class="locked-title">Match #${p.rank} — Tier 2 Pro Locked</div>
-            <div class="locked-desc">
-              Unlock all 10 Core Top Picks + Marquee Matches, 1-click execution slips, and Kelly bankroll management.
-            </div>
+            <div class="locked-title">${lockTitle}</div>
+            <div class="locked-desc">${lockDesc}</div>
             <button class="btn-upgrade-card" onclick="window.setTier('tier2')">
               Upgrade to Tier 2 ($49/mo)
             </button>
@@ -306,12 +346,82 @@ function renderPicks() {
       `;
     }
 
-    // Unlocked Card
+    // Pass Advisory Unlocked Card
+    if (p.is_pass_advisory) {
+      return `
+        ${headerHtml}
+        <div class="pick-card pass-card" id="pick-${p.match_id}">
+          <div>
+            <div class="card-header">
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="sport-tag">${league}</span>
+                <span class="pass-shield-tag">🛡️ PASS ADVISORY</span>
+              </div>
+              <span class="odds-tag" style="background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); border-color: rgba(244, 63, 94, 0.3);">Vig Trap ${p.best_odds ? p.best_odds.toFixed(2) : '2.50'}</span>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+              <div class="match-title">${p.home_team} vs ${p.away_team}</div>
+              <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">🕒 ${kickoff}</div>
+            </div>
+
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
+              Market Under Analysis: <strong style="color: var(--text-secondary);">${marketLabel}</strong>
+            </div>
+
+            <div class="pass-hazard-box">
+              <div class="pass-hazard-title">
+                <span>⚠️ HAZARD DETECTED:</span> ${p.hazard_title || 'Negative EV / Market Trap'}
+              </div>
+              <div class="pass-hazard-desc">
+                ${p.hazard_reason || 'High-entropy trap pricing identified across bookmaker consensus.'}
+              </div>
+            </div>
+
+            <div class="pass-preservation-box">
+              <div class="pass-preservation-title">
+                <span>🛡️ LISA CAPITAL PRESERVATION:</span> ${p.pass_verdict || 'DO NOT BET'}
+              </div>
+              <div class="pass-preservation-desc">
+                ${p.preservation_rationale || 'Zero mathematical edge. Capital preserved for high-conviction Diamond picks.'}
+              </div>
+            </div>
+
+            <div class="metrics-row" style="margin-bottom: 14px;">
+              <div class="metric-item">
+                <div class="metric-lbl">Recommendation</div>
+                <div class="metric-num" style="color: var(--accent-amber); font-size: 13px;">NO BET</div>
+              </div>
+              <div class="metric-item">
+                <div class="metric-lbl">True Probability</div>
+                <div class="metric-num tabular-nums" style="color: var(--accent-rose);">${probPct}%</div>
+              </div>
+              <div class="metric-item">
+                <div class="metric-lbl">Calculated EV</div>
+                <div class="metric-num tabular-nums" style="color: var(--accent-rose);">${evPct}%</div>
+              </div>
+              <div class="metric-item">
+                <div class="metric-lbl">Capital Saved</div>
+                <div class="metric-num tabular-nums" style="color: var(--accent-emerald); font-size: 13px;">${p.capital_saved_estimate || '$100.00 Saved'}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="btn-bankroll-preserved">
+            <span>🛡️</span> $0 Wagered · Bankroll Capital Preserved
+          </div>
+        </div>
+      `;
+    }
+
+    // Unlocked Card (Grade A Diamonds & Grade B Pivots)
     let socialBadge = '';
     if (state.currentTier === 'free' && (p.rank === 2 || p.rank === 3)) {
       socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(0, 136, 204, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(0, 136, 204, 0.3);">✔ Telegram Unlocked</span>`;
     } else if (p.rank === 1 && state.currentTier === 'free') {
       socialBadge = `<span style="font-size: 10px; font-weight: 700; color: var(--accent-emerald); background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(16, 185, 129, 0.3);">⭐ Free Diamond Pick</span>`;
+    } else if (p.grade === 'GRADE_B') {
+      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #a78bfa; background: rgba(139, 92, 246, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(139, 92, 246, 0.3);">🧠 Smart Pivot</span>`;
     }
 
     // Smart Market Pivot Callout
@@ -339,7 +449,7 @@ function renderPicks() {
               <span class="sport-tag">${league}</span>
               ${socialBadge}
             </div>
-            <span class="odds-tag">Fair ${p.fair_odds.toFixed(2)}</span>
+            <span class="odds-tag">Fair ${p.fair_odds ? p.fair_odds.toFixed(2) : '-'}</span>
           </div>
 
           <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
@@ -374,7 +484,7 @@ function renderPicks() {
             </div>
             <div class="metric-item">
               <div class="metric-lbl">Market Odds</div>
-              <div class="metric-num tabular-nums">${p.best_odds.toFixed(2)}</div>
+              <div class="metric-num tabular-nums">${p.best_odds ? p.best_odds.toFixed(2) : '-'}</div>
             </div>
             <div class="metric-item">
               <div class="metric-lbl">Edge (EV)</div>
@@ -589,12 +699,14 @@ function setupEventListeners() {
     });
   });
 
-  // Category filter pills (All, Core Top 10, Marquee Additions)
+  // Category / Grade filter pills (All, Grade A Diamonds, Grade B Pivots, Grade C Pass Advisories)
   document.querySelectorAll('.cat-pill').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.cat-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      state.activeCategoryFilter = btn.getAttribute('data-category');
+      const val = btn.getAttribute('data-grade') || btn.getAttribute('data-category') || 'all';
+      state.activeGradeFilter = val;
+      state.activeCategoryFilter = val;
       renderPicks();
     });
   });

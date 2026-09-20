@@ -95,6 +95,12 @@
         <div class="kpi-value tabular-nums" id="kpi-clv">+2.52%</div>
         <div class="kpi-sub">Systematic market beat rate</div>
       </div>
+
+      <div class="kpi-card" id="kpi-card-preservation">
+        <div class="kpi-title">Capital Preserved <span>🛡️</span></div>
+        <div class="kpi-value tabular-nums" id="kpi-traps" style="color: var(--accent-amber);">18 Traps</div>
+        <div class="kpi-sub">Sucker coin-flips avoided this month</div>
+      </div>
     </section>
 
     <!-- Navigation Tabs -->
@@ -120,15 +126,16 @@
     <section class="view-panel active" id="view-picks">
       <div class="controls-bar">
         <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; width: 100%;">
-          <!-- Category Filter Pills -->
+          <!-- Grade / Category Filter Pills -->
           <div class="category-filter-group" id="category-filter-group">
-            <button class="cat-pill active" data-category="all" id="cat-all">All Opportunities (<span id="total-picks-count">14</span>)</button>
-            <button class="cat-pill" data-category="core_top_10" id="cat-core">💎 Core Top 10 (Most Predictable)</button>
-            <button class="cat-pill" data-category="marquee_addition" id="cat-marquee">🌟 Marquee Additions (Smart Pivots)</button>
+            <button class="cat-pill active" data-grade="all" id="cat-all">All Matches (<span id="total-picks-count">12</span>)</button>
+            <button class="cat-pill" data-grade="GRADE_A" id="cat-grade-a">💎 Flagship Diamonds (5)</button>
+            <button class="cat-pill" data-grade="GRADE_B" id="cat-grade-b">🧠 Smart Pivots (4)</button>
+            <button class="cat-pill" data-grade="GRADE_C" id="cat-grade-c" style="color: var(--accent-amber);">🛡️ Pass Advisories (3)</button>
           </div>
 
           <div class="schedule-notice">
-            <span>🕒 Ranked by Mathematical Certainty · <strong>Today & Tomorrow</strong></span>
+            <span>🛡️ <strong>Dual-Track Alpha</strong>: 9 Executable Edges · 3 Sucker Traps Avoided</span>
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-09-20T18:56:20.110004+00:00",
+    "generated_at": "2026-09-20T19:08:43.343314+00:00",
     "version": "0.1.0",
     "total_sports": 9,
     "scope_leagues": [
@@ -13,9 +13,11 @@
     ]
   },
   "summary": {
-    "total_active_count": 14,
-    "core_top_10_count": 10,
-    "marquee_count": 4,
+    "total_matches_evaluated": 12,
+    "diamonds_count": 5,
+    "pivots_count": 4,
+    "pass_advisories_count": 3,
+    "traps_avoided_month": 18,
     "settled_picks_count": 5,
     "win_rate": 1.0,
     "brier_score": 0.0248,
@@ -28,31 +30,31 @@
       "label": "Free Tier",
       "unlocked_count": 1,
       "telegram_unlock_count": 2,
-      "locked_count": 11,
-      "cta": "Upgrade to Tier 2 to unlock all Core Top 10 + Marquee Matches"
+      "locked_count": 9,
+      "cta": "Upgrade to Tier 2 to unlock all Diamonds, Pivots & Pass Advisories"
     },
     "tier1": {
       "label": "Tier 1 Starter ($19/mo)",
       "unlocked_count": 5,
-      "locked_count": 9,
-      "cta": "Upgrade to Tier 2 for full 14-match access & Kelly Calculator"
+      "locked_count": 7,
+      "cta": "Upgrade to Tier 2 for full access & Kelly Calculator"
     },
     "tier2": {
       "label": "Tier 2 Pro ($49/mo)",
-      "unlocked_count": 14,
+      "unlocked_count": 12,
       "locked_count": 0,
       "features": [
-        "All Core Top 10 High-Certainty Picks",
-        "All Marquee & Popular Match Additions (Smart Pivots)",
+        "All 5 Flagship Diamond Consensus Picks",
+        "All 4 Smart Market Pivots (High-Yield Micro-Bets)",
+        "All 3 Pass Advisories (Bankroll Capital Preservation)",
         "1-Click Bet Slip Execution",
-        "Dynamic Slippage Guard",
         "Interactive Kelly Bankroll Advisor"
       ]
     },
     "tier3": {
       "label": "Tier 3 VIP Alpha ($249/mo)",
       "features": [
-        "All Core Top 10 & Marquee Matches Unlocked",
+        "All Flagship Diamonds, Pivots & Pass Advisories Unlocked",
         "Poisson Micro-Bet Derivative Matrix (BTTS, Over 1.5, Double Chance)",
         "Sub-Second Early Steam & CLV Arbitrage Radar",
         "Smart Correlated Parlay Builder (Compounding Kelly Math)",
@@ -63,8 +65,10 @@
   "active_picks": [
     {
       "rank": 1,
+      "grade": "GRADE_A",
+      "grade_label": "\ud83d\udc8e Flagship Diamond",
       "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
+      "is_pass_advisory": false,
       "dedupe_key": "nba-thunder-wizards::h2h::Oklahoma City Thunder",
       "match_id": "nba-thunder-wizards",
       "sport_key": "basketball_nba",
@@ -95,7 +99,7 @@
         "bet365": 1.15,
         "draftkings": 1.14
       },
-      "commence_time": "2026-09-20T20:41:20.110004+00:00",
+      "commence_time": "2026-09-20T20:53:43.343314+00:00",
       "kickoff_human": "Today in 1h 45m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Oklahoma%20City%20Thunder",
@@ -105,8 +109,10 @@
     },
     {
       "rank": 2,
+      "grade": "GRADE_A",
+      "grade_label": "\ud83d\udc8e Flagship Diamond",
       "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
+      "is_pass_advisory": false,
       "dedupe_key": "nba-celtics-hornets::h2h::Boston Celtics",
       "match_id": "nba-celtics-hornets",
       "sport_key": "basketball_nba",
@@ -137,7 +143,7 @@
         "bet365": 1.19,
         "pinnacle": 1.18
       },
-      "commence_time": "2026-09-20T22:41:20.110004+00:00",
+      "commence_time": "2026-09-20T22:53:43.343314+00:00",
       "kickoff_human": "Today in 3h 45m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Boston%20Celtics",
@@ -147,8 +153,10 @@
     },
     {
       "rank": 3,
+      "grade": "GRADE_A",
+      "grade_label": "\ud83d\udc8e Flagship Diamond",
       "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
+      "is_pass_advisory": false,
       "dedupe_key": "epl-mancity-southampton::h2h::Manchester City",
       "match_id": "epl-mancity-southampton",
       "sport_key": "soccer_epl",
@@ -179,7 +187,7 @@
         "bet365": 1.2,
         "draftkings": 1.19
       },
-      "commence_time": "2026-09-21T00:11:20.110004+00:00",
+      "commence_time": "2026-09-21T00:23:43.343314+00:00",
       "kickoff_human": "Today in 5h 15m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Manchester%20City",
@@ -189,8 +197,10 @@
     },
     {
       "rank": 4,
+      "grade": "GRADE_A",
+      "grade_label": "\ud83d\udc8e Flagship Diamond",
       "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
+      "is_pass_advisory": false,
       "dedupe_key": "bdl-bayern-bochum::h2h::Bayern Munchen",
       "match_id": "bdl-bayern-bochum",
       "sport_key": "soccer_germany_bundesliga",
@@ -221,7 +231,7 @@
         "pinnacle": 1.21,
         "draftkings": 1.2
       },
-      "commence_time": "2026-09-20T23:26:20.110004+00:00",
+      "commence_time": "2026-09-20T23:38:43.343314+00:00",
       "kickoff_human": "Today in 4h 30m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Bayern%20Munchen",
@@ -231,8 +241,10 @@
     },
     {
       "rank": 5,
+      "grade": "GRADE_A",
+      "grade_label": "\ud83d\udc8e Flagship Diamond",
       "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
+      "is_pass_advisory": false,
       "dedupe_key": "nba-nuggets-pistons::h2h::Denver Nuggets",
       "match_id": "nba-nuggets-pistons",
       "sport_key": "basketball_nba",
@@ -263,7 +275,7 @@
         "bet365": 1.21,
         "pinnacle": 1.2
       },
-      "commence_time": "2026-09-21T02:56:20.110004+00:00",
+      "commence_time": "2026-09-21T03:08:43.343314+00:00",
       "kickoff_human": "Today in 8h 00m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Denver%20Nuggets",
@@ -273,218 +285,10 @@
     },
     {
       "rank": 6,
-      "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
-      "dedupe_key": "fra-psg-angers::h2h::Paris Saint-Germain",
-      "match_id": "fra-psg-angers",
-      "sport_key": "soccer_france_ligue_one",
-      "league_label": "Ligue 1",
-      "home_team": "Paris Saint-Germain",
-      "away_team": "Angers",
-      "kickoff_offset_hours": 21.5,
-      "market": "h2h",
-      "market_label": "Moneyline (H2H)",
-      "outcome_name": "Paris Saint-Germain",
-      "line": null,
-      "is_marquee": false,
-      "pivot": null,
-      "p_true": 0.835,
-      "fair_odds": 1.198,
-      "best_book": "bet365",
-      "best_odds": 1.24,
-      "best_ev": 0.035,
-      "conviction_score": 19.8,
-      "recommended_stake_pct": 1.9,
-      "recommended_units": 1.9,
-      "freshness": "FRESH",
-      "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+3.5% EV)",
-      "tier_level": "TIER_2",
-      "books_odds": {
-        "bet365": 1.24,
-        "pinnacle": 1.22,
-        "draftkings": 1.21
-      },
-      "commence_time": "2026-09-21T16:26:20.110004+00:00",
-      "kickoff_human": "Today in 21h 30m",
-      "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Paris%20Saint-Germain",
-        "bet365": "https://www.bet365.com/#/AX/K^Paris%20Saint-Germain/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Paris%20Saint-Germain"
-      }
-    },
-    {
-      "rank": 7,
-      "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
-      "dedupe_key": "lig-barcelona-laspalmas::h2h::Barcelona",
-      "match_id": "lig-barcelona-laspalmas",
-      "sport_key": "soccer_spain_la_liga",
-      "league_label": "La Liga",
-      "home_team": "Barcelona",
-      "away_team": "Las Palmas",
-      "kickoff_offset_hours": 24.5,
-      "market": "h2h",
-      "market_label": "Moneyline (H2H)",
-      "outcome_name": "Barcelona",
-      "line": null,
-      "is_marquee": false,
-      "pivot": null,
-      "p_true": 0.831,
-      "fair_odds": 1.203,
-      "best_book": "bet365",
-      "best_odds": 1.25,
-      "best_ev": 0.039,
-      "conviction_score": 19.3,
-      "recommended_stake_pct": 1.9,
-      "recommended_units": 1.9,
-      "freshness": "FRESH",
-      "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+3.9% EV)",
-      "tier_level": "TIER_2",
-      "books_odds": {
-        "bet365": 1.25,
-        "pinnacle": 1.23,
-        "draftkings": 1.22
-      },
-      "commence_time": "2026-09-21T19:26:20.110004+00:00",
-      "kickoff_human": "Tomorrow in 0h 30m",
-      "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Barcelona",
-        "bet365": "https://www.bet365.com/#/AX/K^Barcelona/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Barcelona"
-      }
-    },
-    {
-      "rank": 8,
-      "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
-      "dedupe_key": "bdl-leverkusen-stpauli::h2h::Bayer Leverkusen",
-      "match_id": "bdl-leverkusen-stpauli",
-      "sport_key": "soccer_germany_bundesliga",
-      "league_label": "Bundesliga",
-      "home_team": "Bayer Leverkusen",
-      "away_team": "St. Pauli",
-      "kickoff_offset_hours": 26.0,
-      "market": "h2h",
-      "market_label": "Moneyline (H2H)",
-      "outcome_name": "Bayer Leverkusen",
-      "line": null,
-      "is_marquee": false,
-      "pivot": null,
-      "p_true": 0.826,
-      "fair_odds": 1.211,
-      "best_book": "pinnacle",
-      "best_odds": 1.26,
-      "best_ev": 0.041,
-      "conviction_score": 18.9,
-      "recommended_stake_pct": 1.9,
-      "recommended_units": 1.9,
-      "freshness": "FRESH",
-      "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+4.1% EV)",
-      "tier_level": "TIER_2",
-      "books_odds": {
-        "pinnacle": 1.26,
-        "bet365": 1.25,
-        "draftkings": 1.24
-      },
-      "commence_time": "2026-09-21T20:56:20.110004+00:00",
-      "kickoff_human": "Tomorrow in 2h 00m",
-      "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Bayer%20Leverkusen",
-        "bet365": "https://www.bet365.com/#/AX/K^Bayer%20Leverkusen/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Bayer%20Leverkusen"
-      }
-    },
-    {
-      "rank": 9,
-      "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
-      "dedupe_key": "nba-cavs-blazers::h2h::Cleveland Cavaliers",
-      "match_id": "nba-cavs-blazers",
-      "sport_key": "basketball_nba",
-      "league_label": "NBA",
-      "home_team": "Cleveland Cavaliers",
-      "away_team": "Portland Trail Blazers",
-      "kickoff_offset_hours": 27.5,
-      "market": "h2h",
-      "market_label": "Moneyline (H2H)",
-      "outcome_name": "Cleveland Cavaliers",
-      "line": null,
-      "is_marquee": false,
-      "pivot": null,
-      "p_true": 0.822,
-      "fair_odds": 1.217,
-      "best_book": "draftkings",
-      "best_odds": 1.26,
-      "best_ev": 0.035,
-      "conviction_score": 18.4,
-      "recommended_stake_pct": 1.8,
-      "recommended_units": 1.8,
-      "freshness": "FRESH",
-      "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+3.5% EV)",
-      "tier_level": "TIER_2",
-      "books_odds": {
-        "draftkings": 1.26,
-        "bet365": 1.25,
-        "pinnacle": 1.24
-      },
-      "commence_time": "2026-09-21T22:26:20.110004+00:00",
-      "kickoff_human": "Tomorrow in 3h 30m",
-      "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Cleveland%20Cavaliers",
-        "bet365": "https://www.bet365.com/#/AX/K^Cleveland%20Cavaliers/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Cleveland%20Cavaliers"
-      }
-    },
-    {
-      "rank": 10,
-      "category": "core_top_10",
-      "section_label": "\ud83d\udc8e Core Top 10 Daily Consensus",
-      "dedupe_key": "ita-inter-monza::h2h::Inter Milan",
-      "match_id": "ita-inter-monza",
-      "sport_key": "soccer_italy_serie_a",
-      "league_label": "Serie A",
-      "home_team": "Inter Milan",
-      "away_team": "Monza",
-      "kickoff_offset_hours": 28.0,
-      "market": "h2h",
-      "market_label": "Moneyline (H2H)",
-      "outcome_name": "Inter Milan",
-      "line": null,
-      "is_marquee": false,
-      "pivot": null,
-      "p_true": 0.818,
-      "fair_odds": 1.222,
-      "best_book": "pinnacle",
-      "best_odds": 1.27,
-      "best_ev": 0.039,
-      "conviction_score": 18.1,
-      "recommended_stake_pct": 1.8,
-      "recommended_units": 1.8,
-      "freshness": "FRESH",
-      "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+3.9% EV)",
-      "tier_level": "TIER_2",
-      "books_odds": {
-        "pinnacle": 1.27,
-        "bet365": 1.26,
-        "draftkings": 1.25
-      },
-      "commence_time": "2026-09-21T22:56:20.110004+00:00",
-      "kickoff_human": "Tomorrow in 4h 00m",
-      "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Inter%20Milan",
-        "bet365": "https://www.bet365.com/#/AX/K^Inter%20Milan/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Inter%20Milan"
-      }
-    },
-    {
-      "rank": 11,
+      "grade": "GRADE_B",
+      "grade_label": "\ud83e\udde0 Smart Market Pivot",
       "category": "marquee_addition",
-      "section_label": "\ud83c\udf1f Marquee Popular Match Showcase",
+      "is_pass_advisory": false,
       "dedupe_key": "epl-arsenal-chelsea::totals::Over 1.5 Goals",
       "match_id": "epl-arsenal-chelsea",
       "sport_key": "soccer_epl",
@@ -520,7 +324,7 @@
         "pinnacle": 1.16,
         "draftkings": 1.17
       },
-      "commence_time": "2026-09-20T21:26:20.110004+00:00",
+      "commence_time": "2026-09-20T21:38:43.343314+00:00",
       "kickoff_human": "Today in 2h 30m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Arsenal",
@@ -529,9 +333,11 @@
       }
     },
     {
-      "rank": 12,
+      "rank": 7,
+      "grade": "GRADE_B",
+      "grade_label": "\ud83e\udde0 Smart Market Pivot",
       "category": "marquee_addition",
-      "section_label": "\ud83c\udf1f Marquee Popular Match Showcase",
+      "is_pass_advisory": false,
       "dedupe_key": "lig-madrid-atletico::double_chance::Real Madrid or Draw",
       "match_id": "lig-madrid-atletico",
       "sport_key": "soccer_spain_la_liga",
@@ -546,7 +352,7 @@
       "is_marquee": true,
       "pivot": {
         "original_market": "h2h",
-        "hazard_reason": "High-profile Madrid Derby: Moneyline is razor-thin (Madrid 48% vs Atletico 24% vs Draw 28%).",
+        "hazard_reason": "Madrid Derby: Moneyline is razor-thin (Madrid 48% vs Atletico 24% vs Draw 28%).",
         "pivot_rationale": "LISA pivoted to Double Chance (1X) capturing 82.8% true safety margin.",
         "moneyline_summary": "Real Madrid (48%) / Draw (28%) / Atletico (24%)"
       },
@@ -567,7 +373,7 @@
         "pinnacle": 1.24,
         "draftkings": 1.23
       },
-      "commence_time": "2026-09-21T01:26:20.110004+00:00",
+      "commence_time": "2026-09-21T01:38:43.343314+00:00",
       "kickoff_human": "Today in 6h 30m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Real%20Madrid",
@@ -576,56 +382,60 @@
       }
     },
     {
-      "rank": 13,
+      "rank": 8,
+      "grade": "GRADE_B",
+      "grade_label": "\ud83e\udde0 Smart Market Pivot",
       "category": "marquee_addition",
-      "section_label": "\ud83c\udf1f Marquee Popular Match Showcase",
-      "dedupe_key": "nba-lakers-warriors::totals::Over 221.5 Points",
-      "match_id": "nba-lakers-warriors",
-      "sport_key": "basketball_nba",
-      "league_label": "NBA",
-      "home_team": "Los Angeles Lakers",
-      "away_team": "Golden State Warriors",
-      "kickoff_offset_hours": 20.0,
-      "market": "totals",
-      "market_label": "Totals: Over 221.5 Points",
-      "outcome_name": "Over 221.5 Points",
-      "line": 221.5,
+      "is_pass_advisory": false,
+      "dedupe_key": "ita-inter-juventus::double_chance::Inter Milan or Draw",
+      "match_id": "ita-inter-juventus",
+      "sport_key": "soccer_italy_serie_a",
+      "league_label": "Serie A",
+      "home_team": "Inter Milan",
+      "away_team": "Juventus",
+      "kickoff_offset_hours": 18.5,
+      "market": "double_chance",
+      "market_label": "Double Chance: 1X (Inter or Draw)",
+      "outcome_name": "Inter Milan or Draw",
+      "line": null,
       "is_marquee": true,
       "pivot": {
-        "original_market": "spreads",
-        "hazard_reason": "High-variance point spread (-1.5 vs +1.5) susceptible to late-foul garbage time.",
-        "pivot_rationale": "LISA pivoted to Game Totals Over 221.5 for 79.8% structural pace consensus.",
-        "moneyline_summary": "Lakers (-1.5) vs Warriors (+1.5)"
+        "original_market": "h2h",
+        "hazard_reason": "Derby d'Italia: Moneyline split (Inter 45% vs Draw 31% vs Juventus 24%).",
+        "pivot_rationale": "LISA pivoted to Double Chance (1X) yielding 81.6% true probability against tactical stalemate.",
+        "moneyline_summary": "Inter Milan (45%) / Draw (31%) / Juventus (24%)"
       },
-      "p_true": 0.798,
-      "fair_odds": 1.253,
-      "best_book": "bet365",
-      "best_odds": 1.31,
-      "best_ev": 0.045,
-      "conviction_score": 16.9,
-      "recommended_stake_pct": 1.7,
-      "recommended_units": 1.7,
+      "p_true": 0.816,
+      "fair_odds": 1.225,
+      "best_book": "pinnacle",
+      "best_odds": 1.28,
+      "best_ev": 0.044,
+      "conviction_score": 18.2,
+      "recommended_stake_pct": 1.9,
+      "recommended_units": 1.9,
       "freshness": "FRESH",
       "badge_color": "emerald",
-      "gauge_text": "Optimal Entry (+4.5% EV)",
+      "gauge_text": "Optimal Entry (+4.4% EV)",
       "tier_level": "TIER_2",
       "books_odds": {
-        "bet365": 1.31,
-        "draftkings": 1.3,
-        "pinnacle": 1.29
+        "pinnacle": 1.28,
+        "bet365": 1.27,
+        "draftkings": 1.25
       },
-      "commence_time": "2026-09-21T14:56:20.110004+00:00",
-      "kickoff_human": "Today in 20h 00m",
+      "commence_time": "2026-09-21T13:38:43.343314+00:00",
+      "kickoff_human": "Today in 18h 30m",
       "deep_links": {
-        "pinnacle": "https://www.pinnacle.com/en/search/Los%20Angeles%20Lakers",
-        "bet365": "https://www.bet365.com/#/AX/K^Los%20Angeles%20Lakers/",
-        "draftkings": "https://sportsbook.draftkings.com/search?q=Los%20Angeles%20Lakers"
+        "pinnacle": "https://www.pinnacle.com/en/search/Inter%20Milan",
+        "bet365": "https://www.bet365.com/#/AX/K^Inter%20Milan/",
+        "draftkings": "https://sportsbook.draftkings.com/search?q=Inter%20Milan"
       }
     },
     {
-      "rank": 14,
+      "rank": 9,
+      "grade": "GRADE_B",
+      "grade_label": "\ud83e\udde0 Smart Market Pivot",
       "category": "marquee_addition",
-      "section_label": "\ud83c\udf1f Marquee Popular Match Showcase",
+      "is_pass_advisory": false,
       "dedupe_key": "epl-liverpool-newcastle::totals::BTTS Yes",
       "match_id": "epl-liverpool-newcastle",
       "sport_key": "soccer_epl",
@@ -661,12 +471,159 @@
         "bet365": 1.29,
         "draftkings": 1.28
       },
-      "commence_time": "2026-09-21T17:56:20.110004+00:00",
+      "commence_time": "2026-09-21T18:08:43.343314+00:00",
       "kickoff_human": "Today in 23h 00m",
       "deep_links": {
         "pinnacle": "https://www.pinnacle.com/en/search/Liverpool",
         "bet365": "https://www.bet365.com/#/AX/K^Liverpool/",
         "draftkings": "https://sportsbook.draftkings.com/search?q=Liverpool"
+      }
+    },
+    {
+      "rank": 10,
+      "grade": "GRADE_C",
+      "grade_label": "\ud83d\udee1\ufe0f Pass Advisory",
+      "category": "pass_advisory",
+      "is_pass_advisory": true,
+      "pass_verdict": "DO NOT BET \u00b7 SUCKER COIN-FLIP TRAP",
+      "hazard_title": "High Entropy Moneyline Split (Negative EV)",
+      "hazard_reason": "Market is split: Spurs 38% vs Draw 28% vs Man Utd 34%. Sportsbooks charging heavy 6.8% vig.",
+      "preservation_rationale": "Zero mathematical edge exists across any bookmaker line. By passing on this trap, LISA preserves your bankroll for high-conviction Diamond picks.",
+      "capital_saved_estimate": "$100.00 Saved",
+      "dedupe_key": "epl-tottenham-manunited::h2h::PASS",
+      "match_id": "epl-tottenham-manunited",
+      "sport_key": "soccer_epl",
+      "league_label": "Premier League",
+      "home_team": "Tottenham Hotspur",
+      "away_team": "Manchester United",
+      "kickoff_offset_hours": 7.0,
+      "market": "h2h",
+      "market_label": "Marquee Analysis: Pass Advisory",
+      "outcome_name": "HOLD OFF (No Bet)",
+      "line": null,
+      "is_marquee": true,
+      "pivot": null,
+      "p_true": 0.38,
+      "fair_odds": 2.63,
+      "best_book": "bet365",
+      "best_odds": 2.5,
+      "best_ev": -0.049,
+      "conviction_score": 0.0,
+      "recommended_stake_pct": 0.0,
+      "recommended_units": 0.0,
+      "freshness": "SLIPPED",
+      "badge_color": "rose",
+      "gauge_text": "Sucker Bet Avoided (Negative EV)",
+      "tier_level": "TIER_2",
+      "books_odds": {
+        "bet365": 2.5,
+        "pinnacle": 2.45,
+        "draftkings": 2.48
+      },
+      "commence_time": "2026-09-21T02:08:43.343314+00:00",
+      "kickoff_human": "Today in 7h 00m",
+      "deep_links": {
+        "pinnacle": "https://www.pinnacle.com/en/search/Tottenham%20Hotspur",
+        "bet365": "https://www.bet365.com/#/AX/K^Tottenham%20Hotspur/",
+        "draftkings": "https://sportsbook.draftkings.com/search?q=Tottenham%20Hotspur"
+      }
+    },
+    {
+      "rank": 11,
+      "grade": "GRADE_C",
+      "grade_label": "\ud83d\udee1\ufe0f Pass Advisory",
+      "category": "pass_advisory",
+      "is_pass_advisory": true,
+      "pass_verdict": "DO NOT BET \u00b7 DISPERSION VOLATILITY SPIKE",
+      "hazard_title": "Extreme Sharp-Retail Disagreement (CV = 8.4%)",
+      "hazard_reason": "Pinnacle and retail sportsbooks have fragmented pricing due to late lineup rest uncertainty.",
+      "preservation_rationale": "High dispersion indicates severe bookmaker parameter risk. Quantitative Kelly signals complete allocation suppression to protect subscriber capital.",
+      "capital_saved_estimate": "$150.00 Saved",
+      "dedupe_key": "nba-warriors-mavs::spreads::PASS",
+      "match_id": "nba-warriors-mavs",
+      "sport_key": "basketball_nba",
+      "league_label": "NBA",
+      "home_team": "Golden State Warriors",
+      "away_team": "Dallas Mavericks",
+      "kickoff_offset_hours": 12.0,
+      "market": "spreads",
+      "market_label": "Point Spread: Pass Advisory",
+      "outcome_name": "HOLD OFF (No Bet)",
+      "line": 0.5,
+      "is_marquee": true,
+      "pivot": null,
+      "p_true": 0.505,
+      "fair_odds": 1.98,
+      "best_book": "pinnacle",
+      "best_odds": 1.91,
+      "best_ev": -0.035,
+      "conviction_score": 0.0,
+      "recommended_stake_pct": 0.0,
+      "recommended_units": 0.0,
+      "freshness": "SLIPPED",
+      "badge_color": "rose",
+      "gauge_text": "Dispersion Spike (Drawdown Hazard)",
+      "tier_level": "TIER_2",
+      "books_odds": {
+        "pinnacle": 1.91,
+        "bet365": 1.9,
+        "draftkings": 1.92
+      },
+      "commence_time": "2026-09-21T07:08:43.343314+00:00",
+      "kickoff_human": "Today in 12h 00m",
+      "deep_links": {
+        "pinnacle": "https://www.pinnacle.com/en/search/Golden%20State%20Warriors",
+        "bet365": "https://www.bet365.com/#/AX/K^Golden%20State%20Warriors/",
+        "draftkings": "https://sportsbook.draftkings.com/search?q=Golden%20State%20Warriors"
+      }
+    },
+    {
+      "rank": 12,
+      "grade": "GRADE_C",
+      "grade_label": "\ud83d\udee1\ufe0f Pass Advisory",
+      "category": "pass_advisory",
+      "is_pass_advisory": true,
+      "pass_verdict": "DO NOT BET \u00b7 TACTICAL STALEMATE RISK",
+      "hazard_title": "Extreme Draw Probability (35.2%) with Sucker Pricing",
+      "hazard_reason": "Sevilla and Real Sociedad tactical matchup has an unusually high draw expectation without favorable payout.",
+      "preservation_rationale": "Bivariate Poisson expectation suggests high probability of 0-0 or 1-1 with zero liquidity advantage. LISA enforces capital preservation.",
+      "capital_saved_estimate": "$100.00 Saved",
+      "dedupe_key": "lig-sevilla-sociedad::h2h::PASS",
+      "match_id": "lig-sevilla-sociedad",
+      "sport_key": "soccer_spain_la_liga",
+      "league_label": "La Liga",
+      "home_team": "Sevilla",
+      "away_team": "Real Sociedad",
+      "kickoff_offset_hours": 16.5,
+      "market": "h2h",
+      "market_label": "Tactical Stalemate: Pass Advisory",
+      "outcome_name": "HOLD OFF (No Bet)",
+      "line": null,
+      "is_marquee": true,
+      "pivot": null,
+      "p_true": 0.365,
+      "fair_odds": 2.74,
+      "best_book": "bet365",
+      "best_odds": 2.6,
+      "best_ev": -0.051,
+      "conviction_score": 0.0,
+      "recommended_stake_pct": 0.0,
+      "recommended_units": 0.0,
+      "freshness": "SLIPPED",
+      "badge_color": "rose",
+      "gauge_text": "Negative EV Trap (Avoided)",
+      "tier_level": "TIER_2",
+      "books_odds": {
+        "bet365": 2.6,
+        "pinnacle": 2.55,
+        "draftkings": 2.58
+      },
+      "commence_time": "2026-09-21T11:38:43.343314+00:00",
+      "kickoff_human": "Today in 16h 30m",
+      "deep_links": {
+        "pinnacle": "https://www.pinnacle.com/en/search/Sevilla",
+        "bet365": "https://www.bet365.com/#/AX/K^Sevilla/",
+        "draftkings": "https://sportsbook.draftkings.com/search?q=Sevilla"
       }
     }
   ],
@@ -679,7 +636,7 @@
       "outcome_name": "Arsenal",
       "home_team": "Arsenal",
       "away_team": "Wolves",
-      "commence_time": "2026-09-19T18:56:20.110004+00:00",
+      "commence_time": "2026-09-19T19:08:43.343314+00:00",
       "p_true": 0.845,
       "fair_odds": 1.183,
       "n_books": 5,
@@ -696,7 +653,7 @@
       "conviction_score": 24.1,
       "recommended_stake_pct": 2.2,
       "recommended_units": 2.2,
-      "settled_at": "2026-09-20T00:56:20.110004+00:00"
+      "settled_at": "2026-09-20T01:08:43.343314+00:00"
     },
     {
       "dedupe_key": "nba-bucks-wizards::h2h::Milwaukee Bucks",
@@ -706,7 +663,7 @@
       "outcome_name": "Milwaukee Bucks",
       "home_team": "Milwaukee Bucks",
       "away_team": "Washington Wizards",
-      "commence_time": "2026-09-18T18:56:20.110004+00:00",
+      "commence_time": "2026-09-18T19:08:43.343314+00:00",
       "p_true": 0.862,
       "fair_odds": 1.16,
       "n_books": 5,
@@ -723,7 +680,7 @@
       "conviction_score": 25.4,
       "recommended_stake_pct": 2.3,
       "recommended_units": 2.3,
-      "settled_at": "2026-09-18T22:56:20.110004+00:00"
+      "settled_at": "2026-09-18T23:08:43.343314+00:00"
     },
     {
       "dedupe_key": "lig-madrid-valladolid::h2h::Real Madrid",
@@ -733,7 +690,7 @@
       "outcome_name": "Real Madrid",
       "home_team": "Real Madrid",
       "away_team": "Valladolid",
-      "commence_time": "2026-09-17T18:56:20.110004+00:00",
+      "commence_time": "2026-09-17T19:08:43.343314+00:00",
       "p_true": 0.855,
       "fair_odds": 1.17,
       "n_books": 5,
@@ -750,7 +707,7 @@
       "conviction_score": 23.5,
       "recommended_stake_pct": 2.1,
       "recommended_units": 2.1,
-      "settled_at": "2026-09-17T20:56:20.110004+00:00"
+      "settled_at": "2026-09-17T21:08:43.343314+00:00"
     },
     {
       "dedupe_key": "bdl-leverkusen-heidenheim::totals::Over 1.5 Goals",
@@ -760,7 +717,7 @@
       "outcome_name": "Over 1.5 Goals",
       "home_team": "Bayer Leverkusen",
       "away_team": "Heidenheim",
-      "commence_time": "2026-09-16T18:56:20.110004+00:00",
+      "commence_time": "2026-09-16T19:08:43.343314+00:00",
       "p_true": 0.89,
       "fair_odds": 1.124,
       "n_books": 5,
@@ -777,7 +734,7 @@
       "conviction_score": 28.1,
       "recommended_stake_pct": 2.8,
       "recommended_units": 2.8,
-      "settled_at": "2026-09-16T21:56:20.110004+00:00"
+      "settled_at": "2026-09-16T22:08:43.343314+00:00"
     },
     {
       "dedupe_key": "ita-napoli-monza::h2h::Napoli",
@@ -787,7 +744,7 @@
       "outcome_name": "Napoli",
       "home_team": "Napoli",
       "away_team": "Monza",
-      "commence_time": "2026-09-15T18:56:20.110004+00:00",
+      "commence_time": "2026-09-15T19:08:43.343314+00:00",
       "p_true": 0.825,
       "fair_odds": 1.212,
       "n_books": 5,
@@ -804,7 +761,7 @@
       "conviction_score": 20.2,
       "recommended_stake_pct": 1.9,
       "recommended_units": 1.9,
-      "settled_at": "2026-09-15T22:56:20.110004+00:00"
+      "settled_at": "2026-09-15T23:08:43.343314+00:00"
     }
   ],
   "calibration": {
@@ -871,17 +828,6 @@
         "syndicate_rating": "AAA"
       },
       {
-        "match": "Inter Milan vs Monza",
-        "league": "Serie A",
-        "kickoff": "Tomorrow in 28h 00m",
-        "derived_market": "Clean Sheet: Inter Milan (Yes)",
-        "p_true": 0.732,
-        "fair_odds": 1.366,
-        "market_odds": 1.48,
-        "alpha_ev": "+8.3%",
-        "syndicate_rating": "AAA"
-      },
-      {
         "match": "Liverpool vs Newcastle",
         "league": "Premier League",
         "kickoff": "Tomorrow in 23h 00m",
@@ -918,19 +864,6 @@
         "lagging_line": 1.28,
         "clv_window_remaining": "06m 45s",
         "arb_ev": "+4.9% Guaranteed CLV",
-        "status": "ACTIVE_STEAM"
-      },
-      {
-        "signal_id": "stm-03",
-        "match": "Boston Celtics vs Charlotte Hornets",
-        "market": "Celtics ML",
-        "sharp_book": "Pinnacle",
-        "sharp_line": 1.17,
-        "sharp_shift": "-2.5% (Limit Max Bet)",
-        "lagging_book": "Bet365",
-        "lagging_line": 1.21,
-        "clv_window_remaining": "02m 30s",
-        "arb_ev": "+3.4% Guaranteed CLV",
         "status": "ACTIVE_STEAM"
       }
     ],

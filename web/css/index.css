@@ -799,10 +799,22 @@ canvas.chart-canvas {
   box-shadow: 0 0 16px var(--accent-cyan-glow);
 }
 
-.cat-pill.active[data-category="marquee_addition"] {
+.cat-pill.active[data-grade="GRADE_A"] {
+  background: var(--accent-cyan);
+  color: #07090e;
+  box-shadow: 0 0 16px var(--accent-cyan-glow);
+}
+
+.cat-pill.active[data-grade="GRADE_B"] {
   background: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 100%);
   color: #ffffff;
   box-shadow: 0 0 16px rgba(139, 92, 246, 0.4);
+}
+
+.cat-pill.active[data-grade="GRADE_C"] {
+  background: linear-gradient(135deg, #f59e0b 0%, #f43f5e 100%);
+  color: #07090e;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.4);
 }
 
 .section-divider-banner {
@@ -817,9 +829,19 @@ canvas.chart-canvas {
   margin: 16px 0 8px;
 }
 
-.section-divider-banner.marquee-section {
+.section-divider-banner.diamond-section {
+  border-color: rgba(6, 182, 212, 0.3);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
+}
+
+.section-divider-banner.pivot-section {
   border-color: rgba(139, 92, 246, 0.3);
   background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%);
+}
+
+.section-divider-banner.pass-section {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(244, 63, 94, 0.06) 100%);
 }
 
 .section-divider-title {
@@ -834,6 +856,88 @@ canvas.chart-canvas {
 .section-divider-sub {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* Pass Advisory Card Styling */
+.pick-card.pass-card {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(15, 22, 36, 0.85) 100%);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 0 20px rgba(245, 158, 11, 0.03);
+}
+
+.pass-shield-tag {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-amber);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pass-hazard-box {
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.pass-hazard-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-rose);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pass-hazard-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.pass-preservation-box {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.pass-preservation-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-emerald);
+  margin-bottom: 4px;
+}
+
+.pass-preservation-desc {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.btn-bankroll-preserved {
+  width: 100%;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--accent-emerald);
+  padding: 10px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: default;
 }
 
 /* ==========================================================================
