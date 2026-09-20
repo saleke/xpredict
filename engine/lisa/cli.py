@@ -237,6 +237,11 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
     if args.fixtures:
         from .fixtures_generator import generate_rolling_commercial_dataset
         payload = generate_rolling_commercial_dataset(now=utcnow())
+        try:
+            from .backtest import BacktestEngine
+            payload["backtest"] = BacktestEngine().run().to_dict()
+        except Exception as exc:
+            print(f"[export-web] Warning: could not attach backtest: {exc}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(payload, indent=2))
         print(f"[export-web] Commercial 4-tier rolling dataset exported to {out_path} ({len(payload['active_picks'])} active, {len(payload['settled_ledger'])} settled)")
@@ -331,10 +336,37 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
         "clv": clv_rep,
     }
 
+    try:
+        from .backtest import BacktestEngine
+        bkt_engine = BacktestEngine()
+        payload["backtest"] = bkt_engine.run().to_dict()
+    except Exception as exc:
+        print(f"[export-web] Warning: could not run backtest: {exc}")
+
     out_path = Path(args.out or "web/data/dashboard.json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2))
     print(f"[export-web] Dashboard data exported to {out_path} ({len(active_picks_data)} active, {len(settled)} settled)")
+    return 0
+
+
+def _cmd_backtest(args: argparse.Namespace) -> int:
+    from .backtest import BacktestEngine, format_backtest_report
+    sports = args.sports.split(",") if args.sports else None
+    engine = BacktestEngine(sports=sports)
+    report = engine.run_simulation()
+
+    if args.export_json:
+        out_path = Path(args.export_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(report.to_dict(), indent=2))
+        print(f"[backtest] Audit report exported to {out_path}")
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(format_backtest_report(report, verbose=args.verbose))
+
     return 0
 
 
@@ -418,6 +450,16 @@ def main(argv: list[str] | None = None) -> int:
     srv.add_argument("--dir", default="web",
                      help="directory to serve (default: web)")
 
+    bkt = sub.add_parser("backtest", help="simulate past match data through LISA and test rigorous prediction accuracy")
+    bkt.add_argument("--sports", default=None,
+                     help="comma-separated sport keys (e.g. soccer_epl,basketball_nba)")
+    bkt.add_argument("--export-json", default=None,
+                     help="path to save backtest report JSON")
+    bkt.add_argument("--json", action="store_true",
+                     help="output raw JSON instead of formatted report")
+    bkt.add_argument("--verbose", action="store_true",
+                     help="include detailed match-by-match ledger breakdown")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "demo":
@@ -436,6 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_export_web(args)
     if args.cmd == "serve":
         return _cmd_serve(args)
+    if args.cmd == "backtest":
+        return _cmd_backtest(args)
     parser.error(f"unknown command: {args.cmd}")
     return 2  # pragma: no cover
 

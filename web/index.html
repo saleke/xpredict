@@ -120,6 +120,9 @@
       <button class="tab-btn tab-btn-vip" id="tab-btn-alpha" data-view="view-alpha">
         <span>👑</span> Tier 3 Syndicate Alpha
       </button>
+      <button class="tab-btn" id="tab-btn-backtest" data-view="view-backtest" style="border-left: 1px solid var(--border-subtle); color: var(--accent-cyan);">
+        <span>🔬</span> Historical Backtest Audit
+      </button>
     </nav>
 
     <!-- VIEW 1: Live Consensus & Picks -->
@@ -380,6 +383,95 @@
           <div class="parlays-list" id="parlays-list">
             <!-- Injected via JavaScript -->
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 6: Historical Backtest & Calibration Audit -->
+    <section class="view-panel" id="view-backtest">
+      <div class="table-card" style="margin-bottom: 24px;">
+        <div class="table-header-block">
+          <div>
+            <h2 style="font-size: 18px; font-weight: 700; color: #ffffff;">Historical Pre-Match Simulation & Accuracy Benchmark</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+              Pre-match consensus lines (Pinnacle, Bet365, DraftKings, FanDuel, BetMGM) processed through Shin de-vigging, consensus convergence, Kelly sizing, and settled against actual ground truth scores.
+            </p>
+          </div>
+          <span style="font-size: 12px; padding: 4px 12px; background: rgba(6, 182, 212, 0.1); border: 1px solid rgba(6, 182, 212, 0.3); border-radius: var(--radius-pill); color: var(--accent-cyan); font-weight: 600;">
+            🔬 Rigorous Out-of-Sample Test
+          </span>
+        </div>
+
+        <!-- Backtest Metrics Bar (Institutional Analytics) -->
+        <div class="calc-inputs-grid" style="padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));">
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Realized Win Rate</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-emerald);" id="bkt-win-rate">84.0%</div>
+            <div style="font-size: 11px; color: var(--text-muted);" id="bkt-ci">95% CI: [71.5%, 91.7%]</div>
+          </div>
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Expected Calib Error</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-cyan);" id="bkt-ece">3.61%</div>
+            <div style="font-size: 11px; color: var(--accent-emerald);">Murphy Rel: 0.0020</div>
+          </div>
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Capital Preserved</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-amber);" id="bkt-capital-saved">$1,700.00</div>
+            <div style="font-size: 11px; color: var(--accent-emerald);" id="bkt-net-saved">Net Adv: +$660.00</div>
+          </div>
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Max Peak Drawdown</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-rose);" id="bkt-mdd">-2.89%</div>
+            <div style="font-size: 11px; color: var(--text-muted);" id="bkt-mdd-dollars">-$301.12 Peak Drop</div>
+          </div>
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Risk Ratios (Sharpe)</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-cyan);" id="bkt-sharpe">0.36</div>
+            <div style="font-size: 11px; color: var(--text-muted);" id="bkt-sortino">Sortino: 0.16 · PF: 1.15</div>
+          </div>
+          <div style="background: var(--bg-surface-elevated); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Kelly Compounded</div>
+            <div style="font-size: 20px; font-weight: 800; color: var(--accent-gold);" id="bkt-roi">+2.39%</div>
+            <div style="font-size: 11px; color: var(--text-muted);" id="bkt-profit">+$143.40 Net Profit</div>
+          </div>
+        </div>
+
+        <div style="padding: 16px 24px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border-subtle);">
+          <div class="filter-group" id="bkt-sport-filter-group" style="margin: 0;">
+            <button class="pill-filter active" data-bktsport="all" id="bkt-filter-all">All Leagues (80)</button>
+            <button class="pill-filter" data-bktsport="soccer_epl" id="bkt-filter-epl">Premier League (20)</button>
+            <button class="pill-filter" data-bktsport="soccer_spain_la_liga" id="bkt-filter-laliga">La Liga (16)</button>
+            <button class="pill-filter" data-bktsport="soccer_germany_bundesliga" id="bkt-filter-bundesliga">Bundesliga (14)</button>
+            <button class="pill-filter" data-bktsport="soccer_italy_serie_a" id="bkt-filter-seriea">Serie A (14)</button>
+            <button class="pill-filter" data-bktsport="basketball_nba" id="bkt-filter-nba">NBA (16)</button>
+          </div>
+          <div class="filter-group" id="bkt-grade-filter-group" style="margin: 0;">
+            <button class="pill-filter active" data-bktgrade="all" id="bkt-grade-all">All Grades</button>
+            <button class="pill-filter" data-bktgrade="GRADE_A" id="bkt-grade-a">💎 Grade A</button>
+            <button class="pill-filter" data-bktgrade="GRADE_B" id="bkt-grade-b">🧠 Smart Pivots</button>
+            <button class="pill-filter" data-bktgrade="GRADE_C" id="bkt-grade-c">🛡️ Sucker Traps</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="backtest-table">
+            <thead>
+              <tr>
+                <th>Match / Fixture</th>
+                <th>League</th>
+                <th>Recommendation</th>
+                <th>Market</th>
+                <th>LISA Prob</th>
+                <th>Consensus Odds</th>
+                <th>Score</th>
+                <th>Audit Result</th>
+                <th>Financial PnL</th>
+              </tr>
+            </thead>
+            <tbody id="backtest-tbody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

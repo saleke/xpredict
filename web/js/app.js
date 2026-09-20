@@ -42,6 +42,7 @@ function renderAll() {
   renderLedger();
   renderCalibration();
   renderTier3Alpha();
+  renderBacktest();
 }
 
 function renderKPIs() {
@@ -654,6 +655,118 @@ function renderTier3Alpha() {
   }
 }
 
+function renderBacktest() {
+  if (!state.data || !state.data.backtest) return;
+  const b = state.data.backtest;
+  const s = b.summary || {};
+
+  const winRateEl = document.getElementById('bkt-win-rate');
+  if (winRateEl && s.win_rate !== undefined) winRateEl.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
+
+  const ciEl = document.getElementById('bkt-ci');
+  if (ciEl && s.wilson_ci_lower !== undefined && s.wilson_ci_upper !== undefined) {
+    ciEl.textContent = `95% CI: [${(s.wilson_ci_lower * 100).toFixed(1)}%, ${(s.wilson_ci_upper * 100).toFixed(1)}%]`;
+  }
+
+  const eceEl = document.getElementById('bkt-ece');
+  if (eceEl && s.ece !== undefined) eceEl.textContent = `${(s.ece * 100).toFixed(2)}%`;
+
+  const capSavedEl = document.getElementById('bkt-capital-saved');
+  if (capSavedEl && s.capital_preserved_dollars !== undefined) {
+    capSavedEl.textContent = `$${s.capital_preserved_dollars.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  }
+
+  const netSavedEl = document.getElementById('bkt-net-saved');
+  if (netSavedEl && s.net_counterfactual_value !== undefined) {
+    const sign = s.net_counterfactual_value >= 0 ? '+' : '';
+    netSavedEl.textContent = `Net Adv: ${sign}$${s.net_counterfactual_value.toFixed(2)}`;
+  }
+
+  const mddEl = document.getElementById('bkt-mdd');
+  if (mddEl && s.max_drawdown_pct !== undefined) mddEl.textContent = `-${s.max_drawdown_pct.toFixed(2)}%`;
+
+  const mddDollarsEl = document.getElementById('bkt-mdd-dollars');
+  if (mddDollarsEl && s.max_drawdown_dollars !== undefined) mddDollarsEl.textContent = `-$${s.max_drawdown_dollars.toFixed(2)} Peak Drop`;
+
+  const sharpeEl = document.getElementById('bkt-sharpe');
+  if (sharpeEl && s.sharpe_ratio !== undefined) sharpeEl.textContent = s.sharpe_ratio.toFixed(2);
+
+  const sortinoEl = document.getElementById('bkt-sortino');
+  if (sortinoEl && s.sortino_ratio !== undefined) {
+    const pfStr = s.profit_factor !== undefined ? ` · PF: ${s.profit_factor.toFixed(2)}` : '';
+    sortinoEl.textContent = `Sortino: ${s.sortino_ratio.toFixed(2)}${pfStr}`;
+  }
+
+  const roiEl = document.getElementById('bkt-roi');
+  if (roiEl && s.roi_pct !== undefined) roiEl.textContent = `+${s.roi_pct.toFixed(2)}%`;
+
+  const profitEl = document.getElementById('bkt-profit');
+  if (profitEl && s.net_profit !== undefined) {
+    const sign = s.net_profit >= 0 ? '+' : '';
+    profitEl.textContent = `${sign}$${s.net_profit.toFixed(2)} Net Profit`;
+  }
+
+  const tbody = document.getElementById('backtest-tbody');
+  if (!tbody || !b.records) return;
+
+  const filterSport = state.activeBktSport || 'all';
+  const filterGrade = state.activeBktGrade || 'all';
+  const records = b.records.filter(r => {
+    const matchSport = filterSport === 'all' || r.sport_key === filterSport;
+    const matchGrade = filterGrade === 'all' || r.grade === filterGrade;
+    return matchSport && matchGrade;
+  });
+
+  tbody.innerHTML = records.map(r => {
+    let gradeBadge = '';
+    if (r.grade === 'GRADE_A') {
+      gradeBadge = `<span class="pill-grade pill-grade-a">💎 Grade A</span>`;
+    } else if (r.grade === 'GRADE_B') {
+      gradeBadge = `<span class="pill-grade pill-grade-b">🧠 Smart Pivot</span>`;
+    } else {
+      gradeBadge = `<span class="pill-grade pill-grade-c">🛡️ Pass Advisory</span>`;
+    }
+
+    let resultBadge = '';
+    let pnlDisplay = '';
+    if (r.result === 'WIN') {
+      resultBadge = `<span style="color: var(--accent-emerald); font-weight: 700;">✓ WON</span>`;
+      pnlDisplay = `<span style="color: var(--accent-emerald); font-weight: 700;">+$${r.pnl.toFixed(2)}</span>`;
+    } else if (r.result === 'LOSS') {
+      resultBadge = `<span style="color: var(--accent-rose); font-weight: 700;">✗ LOST</span>`;
+      pnlDisplay = `<span style="color: var(--accent-rose); font-weight: 700;">-$${Math.abs(r.pnl).toFixed(2)}</span>`;
+    } else {
+      resultBadge = `<span style="color: var(--accent-amber); font-weight: 700;">🛡️ TRAP AVOIDED</span>`;
+      pnlDisplay = `<span style="color: var(--accent-amber); font-weight: 700;">+$${r.capital_saved.toFixed(2)} Saved</span>`;
+    }
+
+    const sportLabel = {
+      'soccer_epl': 'Premier League',
+      'soccer_spain_la_liga': 'La Liga',
+      'soccer_germany_bundesliga': 'Bundesliga',
+      'soccer_italy_serie_a': 'Serie A',
+      'basketball_nba': 'NBA',
+    }[r.sport_key] || r.sport_key;
+
+    return `
+      <tr>
+        <td>
+          <strong style="color: #fff;">${r.home_team} vs ${r.away_team}</strong>
+          ${r.hazard_warning ? `<div style="font-size: 11px; color: var(--accent-amber); margin-top: 2px;">⚠️ ${r.hazard_warning}</div>` : ''}
+        </td>
+        <td><span class="pill-league">${sportLabel}</span></td>
+        <td>${gradeBadge} <div style="font-size: 12px; color: #fff; margin-top: 3px;">${r.outcome_name}</div></td>
+        <td><span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">${r.market.replace('_', ' ')}</span></td>
+        <td class="tabular-nums" style="font-weight: 600;">${(r.p_true * 100).toFixed(1)}%</td>
+        <td class="tabular-nums">${r.best_odds.toFixed(2)} <span style="font-size: 11px; color: var(--text-muted);">(${r.best_book})</span></td>
+        <td class="tabular-nums" style="font-weight: 700; color: #fff;">${r.actual_score}</td>
+        <td>${resultBadge}</td>
+        <td class="tabular-nums">${pnlDisplay}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
 function switchTab(viewName) {
   const tabs = document.querySelectorAll('.tab-btn');
   tabs.forEach(t => {
@@ -721,6 +834,26 @@ function setupEventListeners() {
     });
   });
 
+  // Backtest sport filters
+  document.querySelectorAll('[data-bktsport]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-bktsport]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeBktSport = btn.getAttribute('data-bktsport');
+      renderBacktest();
+    });
+  });
+
+  // Backtest grade filters
+  document.querySelectorAll('[data-bktgrade]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-bktgrade]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.activeBktGrade = btn.getAttribute('data-bktgrade');
+      renderBacktest();
+    });
+  });
+
   // Tier switcher pills
   document.querySelectorAll('.tier-pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -756,5 +889,11 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
   initCalculator();
-  loadData();
+  loadData().then(() => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      switchTab(hash);
+    }
+  });
 });
+

@@ -94,15 +94,22 @@ class Score:
 
         if market == "totals":
             if line is None:
+                for part in outcome_name.split():
+                    try:
+                        line = float(part)
+                        break
+                    except ValueError:
+                        pass
+            if line is None:
                 return None
             total = self.home_score + self.away_score
             diff = total - line
             if abs(diff) < 1e-6:
                 return "VOID"
             name_lower = outcome_name.strip().lower()
-            if name_lower == "over":
+            if "over" in name_lower:
                 return "WIN" if diff > 0 else "LOSS"
-            if name_lower == "under":
+            if "under" in name_lower:
                 return "WIN" if diff < 0 else "LOSS"
             return None
 
@@ -121,5 +128,64 @@ class Score:
             if abs(diff) < 1e-6:
                 return "VOID"
             return "WIN" if diff > 0 else "LOSS"
+
+        if market in ("double_chance", "dc"):
+            name_lower = outcome_name.strip().lower()
+            # 1X: Home or Draw
+            if (
+                name_lower in ("1x", "home or draw", "home/draw")
+                or f"{self.home_team.lower()} or draw" in name_lower
+                or "1x" in name_lower
+            ):
+                return "WIN" if self.home_score >= self.away_score else "LOSS"
+            # X2: Away or Draw
+            if (
+                name_lower in ("x2", "draw or away", "draw/away")
+                or f"draw or {self.away_team.lower()}" in name_lower
+                or "x2" in name_lower
+            ):
+                return "WIN" if self.away_score >= self.home_score else "LOSS"
+            # 12: Home or Away (no draw)
+            if (
+                name_lower in ("12", "home or away", "home/away")
+                or f"{self.home_team.lower()} or {self.away_team.lower()}" in name_lower
+                or "12" in name_lower
+            ):
+                return "WIN" if self.home_score != self.away_score else "LOSS"
+            return None
+
+        if market in ("btts", "both_teams_to_score"):
+            btts = self.home_score > 0 and self.away_score > 0
+            name_lower = outcome_name.strip().lower()
+            if "yes" in name_lower:
+                return "WIN" if btts else "LOSS"
+            if "no" in name_lower:
+                return "WIN" if not btts else "LOSS"
+            return None
+
+        if market in ("team_totals", "team_total"):
+            if line is None:
+                for part in outcome_name.split():
+                    try:
+                        line = float(part)
+                        break
+                    except ValueError:
+                        pass
+            if line is None:
+                return None
+            name_lower = outcome_name.strip().lower()
+            if self.home_team.lower() in name_lower:
+                diff = self.home_score - line
+            elif self.away_team.lower() in name_lower:
+                diff = self.away_score - line
+            else:
+                return None
+            if abs(diff) < 1e-6:
+                return "VOID"
+            if "over" in name_lower:
+                return "WIN" if diff > 0 else "LOSS"
+            if "under" in name_lower:
+                return "WIN" if diff < 0 else "LOSS"
+            return None
 
         return None
