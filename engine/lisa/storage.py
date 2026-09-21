@@ -94,6 +94,21 @@ class Storage:
     def get_pick(self, dedupe_key: str) -> Optional[dict]:
         raise NotImplementedError
 
+    def log_admin_action(self, admin_id: str, action: str, target: str = "", details: str = "") -> int:
+        return 0
+
+    def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
+        return []
+
+    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+        return 0
+
+    def is_system_paused(self) -> bool:
+        return False
+
+    def set_system_paused(self, paused: bool) -> None:
+        pass
+
 
 class InMemoryStorage(Storage):
     """Thread-safe-enough for a single worker; TTL is wall-clock monotonic."""
@@ -101,6 +116,8 @@ class InMemoryStorage(Storage):
     def __init__(self) -> None:
         self._live: dict[str, tuple[float, dict]] = {}
         self._picks: dict[str, dict] = {}
+        self._audit_logs: list[dict] = []
+        self._system_paused: bool = False
 
     # -- hot layer -----------------------------------------------------------
 
@@ -160,6 +177,39 @@ class InMemoryStorage(Storage):
         row["closing_p_true"] = closing_p_true
         row["clv"] = clv
         return True
+
+    def log_admin_action(self, admin_id: str, action: str, target: str = "", details: str = "") -> int:
+        rec = {
+            "id": len(self._audit_logs) + 1,
+            "admin_id": str(admin_id),
+            "action": action,
+            "target": target,
+            "details": details,
+            "timestamp": time.time(),
+        }
+        self._audit_logs.append(rec)
+        return rec["id"]
+
+    def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
+        return sorted(self._audit_logs, key=lambda x: x["timestamp"], reverse=True)[:limit]
+
+    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+        count = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        res_upper = result.upper()
+        for row in self._picks.values():
+            if row.get("match_id") == match_id or match_id in row.get("dedupe_key", ""):
+                row["state"] = "SETTLED"
+                row["result"] = res_upper
+                row["settled_at"] = now_iso
+                count += 1
+        return count
+
+    def is_system_paused(self) -> bool:
+        return self._system_paused
+
+    def set_system_paused(self, paused: bool) -> None:
+        self._system_paused = bool(paused)
 
 
 class JsonFileStorage(InMemoryStorage):
@@ -296,6 +346,20 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id   TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    target     TEXT,
+    details    TEXT,
+    timestamp  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_admin ON admin_audit_logs(admin_id);
+CREATE INDEX IF NOT EXISTS idx_audit_time ON admin_audit_logs(timestamp);
+
+CREATE VIEW IF NOT EXISTS lisa_predictions AS SELECT * FROM picks;
+CREATE VIEW IF NOT EXISTS user_profiles AS SELECT * FROM users;
 """
 
 
@@ -524,6 +588,60 @@ class SqliteStorage(Storage):
                 "void": row["void"] or 0,
             }
 
+    def log_admin_action(self, admin_id: str, action: str, target: str = "", details: str = "") -> int:
+        sql = """
+            INSERT INTO admin_audit_logs (admin_id, action, target, details, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        now_ts = time.time()
+        with self._connect() as conn:
+            cur = conn.execute(sql, (str(admin_id), action, target, details, now_ts))
+            conn.commit()
+            return cur.lastrowid or 0
+
+    def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
+        sql = "SELECT * FROM admin_audit_logs ORDER BY timestamp DESC LIMIT ?"
+        with self._connect() as conn:
+            cur = conn.execute(sql, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        res_upper = result.upper()
+        sql = """
+            UPDATE picks
+            SET state = 'SETTLED', result = ?, settled_at = ?
+            WHERE match_id = ? OR dedupe_key LIKE ?
+        """
+        like_pattern = f"%{match_id}%"
+        with self._connect() as conn:
+            cur = conn.execute(sql, (res_upper, now_iso, match_id, like_pattern))
+            conn.commit()
+            return cur.rowcount
+
+    def is_system_paused(self) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("SELECT val_json FROM system_telemetry WHERE key = 'sys_kill_switch_paused'")
+            row = cur.fetchone()
+            if not row:
+                return False
+            try:
+                data = json.loads(row["val_json"])
+                return bool(data.get("paused", False))
+            except Exception:
+                return False
+
+    def set_system_paused(self, paused: bool) -> None:
+        val_str = json.dumps({"paused": bool(paused), "updated_at": time.time()})
+        now_iso = datetime.now(timezone.utc).isoformat()
+        sql = """
+            INSERT INTO system_telemetry (key, val_json, updated_at)
+            VALUES ('sys_kill_switch_paused', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET val_json = excluded.val_json, updated_at = excluded.updated_at
+        """
+        with self._connect() as conn:
+            conn.execute(sql, (val_str, now_iso))
+            conn.commit()
 
 
 class RedisStorage(Storage):

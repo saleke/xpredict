@@ -1,6 +1,7 @@
 """Unit tests for LISA Interactive Telegram Bot & Live Ingestion Dispatch."""
 from __future__ import annotations
 
+import secrets
 import unittest
 from datetime import datetime, timezone
 
@@ -10,10 +11,15 @@ from lisa.fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from lisa.gate import Execution, Pick
 from lisa.live_ingest import LiveIngestionDaemon
 from lisa.telegram_bot import (
+    MAIN_REPLY_KEYBOARD,
+    BankrollFSMManager,
     TelegramBot,
     TelegramUpdate,
+    format_active_top_picks_contract,
+    format_booking_codes_html,
     format_diamond_alert_html,
     format_free_picks_html,
+    format_parlay_html,
     format_stats_html,
     format_trap_advisory_html,
     generate_unlock_token,
@@ -265,6 +271,249 @@ class TestTelegramBot(unittest.TestCase):
         reply = self.bot.process_one_update(update)
         self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
         self.assertEqual(self.bot.outbox[-1]["chat_id"], "chat_42")
+
+    def test_persistent_reply_keyboard_structure(self):
+        keyboard = MAIN_REPLY_KEYBOARD
+        self.assertTrue(keyboard.get("is_persistent"))
+        self.assertTrue(keyboard.get("resize_keyboard"))
+        buttons = [btn["text"] for row in keyboard.get("keyboard", []) for btn in row]
+        self.assertIn("📊 Active Top Picks", buttons)
+        self.assertIn("🏦 My Bankroll", buttons)
+        self.assertIn("📈 Accuracy Ledger", buttons)
+        self.assertIn("⚡ 5-Fold Parlay", buttons)
+        self.assertIn("🎟️ Bookmaker Codes", buttons)
+        self.assertIn("🛡️ Trap Advisories", buttons)
+
+    def test_bankroll_fsm_onboarding_lifecycle(self):
+        user_id = f"trader_alpha_{secrets.token_hex(4)}"
+        chat_id = f"chat_alpha_{secrets.token_hex(4)}"
+
+        update_init = TelegramUpdate(1, 10, chat_id, user_id, "trader", text="🏦 My Bankroll")
+        reply_init = self.bot.process_one_update(update_init)
+        self.assertIn("LISA BANKROLL ONBOARDING (Step 1/3)", reply_init)
+        self.assertEqual(self.bot.fsm.get_state(user_id), BankrollFSMManager.STATE_AWAITING_AMOUNT)
+
+        update_bad = TelegramUpdate(2, 11, chat_id, user_id, "trader", text="invalid_amount")
+        reply_bad = self.bot.process_one_update(update_bad)
+        self.assertIn("Invalid Bankroll Amount", reply_bad)
+        self.assertEqual(self.bot.fsm.get_state(user_id), BankrollFSMManager.STATE_AWAITING_AMOUNT)
+
+        update_amt = TelegramUpdate(3, 12, chat_id, user_id, "trader", text="$2,500.00")
+        reply_amt = self.bot.process_one_update(update_amt)
+        self.assertIn("SELECT RISK TOLERANCE (Step 2/3)", reply_amt)
+        self.assertIn("$2,500.00", reply_amt)
+        self.assertEqual(self.bot.fsm.get_state(user_id), BankrollFSMManager.STATE_AWAITING_RISK)
+
+        update_risk = TelegramUpdate(4, 13, chat_id, user_id, "trader", callback_query_id="cb_risk", callback_data="fsm:risk:balanced")
+        reply_risk = self.bot.process_one_update(update_risk)
+        self.assertIn("PREFERRED BOOKMAKER (Step 3/3)", reply_risk)
+        self.assertEqual(self.bot.fsm.get_state(user_id), BankrollFSMManager.STATE_AWAITING_BOOK)
+
+        update_book = TelegramUpdate(5, 14, chat_id, user_id, "trader", callback_query_id="cb_book", callback_data="fsm:book:Football.com")
+        reply_book = self.bot.process_one_update(update_book)
+        self.assertIn("ONBOARDING COMPLETE — PROFILE SAVED", reply_book)
+        self.assertIn("Football.com", reply_book)
+        self.assertEqual(self.bot.fsm.get_state(user_id), BankrollFSMManager.STATE_IDLE)
+
+        saved = self.bot.fsm.get_profile(user_id)
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved["bankroll_amount"], 2500.0)
+        self.assertEqual(saved["risk_profile"], "balanced")
+        self.assertEqual(saved["kelly_fraction"], 0.50)
+        self.assertEqual(saved["preferred_bookmaker"], "Football.com")
+
+        update_view = TelegramUpdate(6, 15, chat_id, user_id, "trader", text="🏦 My Bankroll")
+        reply_view = self.bot.process_one_update(update_view)
+        self.assertIn("LISA BANKROLL REFINERY PROFILE", reply_view)
+        self.assertIn("$2,500.00", reply_view)
+        self.assertIn("Football.com", reply_view)
+
+    def test_live_cache_picks_with_personalized_bankroll(self):
+        user_id = "trader_beta_2"
+        chat_id = "chat_beta_2"
+
+        self.bot.fsm.save_profile(user_id, "beta", 5000.0, "balanced", 0.50, "SportyBet")
+
+        update = TelegramUpdate(10, 20, chat_id, user_id, "beta", text="📊 Active Top Picks")
+        reply = self.bot.process_one_update(update)
+
+        self.assertIn("LISA TODAY'S TOP SELECTIONS", reply)
+        self.assertIn("$5,000.00", reply)
+        self.assertIn("SportyBet", reply)
+        self.assertIn("P(true)", reply)
+        self.assertIn("Fair Odds", reply)
+        self.assertIn("Conviction", reply)
+
+        last_msg = self.bot.outbox[-1]
+        self.assertIsNotNone(last_msg["reply_markup"])
+        inline_rows = last_msg["reply_markup"].get("inline_keyboard", [])
+        self.assertTrue(len(inline_rows) >= 2)
+        urls = [b.get("url", "") for row in inline_rows for b in row if b.get("url")]
+        self.assertTrue(any("sportybet" in u for u in urls))
+
+    def test_parlay_and_booking_codes_features(self):
+        update_parlay = TelegramUpdate(20, 30, "chat_1", "user_1", "user", text="⚡ 5-Fold Parlay")
+        reply_parlay = self.bot.process_one_update(update_parlay)
+        self.assertIn("LISA HIGH-CONVICTION 5-FOLD PARLAY", reply_parlay)
+        self.assertIn("BC792K", reply_parlay)
+        self.assertIn("FC82910", reply_parlay)
+
+        update_codes = TelegramUpdate(21, 31, "chat_1", "user_1", "user", text="🎟️ Bookmaker Codes")
+        reply_codes = self.bot.process_one_update(update_codes)
+        self.assertIn("LISA VERIFIED BOOKMAKER BOOKING CODES", reply_codes)
+        self.assertIn("SportyBet", reply_codes)
+        self.assertIn("Football.com", reply_codes)
+
+    def test_unexpected_input_and_natural_team_search(self):
+        update_search = TelegramUpdate(30, 40, "chat_1", "user_1", "user", text="Arsenal")
+        reply_search = self.bot.process_one_update(update_search)
+        self.assertIn("Arsenal", reply_search)
+
+        update_unexpected = TelegramUpdate(31, 41, "chat_1", "user_1", "user", text="hello random unknown query 12345")
+        reply_fallback = self.bot.process_one_update(update_unexpected)
+        self.assertIn("LISA Sports Intelligence Desk", reply_fallback)
+        self.assertIn("Received query", reply_fallback)
+
+    def test_global_exception_fallback_handler(self):
+        class ExplodingBot(TelegramBot):
+            def handle_message(self, update):
+                raise RuntimeError("Simulated transient memory fault")
+
+        exploding_bot = ExplodingBot(mock=True)
+        update = TelegramUpdate(99, 999, "chat_fail", "user_fail", "fail", text="crash test")
+        res = exploding_bot.process_one_update(update)
+
+        self.assertIn("LISA System Notification", res)
+        self.assertIn("An unexpected operational exception occurred", res)
+        self.assertEqual(exploding_bot.outbox[-1]["reply_markup"], MAIN_REPLY_KEYBOARD)
+
+    def test_admin_identity_gate(self):
+        admin_id = "super_admin_777"
+        non_admin_id = "regular_user_123"
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id])
+
+        self.assertTrue(admin_bot.is_admin(admin_id))
+        self.assertFalse(admin_bot.is_admin(non_admin_id))
+
+        unauth_update = TelegramUpdate(1, 101, "chat_1", non_admin_id, "user", text="/admin")
+        unauth_reply = admin_bot.process_one_update(unauth_update)
+        self.assertIn("Unknown command", unauth_reply)
+
+        unauth_settle = TelegramUpdate(2, 102, "chat_1", non_admin_id, "user", text="/settle match-99 WIN")
+        self.assertIn("Unknown command", admin_bot.process_one_update(unauth_settle))
+
+        unauth_grant = TelegramUpdate(3, 103, "chat_1", non_admin_id, "user", text="/grant test@vip.com tier2")
+        self.assertIn("Unknown command", admin_bot.process_one_update(unauth_grant))
+
+        unauth_pause = TelegramUpdate(4, 104, "chat_1", non_admin_id, "user", text="/sys_pause")
+        self.assertIn("Unknown command", admin_bot.process_one_update(unauth_pause))
+
+        auth_update = TelegramUpdate(5, 105, "chat_admin", admin_id, "boss", text="/admin")
+        auth_reply = admin_bot.process_one_update(auth_update)
+        self.assertIn("LISA MOBILE ADMIN CONSOLE", auth_reply)
+        self.assertIn(admin_id, auth_reply)
+
+    def test_admin_manual_settle(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "super_admin_777"
+        storage = InMemoryStorage()
+        storage.insert_pick(self.sample_pick)
+
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        update = TelegramUpdate(10, 201, "chat_admin", admin_id, "boss", text=f"/settle {self.sample_pick.match_id} WIN")
+        reply = admin_bot.process_one_update(update)
+
+        self.assertIn("MANUAL MATCH SETTLEMENT SYNCHRONIZED", reply)
+        self.assertIn(self.sample_pick.match_id, reply)
+
+        key = f"{self.sample_pick.match_id}::{self.sample_pick.market}::{self.sample_pick.outcome_name}"
+        saved = storage.get_pick(key)
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved["state"], "SETTLED")
+        self.assertEqual(saved["result"], "WIN")
+
+        logs = storage.list_admin_audit_logs()
+        self.assertTrue(len(logs) >= 1)
+        self.assertEqual(logs[0]["action"], "MANUAL_SETTLEMENT")
+        self.assertEqual(logs[0]["admin_id"], admin_id)
+
+    def test_admin_grant_user_provisioning(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "super_admin_777"
+        storage = InMemoryStorage()
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        update = TelegramUpdate(20, 301, "chat_admin", admin_id, "boss", text="/grant partner@influencer.com tier2")
+        reply = admin_bot.process_one_update(update)
+
+        self.assertIn("CUSTOMER PROVISIONING COMPLETED", reply)
+        self.assertIn("partner@influencer.com", reply)
+        self.assertIn("TIER2", reply)
+        self.assertIn("LISA-", reply)
+        self.assertIn("https://t.me/", reply)
+
+        logs = storage.list_admin_audit_logs()
+        self.assertTrue(any(l["action"] == "MANUAL_TIER_GRANT" for l in logs))
+
+    def test_admin_emergency_kill_switch(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "super_admin_777"
+        storage = InMemoryStorage()
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        self.assertFalse(storage.is_system_paused())
+
+        update_pause = TelegramUpdate(30, 401, "chat_admin", admin_id, "boss", text="/sys_pause")
+        reply_pause = admin_bot.process_one_update(update_pause)
+        self.assertIn("EMERGENCY KILL-SWITCH ENGAGED", reply_pause)
+        self.assertTrue(storage.is_system_paused())
+
+        emitted = admin_bot.broadcast_diamond(self.sample_pick)
+        self.assertFalse(emitted)
+
+        update_resume = TelegramUpdate(31, 402, "chat_admin", admin_id, "boss", text="/sys_resume")
+        reply_resume = admin_bot.process_one_update(update_resume)
+        self.assertIn("EMERGENCY KILL-SWITCH DISENGAGED", reply_resume)
+        self.assertFalse(storage.is_system_paused())
+
+        emitted_after = admin_bot.broadcast_diamond(self.sample_pick)
+        self.assertTrue(emitted_after)
+
+    def test_admin_broadcast(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "super_admin_777"
+        storage = InMemoryStorage()
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        update = TelegramUpdate(40, 501, "chat_admin", admin_id, "boss", text="/broadcast NBA Opening Night slate is active!")
+        reply = admin_bot.process_one_update(update)
+
+        self.assertIn("GLOBAL BROADCAST DISPATCHED", reply)
+        self.assertTrue(any("NBA Opening Night" in m.get("text", "") for m in admin_bot.outbox))
+
+        logs = storage.list_admin_audit_logs()
+        self.assertTrue(any(l["action"] == "GLOBAL_BROADCAST" for l in logs))
+
+    def test_admin_callback_queries(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "super_admin_777"
+        storage = InMemoryStorage()
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        update_pause = TelegramUpdate(50, 601, "chat_admin", admin_id, "boss", callback_query_id="cb_pause", callback_data="admin:pause")
+        reply_pause = admin_bot.process_one_update(update_pause)
+        self.assertIn("EMERGENCY KILL-SWITCH ENGAGED", reply_pause)
+        self.assertTrue(storage.is_system_paused())
+
+        update_resume = TelegramUpdate(51, 602, "chat_admin", admin_id, "boss", callback_query_id="cb_resume", callback_data="admin:resume")
+        reply_resume = admin_bot.process_one_update(update_resume)
+        self.assertIn("EMERGENCY KILL-SWITCH DISENGAGED", reply_resume)
+        self.assertFalse(storage.is_system_paused())
+
+        update_logs = TelegramUpdate(52, 603, "chat_admin", admin_id, "boss", callback_query_id="cb_logs", callback_data="admin:logs")
+        reply_logs = admin_bot.process_one_update(update_logs)
+        self.assertIn("LISA SECURITY AUDIT TRAIL", reply_logs)
 
 
 class TestLiveIngest(unittest.TestCase):

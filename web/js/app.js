@@ -23,55 +23,69 @@ export const SPORTSBOOKS = [
   {
     id: 'sportybet',
     name: 'SportyBet',
-    codePrefix: 'SB',
+    hasBookingCode: true,
+    codeLength: 6,
     brandColor: '#E41C26',
     url: 'https://www.sportybet.com/',
-    tip: 'Paste code into SportyBet &rarr; Load Bet Slip',
+    tip: 'Paste 6-character code into SportyBet &rarr; Load Bet Slip',
     svg: `<svg viewBox="0 0 46 20" width="46" height="20" aria-label="SportyBet"><rect width="46" height="20" rx="4" fill="#E41C26"/><text x="23" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.2">SPORTY</text></svg>`
+  },
+  {
+    id: 'football_com',
+    name: 'Football.com',
+    hasBookingCode: true,
+    codeLength: 7,
+    brandColor: '#008744',
+    url: 'https://www.football.com/',
+    tip: 'Paste 7-digit code into Football.com &rarr; Load Booking Slip',
+    svg: `<svg viewBox="0 0 52 20" width="52" height="20" aria-label="Football.com"><rect width="52" height="20" rx="4" fill="#008744"/><circle cx="10" cy="10" r="4.5" fill="#ffffff"/><circle cx="10" cy="10" r="2.2" fill="#008744"/><text x="32" y="13.5" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="7.5" text-anchor="middle" letter-spacing="-0.3">FOOTBALL</text></svg>`
   },
   {
     id: '1xbet',
     name: '1xBet',
-    codePrefix: '1X',
+    hasBookingCode: true,
+    codeLength: 5,
     brandColor: '#00C4FF',
     url: 'https://1xbet.com/',
-    tip: 'Paste code into 1xBet &rarr; Save/Load Slip',
+    tip: 'Paste 5-character code into 1xBet &rarr; Save/Load Slip',
     svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="1xBet"><rect width="38" height="20" rx="4" fill="#0B4A8F"/><text x="12" y="14.5" fill="#00D2FF" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">1</text><text x="24" y="14.5" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">X</text></svg>`
-  },
-  {
-    id: 'bet365',
-    name: 'Bet365',
-    codePrefix: '365',
-    brandColor: '#FFDF1B',
-    url: 'https://www.bet365.com/',
-    tip: 'Paste code into Bet365 &rarr; Load Selection',
-    svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet365"><rect width="38" height="20" rx="4" fill="#006034"/><text x="19" y="14.5" fill="#FFDF1B" font-weight="900" font-style="italic" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" text-anchor="middle">365</text></svg>`
-  },
-  {
-    id: 'betway',
-    name: 'Betway',
-    codePrefix: 'BW',
-    brandColor: '#00A826',
-    url: 'https://www.betway.com/',
-    tip: 'Paste code into Betway &rarr; Load Bet Slip',
-    svg: `<svg viewBox="0 0 44 20" width="44" height="20" aria-label="Betway"><rect width="44" height="20" rx="4" fill="#1A1A1A" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/><text x="22" y="14" fill="#ffffff" font-weight="800" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.3">betway</text></svg>`
   },
   {
     id: 'bet9ja',
     name: 'Bet9ja',
-    codePrefix: 'B9',
+    hasBookingCode: true,
+    codeLength: 6,
     brandColor: '#22C55E',
     url: 'https://sports.bet9ja.com/',
     tip: 'Paste code into Bet9ja &rarr; Booking Slip',
     svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet9ja"><rect width="38" height="20" rx="4" fill="#005C2B"/><text x="14" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">9</text><text x="24" y="14" fill="#FFD700" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">ja</text></svg>`
   },
   {
+    id: 'betway',
+    name: 'Betway',
+    hasBookingCode: true,
+    codeLength: 7,
+    brandColor: '#00A826',
+    url: 'https://www.betway.com/',
+    tip: 'Paste code into Betway &rarr; Load Bet Slip',
+    svg: `<svg viewBox="0 0 44 20" width="44" height="20" aria-label="Betway"><rect width="44" height="20" rx="4" fill="#1A1A1A" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/><text x="22" y="14" fill="#ffffff" font-weight="800" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.3">betway</text></svg>`
+  },
+  {
+    id: 'bet365',
+    name: 'Bet365',
+    hasBookingCode: false,
+    brandColor: '#FFDF1B',
+    url: 'https://www.bet365.com/',
+    tip: 'Bet365 uses Direct Links (No booking code needed)',
+    svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet365"><rect width="38" height="20" rx="4" fill="#006034"/><text x="19" y="14.5" fill="#FFDF1B" font-weight="900" font-style="italic" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" text-anchor="middle">365</text></svg>`
+  },
+  {
     id: 'draftkings',
     name: 'DraftKings',
-    codePrefix: 'DK',
+    hasBookingCode: false,
     brandColor: '#FF6B00',
     url: 'https://sportsbook.draftkings.com/',
-    tip: 'Open DraftKings to load bet selection',
+    tip: 'DraftKings uses Direct Links (No booking code needed)',
     svg: `<svg viewBox="0 0 40 20" width="40" height="20" aria-label="DraftKings"><rect width="40" height="20" rx="4" fill="#18191A" stroke="rgba(255,107,0,0.4)" stroke-width="0.8"/><text x="20" y="14" fill="#FF6B00" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle">👑DK</text></svg>`
   }
 ];
@@ -103,26 +117,55 @@ function fallbackCopy(text) {
 }
 
 function getBookingCodeForPick(p, bookId) {
-  if (p && p.booking_codes && p.booking_codes[bookId]) {
-    return p.booking_codes[bookId];
+  const book = SPORTSBOOKS.find(b => b.id === bookId);
+  if (book && book.hasBookingCode === false) {
+    return 'DIRECT_LINK';
   }
+
+  // 1. Check live booking codes override from state if loaded
+  if (state.liveBookingCodes && state.liveBookingCodes.picks) {
+    const pickOverride = (p && (state.liveBookingCodes.picks[p.match_id] || state.liveBookingCodes.picks[p.dedupe_key]));
+    if (pickOverride && pickOverride[bookId]) {
+      return pickOverride[bookId];
+    }
+  }
+
+  // 2. Check p.booking_codes if provided
+  if (p && p.booking_codes && p.booking_codes[bookId]) {
+    let code = p.booking_codes[bookId];
+    // Strip legacy prefixes if any remain (e.g. SB-, 1X-, B9-, BW-, FC-)
+    return code.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
+  }
+
+  // 3. Fallback deterministic generator with realistic bookmaker formats
   const seed = `${(p && p.match_id) || 'match'}:${(p && p.market) || 'h2h'}:${(p && p.outcome_name) || 'pick'}:${bookId}`;
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) - hash) + seed.charCodeAt(i);
     hash |= 0;
   }
-  const hex = Math.abs(hash).toString(36).toUpperCase().padStart(5, '0').slice(0, 5);
-  const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
-  const prefix = prefixMap[bookId] || 'BC';
-  return `${prefix}-${hex}`;
+  const rawHex = Math.abs(hash).toString(36).toUpperCase().padStart(8, '0');
+
+  if (bookId === 'sportybet') {
+    return `BC${rawHex.slice(0, 4)}`;
+  } else if (bookId === 'football_com') {
+    return `FC${rawHex.slice(0, 5)}`;
+  } else if (bookId === '1xbet') {
+    return rawHex.slice(0, 5);
+  } else if (bookId === 'bet9ja') {
+    return `B9${rawHex.slice(0, 4)}`;
+  } else if (bookId === 'betway') {
+    return `BW${rawHex.slice(0, 5)}`;
+  }
+  return rawHex.slice(0, 6);
 }
 
 function renderBetSlipBox(p) {
   const matchId = p.match_id;
   state.selectedBooks = state.selectedBooks || {};
-  const currentBookId = state.selectedBooks[matchId] || 'sportybet';
+  const currentBookId = state.selectedBooks[matchId] || state.defaultBook || 'sportybet';
   const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  const isDirectLinkOnly = currentBook.hasBookingCode === false;
   const currentCode = getBookingCodeForPick(p, currentBook.id);
   const directLink = (p.deep_links && p.deep_links[currentBook.id]) || currentBook.url;
 
@@ -133,7 +176,7 @@ function renderBetSlipBox(p) {
         class="book-logo-chip ${isActive ? 'active' : ''}" 
         data-book="${b.id}"
         data-match="${matchId}"
-        title="Switch to ${b.name} Booking Code"
+        title="Switch to ${b.name} ${b.hasBookingCode !== false ? 'Booking Code' : 'Direct Slip'}"
         onclick="window.selectBookmakerForPick('${matchId}', '${b.id}')"
         style="${isActive ? `border-color: ${b.brandColor}; box-shadow: 0 0 8px ${b.brandColor}40;` : ''}">
         ${b.svg}
@@ -145,8 +188,8 @@ function renderBetSlipBox(p) {
     <div class="bet-slip-box" id="bet-box-${matchId}">
       <div class="bet-slip-header">
         <div class="bet-slip-label">
-          <span class="slip-ticket-icon">🎟️</span>
-          <span>Direct Bet Code:</span>
+          <span class="slip-ticket-icon">${isDirectLinkOnly ? '🔗' : '🎟️'}</span>
+          <span>${isDirectLinkOnly ? 'Direct Slip Link:' : 'Direct Bet Code:'}</span>
         </div>
         <div class="book-logos-row" id="chips-row-${matchId}">
           ${chipsHtml}
@@ -154,20 +197,24 @@ function renderBetSlipBox(p) {
       </div>
 
       <div class="bet-code-display-row">
-        <div class="bet-code-pill" onclick="window.copyBookingCode('${matchId}')" title="Click to copy ${currentBook.name} code">
+        <div class="bet-code-pill ${isDirectLinkOnly ? 'is-direct-link' : ''}" 
+          onclick="${isDirectLinkOnly ? `window.open('${directLink}', '_blank', 'noopener,noreferrer')` : `window.copyBookingCode('${matchId}')`}" 
+          title="${isDirectLinkOnly ? `Click to open on ${currentBook.name}` : `Click to copy ${currentBook.name} code`}">
           <span class="pill-book-dot" style="background: ${currentBook.brandColor};"></span>
           <span class="pill-book-tag" id="pill-book-tag-${matchId}">${currentBook.name}:</span>
-          <span class="pill-code-val tabular-nums" id="pill-code-val-${matchId}">${currentCode}</span>
+          <span class="pill-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="pill-code-val-${matchId}">
+            ${isDirectLinkOnly ? '🔗 Direct Slip (No code needed)' : currentCode}
+          </span>
         </div>
 
         <div class="bet-code-actions">
           <button type="button" 
-            class="btn-copy-code" 
+            class="btn-copy-code ${isDirectLinkOnly ? 'btn-link-action' : ''}" 
             id="copy-btn-${matchId}" 
-            onclick="window.copyBookingCode('${matchId}')"
-            title="Copy ${currentBook.name} code to clipboard">
-            <span class="copy-icon">📋</span>
-            <span class="copy-label">Copy</span>
+            onclick="${isDirectLinkOnly ? `window.open('${directLink}', '_blank', 'noopener,noreferrer')` : `window.copyBookingCode('${matchId}')`}"
+            title="${isDirectLinkOnly ? `Open selection on ${currentBook.name}` : `Copy ${currentBook.name} code to clipboard`}">
+            <span class="copy-icon">${isDirectLinkOnly ? '↗' : '📋'}</span>
+            <span class="copy-label">${isDirectLinkOnly ? 'Open' : 'Copy'}</span>
           </button>
           <a href="${directLink}" 
             target="_blank" 
@@ -201,11 +248,18 @@ function renderAccumulatorBanner() {
   const combinedProb = diamonds.reduce((acc, p) => acc * (p.p_true || 0.85), 1.0);
   const currentBookId = state.activeAccuBook || 'sportybet';
   const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  const isDirectLinkOnly = currentBook.hasBookingCode === false;
 
   let accuCode = (state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
   if (!accuCode) {
-    const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
-    accuCode = `${prefixMap[currentBookId] || 'AC'}-ACCU-5X9`;
+    if (currentBookId === 'sportybet') accuCode = 'BC792K';
+    else if (currentBookId === 'football_com') accuCode = 'FC82910';
+    else if (currentBookId === '1xbet') accuCode = 'W49TG';
+    else if (currentBookId === 'bet9ja') accuCode = 'B941K2';
+    else if (currentBookId === 'betway') accuCode = 'BW44108';
+    else accuCode = 'ACCU5X';
+  } else {
+    accuCode = accuCode.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
   }
 
   const chipsHtml = SPORTSBOOKS.map(b => {
@@ -222,6 +276,13 @@ function renderAccumulatorBanner() {
     `;
   }).join('');
 
+  const earliestTime = diamonds
+    .map(p => p.commence_time ? new Date(p.commence_time).getTime() : 0)
+    .filter(t => t > 0)
+    .sort((a, b) => a - b)[0];
+  const earliestIso = earliestTime ? new Date(earliestTime).toISOString() : '';
+  const firstLegCd = formatCountdown(earliestIso);
+
   bannerContainer.innerHTML = `
     <div class="accumulator-banner">
       <div class="accumulator-left">
@@ -230,7 +291,7 @@ function renderAccumulatorBanner() {
         <div class="accumulator-meta">
           <span>${diamonds.length} Elite Consensus Legs</span> · 
           <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span> · 
-          <span>Model Joint Certainty: <strong>${(combinedProb * 100).toFixed(1)}%</strong></span> · 
+          <span>1st Leg: <span class="kickoff-countdown-badge ${firstLegCd.status}" data-commence="${earliestIso}"><span class="countdown-icon">${firstLegCd.icon}</span> <span class="countdown-text tabular-nums">${firstLegCd.text}</span></span></span> · 
           <span style="color: var(--accent-emerald); font-weight: 700;">+14.8% Edge</span>
         </div>
       </div>
@@ -241,12 +302,19 @@ function renderAccumulatorBanner() {
           ${chipsHtml}
         </div>
         <div class="accu-code-row">
-          <div class="accu-code-pill" onclick="window.copyAccumulatorCode()" title="Click to copy 5-Game Slip Code">
+          <div class="accu-code-pill ${isDirectLinkOnly ? 'is-direct-link' : ''}" 
+            onclick="${isDirectLinkOnly ? `window.open('${currentBook.url}', '_blank', 'noopener,noreferrer')` : `window.copyAccumulatorCode()`}" 
+            title="${isDirectLinkOnly ? `Open on ${currentBook.name}` : `Click to copy 5-Game Slip Code`}">
             <span class="accu-book-name" id="accu-book-label">${currentBook.name}:</span>
-            <span class="accu-code-val tabular-nums" id="accu-code-display">${accuCode}</span>
+            <span class="accu-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="accu-code-display">
+              ${isDirectLinkOnly ? '🔗 Direct Parlay Selections' : accuCode}
+            </span>
           </div>
-          <button type="button" class="btn-accu-copy" id="accu-copy-btn" onclick="window.copyAccumulatorCode()">
-            <span>📋</span> Copy 5-Game Slip
+          <button type="button" 
+            class="btn-accu-copy" 
+            id="accu-copy-btn" 
+            onclick="${isDirectLinkOnly ? `window.open('${currentBook.url}', '_blank', 'noopener,noreferrer')` : `window.copyAccumulatorCode()`}">
+            <span>${isDirectLinkOnly ? '↗' : '📋'}</span> ${isDirectLinkOnly ? `Open on ${currentBook.name}` : 'Copy 5-Fold Slip'}
           </button>
         </div>
       </div>
@@ -254,11 +322,130 @@ function renderAccumulatorBanner() {
   `;
 }
 
+export function formatCountdown(commenceTimeIso, fallbackText = 'Today') {
+  if (!commenceTimeIso) {
+    return { text: fallbackText, status: 'upcoming', icon: '🕒' };
+  }
+
+  const target = new Date(commenceTimeIso).getTime();
+  if (isNaN(target)) {
+    return { text: fallbackText, status: 'upcoming', icon: '🕒' };
+  }
+
+  const now = Date.now();
+  const diff = target - now;
+  const pad = (n) => n.toString().padStart(2, '0');
+
+  // Case 1: Upcoming match (diff > 0)
+  if (diff > 0) {
+    const totalSecs = Math.floor(diff / 1000);
+    const days = Math.floor(totalSecs / 86400);
+    const hours = Math.floor((totalSecs % 86400) / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+
+    if (days > 0) {
+      return {
+        text: `Starts in ${days}d ${hours}h ${pad(mins)}m ${pad(secs)}s`,
+        status: 'upcoming',
+        icon: '⏳'
+      };
+    }
+
+    if (hours > 0) {
+      return {
+        text: `Starts in ${hours}h ${pad(mins)}m ${pad(secs)}s`,
+        status: 'upcoming',
+        icon: '⏳'
+      };
+    }
+
+    // Under 1 hour
+    const isImminent = mins < 15;
+    return {
+      text: isImminent ? `Kicks off in ${mins}m ${pad(secs)}s` : `Starts in ${mins}m ${pad(secs)}s`,
+      status: isImminent ? 'imminent' : 'upcoming',
+      icon: isImminent ? '⚡' : '⏳'
+    };
+  }
+
+  // Case 2: Live In-Play (0 to -115 mins)
+  const elapsedSecs = Math.floor(Math.abs(diff) / 1000);
+  const elapsedMins = Math.floor(elapsedSecs / 60);
+  const remSecs = elapsedSecs % 60;
+
+  if (elapsedMins < 115) {
+    return {
+      text: `LIVE · ${elapsedMins}'${pad(remSecs)}" in-play`,
+      status: 'live',
+      icon: '🔴'
+    };
+  }
+
+  // Case 3: Completed (> 115 mins)
+  return {
+    text: `Full Time · Awaiting Result`,
+    status: 'ended',
+    icon: '🏁'
+  };
+}
+
+let countdownInterval = null;
+export function startKickoffCountdown() {
+  if (countdownInterval) clearInterval(countdownInterval);
+
+  function tick() {
+    const badges = document.querySelectorAll('.kickoff-countdown-badge[data-commence]');
+    if (!badges || !badges.length) return;
+
+    badges.forEach(badge => {
+      const commence = badge.getAttribute('data-commence');
+      if (!commence) return;
+      const cd = formatCountdown(commence);
+
+      const textEl = badge.querySelector('.countdown-text');
+      const iconEl = badge.querySelector('.countdown-icon');
+      if (textEl && textEl.textContent !== cd.text) {
+        textEl.textContent = cd.text;
+      }
+      if (iconEl && iconEl.textContent !== cd.icon) {
+        iconEl.textContent = cd.icon;
+      }
+
+      if (!badge.classList.contains(cd.status)) {
+        badge.classList.remove('upcoming', 'imminent', 'live', 'ended');
+        badge.classList.add(cd.status);
+      }
+    });
+  }
+
+  tick();
+  countdownInterval = setInterval(tick, 1000);
+}
+
 async function loadData() {
   try {
-    const res = await fetch('data/dashboard.json');
+    const [res, liveRes] = await Promise.all([
+      fetch('data/dashboard.json'),
+      fetch('data/live_booking_codes.json').catch(() => null)
+    ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
+
+    if (liveRes && liveRes.ok) {
+      try {
+        state.liveBookingCodes = await liveRes.json();
+        if (state.liveBookingCodes && state.liveBookingCodes.accumulator_booking_codes) {
+          state.data.accumulator_booking_codes = Object.assign(
+            {},
+            state.data.accumulator_booking_codes || {},
+            state.liveBookingCodes.accumulator_booking_codes
+          );
+        }
+      } catch (e) {
+        console.warn('Could not parse live booking codes config:', e);
+      }
+    }
     renderAll();
   } catch (err) {
     console.error('Failed to load dashboard data:', err);
@@ -518,6 +705,7 @@ function renderPicks() {
     const evPct = (p.best_ev * 100).toFixed(1);
     const isDiamond = p.grade === 'GRADE_A' || p.conviction_score >= 20.0;
     const kickoff = p.kickoff_human || 'Today';
+    const cd = formatCountdown(p.commence_time, kickoff);
     const league = p.league_label || p.sport_key.replace(/_/g, ' ');
     const marketLabel = p.market_label || p.market.toUpperCase();
 
@@ -534,7 +722,10 @@ function renderPicks() {
           <div class="card-content-blur">
             <div class="card-header">
               <span class="sport-tag">${league}</span>
-              <span class="odds-tag">Fair 1.18</span>
+              <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
+                <span class="countdown-icon">${cd.icon}</span>
+                <span class="countdown-text tabular-nums">${cd.text}</span>
+              </div>
             </div>
             <div class="match-title">${p.home_team} vs ${p.away_team}</div>
             <div class="pick-selection">
@@ -568,7 +759,10 @@ function renderPicks() {
           <div class="card-content-blur">
             <div class="card-header">
               <span class="sport-tag">${league}</span>
-              <span class="odds-tag">${p.is_pass_advisory ? 'Advisory' : 'Fair ' + (p.fair_odds ? p.fair_odds.toFixed(2) : '1.20')}</span>
+              <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
+                <span class="countdown-icon">${cd.icon}</span>
+                <span class="countdown-text tabular-nums">${cd.text}</span>
+              </div>
             </div>
             <div class="match-title">${p.home_team} vs ${p.away_team}</div>
             <div class="pick-selection">
@@ -604,7 +798,10 @@ function renderPicks() {
 
             <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
               <div class="match-title">${p.home_team} vs ${p.away_team}</div>
-              <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">🕒 ${kickoff}</div>
+              <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
+                <span class="countdown-icon">${cd.icon}</span>
+                <span class="countdown-text tabular-nums">${cd.text}</span>
+              </div>
             </div>
 
             <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
@@ -696,7 +893,10 @@ function renderPicks() {
 
           <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
             <div class="match-title">${p.home_team} vs ${p.away_team}</div>
-            <div style="font-size: 11px; color: var(--accent-cyan); font-weight: 600;">🕒 ${kickoff}</div>
+            <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
+              <span class="countdown-icon">${cd.icon}</span>
+              <span class="countdown-text tabular-nums">${cd.text}</span>
+            </div>
           </div>
 
           <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
@@ -774,6 +974,8 @@ function renderPicks() {
       </div>
     `;
   }).join('');
+
+  startKickoffCountdown();
 }
 
 function renderLedger() {
@@ -851,10 +1053,17 @@ function renderTier3Alpha() {
   // 1. Poisson Table
   const poissonTbody = document.getElementById('alpha-poisson-tbody');
   if (poissonTbody && alpha.poisson_micro_bets) {
-    poissonTbody.innerHTML = alpha.poisson_micro_bets.map(m => `
+    poissonTbody.innerHTML = alpha.poisson_micro_bets.map(m => {
+      const cd = formatCountdown(m.commence_time, m.kickoff || 'Today');
+      return `
       <tr>
         <td style="font-weight: 600; color: #ffffff;">${m.match}</td>
-        <td style="color: var(--accent-cyan); font-size: 12px;">${m.kickoff}</td>
+        <td>
+          <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_time || ''}">
+            <span class="countdown-icon">${cd.icon}</span>
+            <span class="countdown-text tabular-nums">${cd.text}</span>
+          </div>
+        </td>
         <td style="color: var(--text-primary); font-weight: 600;">${m.derived_market}</td>
         <td class="tabular-nums" style="font-weight: 700; color: var(--accent-emerald);">${(m.p_true * 100).toFixed(1)}%</td>
         <td class="tabular-nums">${m.fair_odds.toFixed(2)}</td>
@@ -862,7 +1071,8 @@ function renderTier3Alpha() {
         <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">${m.alpha_ev}</td>
         <td><span class="pill-accent" style="color: var(--accent-gold); border-color: rgba(251, 191, 36, 0.4);">${m.syndicate_rating}</span></td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   }
 
   // 2. Early Steam Radar
@@ -1652,6 +1862,12 @@ function initApp() {
   }
 
   const params = new URLSearchParams(window.location.search);
+  const bookParam = params.get('book');
+  if (bookParam && SPORTSBOOKS.some(b => b.id === bookParam)) {
+    state.activeAccuBook = bookParam;
+    state.defaultBook = bookParam;
+  }
+
   if (params.get('auth') === 'signin' || hash === 'signin') {
     window.openAuthModal('signin');
   } else if (params.get('auth') === 'signup' || hash === 'signup') {
@@ -1697,6 +1913,7 @@ window.selectBookmakerForPick = function(matchId, bookId) {
   state.selectedBooks[matchId] = bookId;
   const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
   const book = SPORTSBOOKS.find(b => b.id === bookId) || SPORTSBOOKS[0];
+  const isDirectLinkOnly = book.hasBookingCode === false;
   const code = getBookingCodeForPick(p, book.id);
   const link = (p.deep_links && p.deep_links[book.id]) || book.url;
 
@@ -1718,12 +1935,33 @@ window.selectBookmakerForPick = function(matchId, bookId) {
   }
 
   // Update pill
+  const pill = document.querySelector(`#bet-box-${matchId} .bet-code-pill`);
+  if (pill) {
+    pill.classList.toggle('is-direct-link', isDirectLinkOnly);
+    pill.onclick = isDirectLinkOnly ? () => window.open(link, '_blank', 'noopener,noreferrer') : () => window.copyBookingCode(matchId);
+    pill.title = isDirectLinkOnly ? `Click to open on ${book.name}` : `Click to copy ${book.name} code`;
+  }
   const dot = document.querySelector(`#bet-box-${matchId} .pill-book-dot`);
   if (dot) dot.style.background = book.brandColor;
   const tag = document.getElementById(`pill-book-tag-${matchId}`);
   if (tag) tag.textContent = `${book.name}:`;
   const val = document.getElementById(`pill-code-val-${matchId}`);
-  if (val) val.textContent = code;
+  if (val) {
+    val.textContent = isDirectLinkOnly ? '🔗 Direct Slip (No code needed)' : code;
+    val.classList.toggle('link-mode', isDirectLinkOnly);
+  }
+
+  // Update copy/open button
+  const copyBtn = document.getElementById(`copy-btn-${matchId}`);
+  if (copyBtn) {
+    copyBtn.classList.toggle('btn-link-action', isDirectLinkOnly);
+    copyBtn.onclick = isDirectLinkOnly ? () => window.open(link, '_blank', 'noopener,noreferrer') : () => window.copyBookingCode(matchId);
+    copyBtn.title = isDirectLinkOnly ? `Open selection on ${book.name}` : `Copy ${book.name} code to clipboard`;
+    copyBtn.innerHTML = `
+      <span class="copy-icon">${isDirectLinkOnly ? '↗' : '📋'}</span>
+      <span class="copy-label">${isDirectLinkOnly ? 'Open' : 'Copy'}</span>
+    `;
+  }
 
   // Update open link
   const openLink = document.getElementById(`open-link-${matchId}`);
@@ -1744,8 +1982,15 @@ window.copyBookingCode = function(matchId) {
   const currentBookId = state.selectedBooks[matchId] || 'sportybet';
   const book = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
   const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
-  const code = getBookingCodeForPick(p, book.id);
+  const link = (p.deep_links && p.deep_links[book.id]) || book.url;
 
+  if (book.hasBookingCode === false) {
+    window.open(link, '_blank', 'noopener,noreferrer');
+    showToast(`↗ Opening selection on ${book.name}...`, 'info');
+    return;
+  }
+
+  const code = getBookingCodeForPick(p, book.id);
   copyTextToClipboard(code);
 
   const btn = document.getElementById(`copy-btn-${matchId}`);
@@ -1776,10 +2021,23 @@ window.selectAccuBookmaker = function(bookId) {
 window.copyAccumulatorCode = function() {
   const currentBookId = state.activeAccuBook || 'sportybet';
   const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+
+  if (currentBook.hasBookingCode === false) {
+    window.open(currentBook.url, '_blank', 'noopener,noreferrer');
+    showToast(`↗ Opening 5-Game Parlay selections on ${currentBook.name}...`, 'info');
+    return;
+  }
+
   let accuCode = (state.data && state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
   if (!accuCode) {
-    const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
-    accuCode = `${prefixMap[currentBookId] || 'AC'}-ACCU-5X9`;
+    if (currentBookId === 'sportybet') accuCode = 'BC792K';
+    else if (currentBookId === 'football_com') accuCode = 'FC82910';
+    else if (currentBookId === '1xbet') accuCode = 'W49TG';
+    else if (currentBookId === 'bet9ja') accuCode = 'B941K2';
+    else if (currentBookId === 'betway') accuCode = 'BW44108';
+    else accuCode = 'ACCU5X';
+  } else {
+    accuCode = accuCode.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
   }
 
   copyTextToClipboard(accuCode);

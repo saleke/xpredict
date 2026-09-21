@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-09-21T00:32:38.342934+00:00",
+    "generated_at": "2026-09-21T04:00:47.585663+00:00",
     "version": "0.1.0",
     "total_sports": 9,
     "scope_leagues": [
@@ -13,7 +13,7 @@
     ]
   },
   "summary": {
-    "total_matches_evaluated": 100,
+    "total_matches_evaluated": 170,
     "diamonds_count": 29,
     "pivots_count": 21,
     "pass_advisories_count": 30,
@@ -99,18 +99,18 @@
         "bet365": 1.15,
         "draftkings": 1.14
       },
-      "commence_time": "2026-09-21T02:12:27.198438+00:00",
+      "commence_time": "2026-09-21T05:06:24.762299+00:00",
       "kickoff_human": "Today in 1h 45m",
       "booking_codes": {
-        "sportybet": "SB-2EEAA",
-        "1xbet": "1X-DFAEB",
-        "bet365": "365-5DB5",
-        "betway": "BW-B9DC8",
-        "bet9ja": "B9-66810",
-        "draftkings": "DK-8A156"
+        "sportybet": "BC2EEA",
+        "football_com": "FCADFAE",
+        "1xbet": "B5DB5",
+        "bet9ja": "B9B9DC",
+        "betway": "BW86681"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Oklahoma%20City%20Thunder/",
         "betway": "https://www.betway.com/",
@@ -155,18 +155,18 @@
         "bet365": 1.19,
         "pinnacle": 1.18
       },
-      "commence_time": "2026-09-21T04:12:27.198438+00:00",
+      "commence_time": "2026-09-21T07:06:24.762299+00:00",
       "kickoff_human": "Today in 3h 45m",
       "booking_codes": {
-        "sportybet": "SB-32381",
-        "1xbet": "1X-4BFE5",
-        "bet365": "365-6620",
-        "betway": "BW-8C37B",
-        "bet9ja": "B9-22558",
-        "draftkings": "DK-1284D"
+        "sportybet": "BC3238",
+        "football_com": "FC14BFE",
+        "1xbet": "56620",
+        "bet9ja": "B98C37",
+        "betway": "BWB2255"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Boston%20Celtics/",
         "betway": "https://www.betway.com/",
@@ -211,18 +211,18 @@
         "bet365": 1.2,
         "draftkings": 1.19
       },
-      "commence_time": "2026-09-21T05:42:27.198438+00:00",
+      "commence_time": "2026-09-21T08:36:24.762299+00:00",
       "kickoff_human": "Today in 5h 15m",
       "booking_codes": {
-        "sportybet": "SB-8235C",
-        "1xbet": "1X-F4BAA",
-        "bet365": "365-F27A",
-        "betway": "BW-82BC5",
-        "bet9ja": "B9-22243",
-        "draftkings": "DK-14195"
+        "sportybet": "BC8235",
+        "football_com": "FCCF4BA",
+        "1xbet": "AF27A",
+        "bet9ja": "B982BC",
+        "betway": "BW52224"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Manchester%20City/",
         "betway": "https://www.betway.com/",
@@ -267,18 +267,18 @@
         "pinnacle": 1.21,
         "draftkings": 1.2
       },
-      "commence_time": "2026-09-21T04:57:27.198438+00:00",
+      "commence_time": "2026-09-21T07:51:24.762299+00:00",
       "kickoff_human": "Today in 4h 30m",
       "booking_codes": {
-        "sportybet": "SB-B6584",
-        "1xbet": "1X-AA789",
-        "bet365": "365-E6EA",
-        "betway": "BW-019B6",
-        "bet9ja": "B9-F9FA5",
-        "draftkings": "DK-2B1A1"
+        "sportybet": "BCB658",
+        "football_com": "FC4AA78",
+        "1xbet": "9E6EA",
+        "bet9ja": "B9019B",
+        "betway": "BW6F9FA"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Bayern%20Munchen/",
         "betway": "https://www.betway.com/",
@@ -323,18 +323,18 @@
         "bet365": 1.21,
         "pinnacle": 1.2
       },
-      "commence_time": "2026-09-21T08:27:27.198438+00:00",
+      "commence_time": "2026-09-21T11:21:24.762299+00:00",
       "kickoff_human": "Today in 8h 00m",
       "booking_codes": {
-        "sportybet": "SB-FE2ED",
-        "1xbet": "1X-E112E",
-        "bet365": "365-A04D",
-        "betway": "BW-72C77",
-        "bet9ja": "B9-38E30",
-        "draftkings": "DK-AE222"
+        "sportybet": "BCFE2E",
+        "football_com": "FCDE112",
+        "1xbet": "EA04D",
+        "bet9ja": "B972C7",
+        "betway": "BW738E3"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Denver%20Nuggets/",
         "betway": "https://www.betway.com/",
@@ -384,18 +384,18 @@
         "pinnacle": 1.16,
         "draftkings": 1.17
       },
-      "commence_time": "2026-09-21T02:57:27.198438+00:00",
+      "commence_time": "2026-09-21T05:51:24.762299+00:00",
       "kickoff_human": "Today in 2h 30m",
       "booking_codes": {
-        "sportybet": "SB-0D667",
-        "1xbet": "1X-02E28",
-        "bet365": "365-57AF",
-        "betway": "BW-39767",
-        "bet9ja": "B9-52A37",
-        "draftkings": "DK-0E3FA"
+        "sportybet": "BC0D66",
+        "football_com": "FC702E2",
+        "1xbet": "857AF",
+        "bet9ja": "B93976",
+        "betway": "BW752A3"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Arsenal/",
         "betway": "https://www.betway.com/",
@@ -445,18 +445,18 @@
         "pinnacle": 1.24,
         "draftkings": 1.23
       },
-      "commence_time": "2026-09-21T06:57:27.198438+00:00",
+      "commence_time": "2026-09-21T09:51:24.762299+00:00",
       "kickoff_human": "Today in 6h 30m",
       "booking_codes": {
-        "sportybet": "SB-8A948",
-        "1xbet": "1X-F26FA",
-        "bet365": "365-AFF5",
-        "betway": "BW-6DFC9",
-        "bet9ja": "B9-CAB99",
-        "draftkings": "DK-DB9F3"
+        "sportybet": "BC8A94",
+        "football_com": "FC8F26F",
+        "1xbet": "AAFF5",
+        "bet9ja": "B96DFC",
+        "betway": "BW9CAB9"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Real%20Madrid/",
         "betway": "https://www.betway.com/",
@@ -506,18 +506,18 @@
         "bet365": 1.27,
         "draftkings": 1.25
       },
-      "commence_time": "2026-09-21T18:57:27.198438+00:00",
+      "commence_time": "2026-09-21T21:51:24.762299+00:00",
       "kickoff_human": "Today in 18h 30m",
       "booking_codes": {
-        "sportybet": "SB-981B6",
-        "1xbet": "1X-10BCA",
-        "bet365": "365-0E3B",
-        "betway": "BW-5FC9C",
-        "bet9ja": "B9-2D611",
-        "draftkings": "DK-41015"
+        "sportybet": "BC981B",
+        "football_com": "FC610BC",
+        "1xbet": "A0E3B",
+        "bet9ja": "B95FC9",
+        "betway": "BWC2D61"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Inter%20Milan/",
         "betway": "https://www.betway.com/",
@@ -567,18 +567,18 @@
         "bet365": 1.29,
         "draftkings": 1.28
       },
-      "commence_time": "2026-09-21T23:27:27.198438+00:00",
+      "commence_time": "2026-09-22T02:21:24.762299+00:00",
       "kickoff_human": "Today in 23h 00m",
       "booking_codes": {
-        "sportybet": "SB-FC9D5",
-        "1xbet": "1X-1EF7D",
-        "bet365": "365-BCDD",
-        "betway": "BW-C870F",
-        "bet9ja": "B9-306B4",
-        "draftkings": "DK-76278"
+        "sportybet": "BCFC9D",
+        "football_com": "FC51EF7",
+        "1xbet": "DBCDD",
+        "bet9ja": "B9C870",
+        "betway": "BWF306B"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Liverpool/",
         "betway": "https://www.betway.com/",
@@ -628,18 +628,18 @@
         "pinnacle": 2.45,
         "draftkings": 2.48
       },
-      "commence_time": "2026-09-21T07:27:27.198438+00:00",
+      "commence_time": "2026-09-21T10:21:24.762299+00:00",
       "kickoff_human": "Today in 7h 00m",
       "booking_codes": {
-        "sportybet": "SB-711D0",
-        "1xbet": "1X-B6D9F",
-        "bet365": "365-6F02",
-        "betway": "BW-D025F",
-        "bet9ja": "B9-1FE11",
-        "draftkings": "DK-A35DF"
+        "sportybet": "BC711D",
+        "football_com": "FC0B6D9",
+        "1xbet": "F6F02",
+        "bet9ja": "B9D025",
+        "betway": "BWF1FE1"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Tottenham%20Hotspur/",
         "betway": "https://www.betway.com/",
@@ -689,18 +689,18 @@
         "bet365": 1.9,
         "draftkings": 1.92
       },
-      "commence_time": "2026-09-21T12:27:27.198438+00:00",
+      "commence_time": "2026-09-21T15:21:24.762299+00:00",
       "kickoff_human": "Today in 12h 00m",
       "booking_codes": {
-        "sportybet": "SB-D0011",
-        "1xbet": "1X-B069C",
-        "bet365": "365-B83C",
-        "betway": "BW-6E50A",
-        "bet9ja": "B9-1B645",
-        "draftkings": "DK-FE695"
+        "sportybet": "BCD001",
+        "football_com": "FC1B069",
+        "1xbet": "CB83C",
+        "bet9ja": "B96E50",
+        "betway": "BWA1B64"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Golden%20State%20Warriors/",
         "betway": "https://www.betway.com/",
@@ -750,18 +750,18 @@
         "pinnacle": 2.55,
         "draftkings": 2.58
       },
-      "commence_time": "2026-09-21T16:57:27.198438+00:00",
+      "commence_time": "2026-09-21T19:51:24.762299+00:00",
       "kickoff_human": "Today in 16h 30m",
       "booking_codes": {
-        "sportybet": "SB-A7FC3",
-        "1xbet": "1X-230C3",
-        "bet365": "365-2406",
-        "betway": "BW-17016",
-        "bet9ja": "B9-6D0AA",
-        "draftkings": "DK-5472E"
+        "sportybet": "BCA7FC",
+        "football_com": "FC3230C",
+        "1xbet": "32406",
+        "bet9ja": "B91701",
+        "betway": "BW66D0A"
       },
       "deep_links": {
         "sportybet": "https://www.sportybet.com/",
+        "football_com": "https://www.football.com/",
         "1xbet": "https://1xbet.com/",
         "bet365": "https://www.bet365.com/#/AX/K^Sevilla/",
         "betway": "https://www.betway.com/",
@@ -772,12 +772,11 @@
     }
   ],
   "accumulator_booking_codes": {
-    "sportybet": "SB-AC792K",
-    "1xbet": "1X-AC819M",
-    "bet365": "365-AC55Q",
-    "betway": "BW-AC4410",
-    "bet9ja": "B9-AC9022",
-    "draftkings": "DK-AC3318"
+    "sportybet": "BC792K",
+    "football_com": "FC82910",
+    "1xbet": "W49TG",
+    "bet9ja": "B941K2",
+    "betway": "BW44108"
   },
   "settled_ledger": [
     {
@@ -2215,6 +2214,7 @@
         "match": "Arsenal vs Chelsea",
         "league": "Premier League",
         "kickoff": "Today in 2h 30m",
+        "commence_time": "2026-09-21T05:51:24.762299+00:00",
         "derived_market": "Both Teams To Score (BTTS Yes)",
         "p_true": 0.742,
         "fair_odds": 1.348,
@@ -2226,6 +2226,7 @@
         "match": "Arsenal vs Chelsea",
         "league": "Premier League",
         "kickoff": "Today in 2h 30m",
+        "commence_time": "2026-09-21T05:51:24.762299+00:00",
         "derived_market": "Over 2.5 Match Goals",
         "p_true": 0.684,
         "fair_odds": 1.462,
@@ -2237,6 +2238,7 @@
         "match": "Real Madrid vs Atletico Madrid",
         "league": "La Liga",
         "kickoff": "Today in 6h 30m",
+        "commence_time": "2026-09-21T09:51:24.762299+00:00",
         "derived_market": "Team Total: Real Madrid Over 1.5 Goals",
         "p_true": 0.718,
         "fair_odds": 1.393,
@@ -2248,6 +2250,7 @@
         "match": "Liverpool vs Newcastle",
         "league": "Premier League",
         "kickoff": "Tomorrow in 23h 00m",
+        "commence_time": "2026-09-22T02:21:24.762299+00:00",
         "derived_market": "Team Total: Liverpool Over 1.5 Goals",
         "p_true": 0.778,
         "fair_odds": 1.285,

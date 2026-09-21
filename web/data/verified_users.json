@@ -3,7 +3,7 @@
     "verified": true,
     "telegram_user_id": "tg_user_1",
     "username": "trader_joe",
-    "verified_at": 1789950758.3070922
+    "verified_at": 1789963247.4686575
   },
   "test_valid_user": {
     "verified": true,
@@ -15,7 +15,7 @@
     "verified": true,
     "telegram_user_id": "",
     "username": "",
-    "verified_at": 1789950757.289848
+    "verified_at": 1789963226.7087016
   },
   "usr_avdtedo": {
     "verified": true,
@@ -28,5 +28,11 @@
     "telegram_user_id": "6423327380",
     "username": "THEVICTORHOMES",
     "verified_at": 1789946781.6990585
+  },
+  "partner@influencer.com": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789963247.3314273
   }
 }

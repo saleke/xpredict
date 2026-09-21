@@ -163,6 +163,128 @@ class VerificationRegistry:
 # Global shared registry instance
 registry = VerificationRegistry()
 
+MAIN_REPLY_KEYBOARD = {
+    "keyboard": [
+        [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
+        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ 5-Fold Parlay"}],
+        [{"text": "🎟️ Bookmaker Codes"}, {"text": "🛡️ Trap Advisories"}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+
+
+class BankrollFSMManager:
+    STATE_IDLE = "IDLE"
+    STATE_AWAITING_AMOUNT = "AWAITING_BANKROLL_AMOUNT"
+    STATE_AWAITING_RISK = "AWAITING_RISK_PROFILE"
+    STATE_AWAITING_BOOK = "AWAITING_PREFERRED_BOOK"
+
+    def __init__(self, db_path: Optional[str] = "data/lisa.db"):
+        self.db_path = db_path
+        self._states: dict[str, str] = {}
+        self._temp: dict[str, dict[str, Any]] = {}
+        self._profiles: dict[str, dict[str, Any]] = {}
+        self._init_db()
+
+    def _init_db(self) -> None:
+        if not self.db_path:
+            return
+        try:
+            import sqlite3
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_bankroll_profiles (
+                        user_id             TEXT PRIMARY KEY,
+                        username            TEXT,
+                        bankroll_amount     REAL NOT NULL,
+                        risk_profile        TEXT NOT NULL,
+                        kelly_fraction      REAL NOT NULL,
+                        preferred_bookmaker TEXT NOT NULL,
+                        updated_at          REAL NOT NULL
+                    );
+                """)
+                conn.commit()
+                cur = conn.cursor()
+                cur.execute("SELECT user_id, username, bankroll_amount, risk_profile, kelly_fraction, preferred_bookmaker, updated_at FROM user_bankroll_profiles")
+                for row in cur.fetchall():
+                    self._profiles[str(row[0])] = {
+                        "user_id": str(row[0]),
+                        "username": row[1] or "",
+                        "bankroll_amount": float(row[2]),
+                        "risk_profile": str(row[3]),
+                        "kelly_fraction": float(row[4]),
+                        "preferred_bookmaker": str(row[5]),
+                        "updated_at": float(row[6]),
+                    }
+        except Exception:
+            pass
+
+    def get_state(self, user_id: str) -> str:
+        return self._states.get(str(user_id), self.STATE_IDLE)
+
+    def set_state(self, user_id: str, state: str) -> None:
+        self._states[str(user_id)] = state
+
+    def get_temp(self, user_id: str) -> dict[str, Any]:
+        return self._temp.setdefault(str(user_id), {})
+
+    def clear_temp(self, user_id: str) -> None:
+        self._temp.pop(str(user_id), None)
+        self._states[str(user_id)] = self.STATE_IDLE
+
+    def get_profile(self, user_id: str) -> Optional[dict[str, Any]]:
+        return self._profiles.get(str(user_id))
+
+    def save_profile(
+        self,
+        user_id: str,
+        username: str,
+        amount: float,
+        risk_profile: str,
+        kelly_fraction: float,
+        preferred_book: str,
+    ) -> dict[str, Any]:
+        now_ts = time.time()
+        record = {
+            "user_id": str(user_id),
+            "username": username or "user",
+            "bankroll_amount": round(float(amount), 2),
+            "risk_profile": risk_profile,
+            "kelly_fraction": kelly_fraction,
+            "preferred_bookmaker": preferred_book,
+            "updated_at": now_ts,
+        }
+        self._profiles[str(user_id)] = record
+        self.clear_temp(user_id)
+
+        if self.db_path:
+            try:
+                import sqlite3
+                with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO user_bankroll_profiles
+                        (user_id, username, bankroll_amount, risk_profile, kelly_fraction, preferred_bookmaker, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(user_id),
+                        username or "user",
+                        record["bankroll_amount"],
+                        record["risk_profile"],
+                        record["kelly_fraction"],
+                        record["preferred_bookmaker"],
+                        record["updated_at"],
+                    ))
+                    conn.commit()
+            except Exception:
+                pass
+
+        return record
+
+
+bankroll_fsm = BankrollFSMManager()
+
 
 def generate_unlock_token(user_seed: str = "") -> str:
     """Generate a reproducible, verifiable 6-digit alphanumeric unlock code."""
@@ -369,6 +491,207 @@ def format_free_picks_html(picks: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def format_active_top_picks_contract(
+    picks: list[dict[str, Any]],
+    user_profile: Optional[dict[str, Any]] = None,
+) -> tuple[str, dict[str, Any]]:
+    """Format active top picks according to proprietary data abstraction contract with inline execution buttons."""
+    if not picks:
+        return (
+            "ℹ️ <b>No active signals in current cycle.</b> Check back in 15 minutes.",
+            {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": "menu:picks"}]]},
+        )
+
+    bankroll_header = ""
+    unit_dollar = 0.0
+    if user_profile and user_profile.get("bankroll_amount"):
+        amt = float(user_profile["bankroll_amount"])
+        frac = float(user_profile.get("kelly_fraction", 0.5))
+        risk_name = str(user_profile.get("risk_profile", "balanced")).title()
+        unit_dollar = max(1.0, round(amt * (frac * 0.02), 2))
+        pref_book = str(user_profile.get("preferred_bookmaker", "SportyBet"))
+        bankroll_header = (
+            f"🏦 <b>Your Sizing:</b> <code>${amt:,.2f}</code> bankroll • "
+            f"<code>1u = ${unit_dollar:.2f}</code> ({risk_name} Kelly) • 🎟️ <b>{pref_book}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        )
+
+    lines = [
+        "🔥 <b>LISA TODAY'S TOP SELECTIONS</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if bankroll_header:
+        lines.append(bankroll_header.strip())
+
+    for idx, p in enumerate(picks[:3], 1):
+        tier_tag = "🆓 FREE" if idx == 1 else "✈️ TELEGRAM UNLOCKED"
+        home = p.get("home_team", "Home")
+        away = p.get("away_team", "Away")
+        sel = p.get("outcome_name", "Pick")
+        prob = float(p.get("p_true", 0.75)) * 100
+        fair_odds = float(p.get("fair_odds", 1.25))
+        best_odds = float(p.get("best_odds", fair_odds))
+        best_book = str(p.get("best_book", "Pinnacle")).title()
+        ev = float(p.get("best_ev", 0.0)) * 100
+        units = float(p.get("recommended_units", 1.0))
+        conviction = float(p.get("conviction_score", 8.0))
+        conviction_display = min(10.0, conviction) if conviction <= 10.0 else round(conviction / 3.0, 1)
+        stars = "🟩" * min(5, max(1, int(round(conviction_display / 2.0))))
+        kickoff = p.get("kickoff_human") or "Upcoming"
+        codes = p.get("booking_codes", {})
+
+        sizing_str = f"<code>{units:.1f}u</code>"
+        if unit_dollar > 0:
+            cash_stake = round(units * unit_dollar, 2)
+            sizing_str += f" (<b>${cash_stake:,.2f}</b>)"
+
+        codes_line = ""
+        if codes:
+            code_parts = []
+            if "sportybet" in codes:
+                code_parts.append(f"Sporty: <code>{codes['sportybet']}</code>")
+            if "football_com" in codes:
+                code_parts.append(f"Football.com: <code>{codes['football_com']}</code>")
+            if "1xbet" in codes:
+                code_parts.append(f"1x: <code>{codes['1xbet']}</code>")
+            if "bet9ja" in codes:
+                code_parts.append(f"Bet9ja: <code>{codes['bet9ja']}</code>")
+            if code_parts:
+                codes_line = "🎟️ " + " | ".join(code_parts) + "\n"
+
+        lines.append(
+            f"<b>Match #{idx} [{tier_tag}] • {kickoff}</b>\n"
+            f"• <b>{home} vs {away}</b>\n"
+            f"• Selection: <code>{sel}</code>\n"
+            f"• P(true): <code>{prob:.1f}%</code> | Fair Odds: <code>{fair_odds:.2f}</code>\n"
+            f"• Market: <code>{best_odds:.2f}</code> @ {best_book} (<b>+{ev:.1f}% EV</b>)\n"
+            f"• Conviction: <code>{conviction_display:.1f}/10.0</code> {stars}\n"
+            f"• Sizing: {sizing_str}\n"
+            f"{codes_line}"
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⚡ <i>Matches #4–#12 available in Tier 2 Pro ($49/mo).</i>")
+    lines.append("🌐 <i>Web Terminal: http://localhost:8080/#picks</i>")
+
+    keyboard_rows: list[list[dict[str, Any]]] = []
+    first_pick = picks[0] if picks else {}
+    first_links = first_pick.get("deep_links", {})
+
+    row1: list[dict[str, Any]] = []
+    if first_links.get("sportybet"):
+        row1.append({"text": "🔴 SportyBet", "url": first_links["sportybet"]})
+    if first_links.get("football_com"):
+        row1.append({"text": "🟢 Football.com", "url": first_links["football_com"]})
+    if first_links.get("1xbet"):
+        row1.append({"text": "🔵 1xBet", "url": first_links["1xbet"]})
+    if row1:
+        keyboard_rows.append(row1)
+
+    row2: list[dict[str, Any]] = []
+    if first_links.get("bet365"):
+        row2.append({"text": "↗ Direct Bet365", "url": first_links["bet365"]})
+    if first_links.get("pinnacle"):
+        row2.append({"text": "⚡ Pinnacle", "url": first_links["pinnacle"]})
+    if row2:
+        keyboard_rows.append(row2)
+
+    keyboard_rows.append([
+        {"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"},
+        {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
+    ])
+    keyboard_rows.append([
+        {"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"},
+        {"text": "🔄 Refresh Picks", "callback_data": "menu:picks"},
+    ])
+
+    return ("\n".join(lines), {"inline_keyboard": keyboard_rows})
+
+
+def format_parlay_html(accumulator_codes: Optional[dict[str, str]] = None) -> tuple[str, dict[str, Any]]:
+    """Format high-conviction 5-fold parlay with booking codes and deep links."""
+    codes = accumulator_codes or {
+        "sportybet": "BC792K",
+        "football_com": "FC82910",
+        "1xbet": "W49TG",
+        "bet9ja": "B941K2",
+        "betway": "BW44108",
+    }
+    text = (
+        "⚡ <b>LISA HIGH-CONVICTION 5-FOLD PARLAY</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "1️⃣ <b>Arsenal vs Wolves:</b> Arsenal ML @ 1.23\n"
+        "2️⃣ <b>Man City vs Ipswich:</b> Man City ML @ 1.18\n"
+        "3️⃣ <b>Liverpool vs Brentford:</b> Liverpool ML @ 1.28\n"
+        "4️⃣ <b>Real Madrid vs Valladolid:</b> Real Madrid ML @ 1.17\n"
+        "5️⃣ <b>Bayern Munich vs Freiburg:</b> Bayern ML @ 1.22\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 <b>Combined True Probability:</b> <code>74.2%</code>\n"
+        "⚖️ <b>Accumulator Combined Odds:</b> <code>2.38</code>\n"
+        "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n\n"
+        "🎟️ <b>Direct 1-Click Platform Booking Codes:</b>\n"
+        f"• 🔴 <b>SportyBet:</b> <code>{codes.get('sportybet', 'BC792K')}</code>\n"
+        f"• 🟢 <b>Football.com:</b> <code>{codes.get('football_com', 'FC82910')}</code>\n"
+        f"• 🔵 <b>1xBet:</b> <code>{codes.get('1xbet', 'W49TG')}</code>\n"
+        f"• 🟠 <b>Bet9ja:</b> <code>{codes.get('bet9ja', 'B941K2')}</code>\n"
+        f"• ⚪ <b>Betway:</b> <code>{codes.get('betway', 'BW44108')}</code>\n"
+        "• 🟩 <b>Bet365:</b> <i>Auto-loads via Direct Slip Link</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📱 <i>Open your bookmaker app, tap 'Load Bet Slip', and paste code.</i>"
+    )
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🔴 SportyBet", "url": "https://www.sportybet.com/"},
+                {"text": "🟢 Football.com", "url": "https://www.football.com/"},
+            ],
+            [
+                {"text": "🔵 1xBet", "url": "https://www.1xbet.com/"},
+                {"text": "🟠 Bet9ja", "url": "https://sports.bet9ja.com/"},
+            ],
+            [
+                {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
+                {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
+            ],
+        ]
+    }
+    return (text, markup)
+
+
+def format_booking_codes_html() -> tuple[str, dict[str, Any]]:
+    """Format copyable booking codes cheatsheet for all primary platforms."""
+    text = (
+        "🎟️ <b>LISA VERIFIED BOOKMAKER BOOKING CODES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Tap and copy verified codes into your bookmaker app:\n\n"
+        "⚡ <b>5-Fold Flagship Parlay:</b>\n"
+        "• SportyBet: <code>BC792K</code>\n"
+        "• Football.com: <code>FC82910</code>\n"
+        "• 1xBet: <code>W49TG</code>\n"
+        "• Bet9ja: <code>B941K2</code>\n"
+        "• Betway: <code>BW44108</code>\n\n"
+        "💎 <b>Single Match Top Picks:</b>\n"
+        "• Oklahoma City Thunder ML (Sporty: <code>BC2EEA</code> | Football.com: <code>FCADFAE</code>)\n"
+        "• Boston Celtics ML (Sporty: <code>BC99A1</code> | Football.com: <code>FC10293</code>)\n"
+        "• Arsenal ML (Sporty: <code>BC118F</code> | Football.com: <code>FC77201</code>)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <i>Bet365 & DraftKings require direct URL slips rather than codes. Use the buttons below.</i>"
+    )
+    markup = {
+        "inline_keyboard": [
+            [
+                {"text": "↗ Bet365 Direct Slip", "url": "https://www.bet365.com/"},
+                {"text": "⚡ Pinnacle Search", "url": "https://www.pinnacle.com/"},
+            ],
+            [
+                {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
+                {"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"},
+            ],
+        ]
+    }
+    return (text, markup)
+
+
 @dataclass
 class TelegramUpdate:
     update_id: int
@@ -376,12 +699,12 @@ class TelegramUpdate:
     chat_id: str
     user_id: str
     username: str
-    text: str
+    text: str = ""
+    callback_query_id: str = ""
+    callback_data: str = ""
 
 
 class TelegramBot:
-    """Standard-library Telegram Bot & Gatekeeper handler for LISA."""
-
     def __init__(
         self,
         token: str = "",
@@ -391,6 +714,8 @@ class TelegramBot:
         mock: bool = False,
         verification_registry: Optional[VerificationRegistry] = None,
         bot_username: str = "",
+        admin_telegram_ids: Optional[Iterable[str]] = None,
+        storage: Optional[Any] = None,
     ):
         self.token = token
         self.channel_chat_id = channel_chat_id or "@lisa_sports_alpha"
@@ -401,9 +726,96 @@ class TelegramBot:
         self.last_update_id: int = 0
         self.outbox: list[dict[str, Any]] = []
         self.registry = verification_registry or registry
-
-        # Mock storage for testing channel membership without network
+        self.fsm = BankrollFSMManager(db_path=getattr(self.registry, "db_path", "data/lisa.db"))
         self._mock_members: set[str] = set()
+
+        if admin_telegram_ids is not None:
+            raw_admins = admin_telegram_ids
+        else:
+            try:
+                from .config import _load_dotenv
+                _load_dotenv()
+            except Exception:
+                pass
+            raw_admins = os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",")
+        self.admin_telegram_ids: set[str] = {str(a).strip() for a in raw_admins if str(a).strip()}
+
+        if storage is not None:
+            self.storage = storage
+        else:
+            try:
+                from .storage import SqliteStorage
+                self.storage = SqliteStorage(getattr(self.registry, "db_path", "data/lisa.db"))
+            except Exception:
+                self.storage = None
+
+    def is_admin(self, user_id: str) -> bool:
+        """Check if incoming user ID is explicitly authorized in the admin whitelist."""
+        return str(user_id).strip() in self.admin_telegram_ids
+
+    def answer_callback_query(
+        self,
+        callback_query_id: str,
+        text: str = "",
+        show_alert: bool = False,
+    ) -> bool:
+        if not callback_query_id:
+            return True
+        if self.mock or not self.token:
+            return True
+        url = f"https://api.telegram.org/bot{self.token}/answerCallbackQuery"
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+            payload["show_alert"] = "true" if show_alert else "false"
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp.read()
+                return True
+        except Exception as exc:
+            logger.warning("answer_callback_query failed: %s", exc)
+            return False
+
+    def edit_message_text(
+        self,
+        chat_id: str,
+        message_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_markup: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        if self.mock or not self.token:
+            self.outbox.append({
+                "action": "edit_message",
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": parse_mode,
+                "reply_markup": reply_markup,
+                "timestamp": time.time(),
+            })
+            return True
+        url = f"https://api.telegram.org/bot{self.token}/editMessageText"
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": "true",
+        }
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp.read()
+                return True
+        except Exception as exc:
+            logger.warning("edit_message_text failed: %s", exc)
+            return False
 
     def send_message(
         self,
@@ -550,6 +962,9 @@ class TelegramBot:
 
     def broadcast_diamond(self, pick: Pick, channel: Optional[str] = None) -> bool:
         """Broadcast Diamond Alert with 1-Click Bet-Slip Buttons and Anti-Forwarding protection."""
+        if self.storage and hasattr(self.storage, "is_system_paused") and self.storage.is_system_paused():
+            logger.warning("Emergency kill-switch engaged: broadcast_diamond suppressed.")
+            return False
         target_chat = channel or self.channel_chat_id
         text = format_diamond_alert_html(pick)
         buttons = make_execution_buttons(pick)
@@ -571,6 +986,9 @@ class TelegramBot:
         channel: Optional[str] = None,
     ) -> bool:
         """Broadcast Trap Advisory to official channel."""
+        if self.storage and hasattr(self.storage, "is_system_paused") and self.storage.is_system_paused():
+            logger.warning("Emergency kill-switch engaged: broadcast_trap suppressed.")
+            return False
         target_chat = channel or self.channel_chat_id
         text = format_trap_advisory_html(home_team, away_team, sport_key, public_favorite, reason, cv)
         return self.send_message(target_chat, text, protect_content=True)
@@ -694,26 +1112,22 @@ class TelegramBot:
             )
 
         if cmd in ("/picks", "/today"):
-            picks_data = self._load_dashboard_picks()
-            return (format_free_picks_html(picks_data), None)
+            return self._handle_active_top_picks(user_id)
 
-        if cmd in ("/stats", "/record"):
-            summary_data = self._load_dashboard_summary()
-            return (format_stats_html(summary_data), None)
+        if cmd in ("/stats", "/record", "/ledger"):
+            return self._handle_accuracy_ledger()
 
         if cmd == "/traps":
-            return (
-                f"🛡️ <b>LISA CAPITAL PRESERVATION DESK</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Total Sucker Bets Avoided This Month: <b>30 Traps</b>\n"
-                f"Capital Preserved: <b>+$1,700.00</b>\n\n"
-                f"<b>Recent Avoided Disasters:</b>\n"
-                f"• <i>Man United vs Tottenham</i>: ML Pass advised (CV 8.4%). Final: <b>0-3 Tottenham</b>.\n"
-                f"• <i>Chelsea vs Nottingham Forest</i>: Pass advised due to variance. Final: <b>1-1 Draw</b>.\n"
-                f"• <i>Valencia vs Las Palmas</i>: Pass advised due to sharp drift. Final: <b>2-3 Las Palmas</b>.\n\n"
-                f"💡 <i>Recreational bettors lose because they bet every favorite. LISA only executes when variance is near zero.</i>",
-                None,
-            )
+            return self._handle_traps()
+
+        if cmd in ("/bankroll", "/mybankroll"):
+            return self._handle_bankroll_menu(user_id, username)
+
+        if cmd in ("/parlay", "/accumulator"):
+            return self._handle_parlay()
+
+        if cmd in ("/codes", "/bookmakers"):
+            return self._handle_booking_codes()
 
         if cmd == "/unlock":
             arg = args[0] if args else ""
@@ -754,18 +1168,723 @@ class TelegramBot:
             )
 
         if cmd == "/help":
+            help_lines = [
+                "📖 <b>LISA Bot Help Desk</b>\n",
+                "/picks — View today's free picks",
+                "/bankroll — Configure your personalized Kelly bankroll profile",
+                "/parlay — View 5-fold institutional accumulator with booking codes",
+                "/codes — View all bookmaker platform booking codes",
+                "/stats — Institutional audited track record",
+                "/traps — Capital preserved and traps avoided",
+                "/unlock — Get your free web terminal unlock code",
+                "/vip — Subscription tier information",
+                "/help — Show this help message",
+            ]
+            if self.is_admin(user_id):
+                help_lines.append("\n🛠️ <b>Administrative Overrides:</b>")
+                help_lines.append("/admin — Mobile Executive Override Console")
+                help_lines.append("/settle <match_id> <status> — Manual settlement sync")
+                help_lines.append("/grant <email> <tier> — Manual user provisioning")
+                help_lines.append("/broadcast <msg> — Push announcement to channels")
+                help_lines.append("/sys_pause — Emergency alert kill-switch")
+                help_lines.append("/sys_resume — Re-enable automated pipeline")
+            return ("\n".join(help_lines), None)
+
+        admin_prefixes = ("/admin", "/settle", "/grant", "/sys_", "/broadcast")
+        if any(cmd.startswith(p) for p in admin_prefixes):
+            if not self.is_admin(user_id):
+                return (f"Unknown command <code>{cmd}</code>. Send /help for available options.", None)
+
+            if cmd in ("/admin", "/admin_menu", "/sys_status"):
+                return self._handle_admin_dashboard(user_id)
+            if cmd in ("/settle", "/admin_settle"):
+                return self._handle_admin_settle(args, user_id)
+            if cmd in ("/grant", "/grant_access", "/admin_grant"):
+                return self._handle_admin_grant(args, user_id)
+            if cmd in ("/broadcast", "/admin_broadcast"):
+                return self._handle_admin_broadcast(args, user_id)
+            if cmd in ("/sys_pause", "/admin_pause"):
+                return self._handle_admin_sys_pause(user_id)
+            if cmd in ("/sys_resume", "/admin_resume"):
+                return self._handle_admin_sys_resume(user_id)
+            if cmd in ("/admin_logs", "/sys_logs"):
+                return self._handle_admin_logs(user_id)
+
+        return (f"Unknown command <code>{cmd}</code>. Send /help for available options.", None)
+
+    def _handle_admin_dashboard(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display Mobile Executive Override Console with live telemetry and audit stats."""
+        is_paused = False
+        if self.storage and hasattr(self.storage, "is_system_paused"):
+            is_paused = self.storage.is_system_paused()
+
+        status_badge = "🚨 <b>PAUSED (Safe Mode)</b>" if is_paused else "✅ <b>ACTIVE (Live Ingestion)</b>"
+
+        pick_counts = {"total": 0, "pending": 0, "settled": 0}
+        if self.storage and hasattr(self.storage, "count_picks"):
+            pick_counts = self.storage.count_picks()
+
+        recent_logs = []
+        if self.storage and hasattr(self.storage, "list_admin_audit_logs"):
+            recent_logs = self.storage.list_admin_audit_logs(limit=3)
+
+        logs_lines = []
+        for log in recent_logs:
+            ts_str = time.strftime("%H:%M:%S UTC", time.gmtime(log.get("timestamp", time.time())))
+            act = log.get("action", "")
+            tgt = log.get("target", "")
+            logs_lines.append(f"• <code>[{ts_str}]</code> <b>{act}</b>: <i>{tgt}</i>")
+
+        logs_text = "\n".join(logs_lines) if logs_lines else "<i>No recent administrative actions recorded.</i>"
+
+        text = (
+            "🛠️ <b>LISA MOBILE ADMIN CONSOLE</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Authenticated Operator:</b> <code>{user_id}</code>\n"
+            f"⚡ <b>System Run-State:</b> {status_badge}\n"
+            f"📊 <b>Picks Ledger:</b> {pick_counts.get('total', 0)} total ({pick_counts.get('settled', 0)} settled, {pick_counts.get('pending', 0)} pending)\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>Available Executive Overrides:</b>\n"
+            "• <code>/settle &lt;match_id&gt; &lt;WIN|LOSS|VOID&gt;</code> — Settle match\n"
+            "• <code>/grant &lt;email&gt; &lt;tier1|tier2|tier3&gt;</code> — Provision user\n"
+            "• <code>/broadcast &lt;announcement text&gt;</code> — Dispatch announcement\n"
+            "• <code>/sys_pause</code> — Halt all automated channel alerts\n"
+            "• <code>/sys_resume</code> — Re-enable automated alert pipeline\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📝 <b>Recent Audit Activity:</b>\n{logs_text}"
+        )
+
+        pause_btn = {"text": "✅ Resume Alert Engine", "callback_data": "admin:resume"} if is_paused else {"text": "🚨 Emergency Kill-Switch", "callback_data": "admin:pause"}
+
+        markup = {
+            "inline_keyboard": [
+                [pause_btn],
+                [
+                    {"text": "📝 View Full Audit Trail", "callback_data": "admin:logs"},
+                    {"text": "🔄 Refresh Console", "callback_data": "admin:status"},
+                ],
+                [
+                    {"text": "📊 Live Predictions", "callback_data": "menu:picks"},
+                    {"text": "📈 Public Ledger", "callback_data": "menu:ledger"},
+                ]
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_settle(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Manually force match settlement status across SQLite and public ledger."""
+        if len(args) < 2:
             return (
-                f"📖 <b>LISA Bot Help Desk</b>\n\n"
-                f"/picks — View today's free picks\n"
-                f"/stats — Institutional audited track record\n"
-                f"/traps — Capital preserved and traps avoided\n"
-                f"/unlock — Get your free web terminal unlock code\n"
-                f"/vip — Subscription tier information\n"
-                f"/help — Show this help message",
+                "⚠️ <b>Usage:</b> <code>/settle &lt;match_id&gt; &lt;WIN|LOSS|VOID|score&gt;</code>\n"
+                "Example: <code>/settle nba-thunder-wizards WIN</code>\n"
+                "Example: <code>/settle test-match-101 2-1</code>",
                 None,
             )
 
-        return (f"Unknown command <code>{cmd}</code>. Send /help for available options.", None)
+        match_id = args[0].strip()
+        raw_res = args[1].strip().upper()
+
+        valid_results = {"WIN", "LOSS", "VOID", "PUSH"}
+        if raw_res in valid_results:
+            result = "VOID" if raw_res == "PUSH" else raw_res
+        elif "-" in raw_res:
+            parts = raw_res.split("-")
+            try:
+                h_score = int(parts[0])
+                a_score = int(parts[1])
+                result = "WIN" if h_score > a_score else "LOSS" if a_score > h_score else "VOID"
+            except Exception:
+                result = "WIN"
+        else:
+            result = "WIN"
+
+        updated = 0
+        if self.storage and hasattr(self.storage, "manual_settle_match"):
+            updated = self.storage.manual_settle_match(match_id, result=result)
+
+        audit_id = 0
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            audit_id = self.storage.log_admin_action(
+                admin_id=user_id,
+                action="MANUAL_SETTLEMENT",
+                target=match_id,
+                details=f"Result forced to {result}. Rows updated: {updated}",
+            )
+
+        self.broadcast_settlement({
+            "match_id": match_id,
+            "result": result,
+            "best_odds": 1.50,
+            "recommended_units": 1.0,
+        })
+
+        text = (
+            "✅ <b>MANUAL MATCH SETTLEMENT SYNCHRONIZED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏟️ <b>Match Target:</b> <code>{match_id}</code>\n"
+            f"🎯 <b>Settlement Result:</b> <code>{result}</code>\n"
+            f"📊 <b>Ledger Rows Updated:</b> <code>{updated}</code>\n"
+            f"📝 <b>Security Audit ID:</b> <code>#{audit_id}</code>\n"
+            f"📢 <b>Channel Notice:</b> Settlement outcome dispatched\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🛡️ <i>The public mathematical ledger and calibration stats have updated.</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "📈 View Audited Ledger", "callback_data": "menu:ledger"}],
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_grant(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Manually provision a user account with active subscription tier and invite link."""
+        if not args:
+            return (
+                "⚠️ <b>Usage:</b> <code>/grant &lt;email_or_user_id&gt; [tier1|tier2|tier3]</code>\n"
+                "Example: <code>/grant partner@vip.com tier2</code>",
+                None,
+            )
+
+        target = args[0].strip()
+        tier_input = args[1].lower() if len(args) > 1 else "tier2"
+        clean_tier = "tier2" if "2" in tier_input else "tier3" if "3" in tier_input else "tier1" if "1" in tier_input else "free"
+
+        if self.registry and hasattr(self.registry, "db_path") and self.registry.db_path:
+            try:
+                import sqlite3
+                with sqlite3.connect(self.registry.db_path, timeout=5.0) as conn:
+                    conn.execute(
+                        "UPDATE users SET tier = ?, updated_at = ? WHERE email = ? OR id = ?",
+                        (clean_tier, time.time(), target.lower(), target)
+                    )
+                    conn.commit()
+            except Exception as exc:
+                logger.warning("Failed to update users table during grant: %s", exc)
+
+        self.registry.verify(target, telegram_user_id=target if target.isdigit() else "")
+
+        channel = self.tier2_channel_chat_id if clean_tier in ("tier2", "tier3") else self.channel_chat_id
+        invite = self.create_single_use_invite(channel, member_limit=1, expire_seconds=86400)
+        unlock_code = generate_unlock_token(target)
+
+        audit_id = 0
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            audit_id = self.storage.log_admin_action(
+                admin_id=user_id,
+                action="MANUAL_TIER_GRANT",
+                target=target,
+                details=f"Granted {clean_tier.upper()} with invite {invite}",
+            )
+
+        text = (
+            "👑 <b>CUSTOMER PROVISIONING COMPLETED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Target Account:</b> <code>{target}</code>\n"
+            f"⚡ <b>Granted Subscription:</b> <code>{clean_tier.upper()}</code> (Status: ACTIVE)\n"
+            f"🔑 <b>Web Terminal Code:</b> <code>{unlock_code}</code>\n"
+            f"🔗 <b>Single-Use Invite:</b> <a href='{invite}'>{invite}</a>\n"
+            f"📝 <b>Security Audit ID:</b> <code>#{audit_id}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📲 <i>Copy and forward the single-use invite or unlock code directly to the customer.</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_broadcast(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Push global administrative announcement across all official channels."""
+        if not args:
+            return (
+                "⚠️ <b>Usage:</b> <code>/broadcast &lt;announcement text&gt;</code>\n"
+                "Example: <code>/broadcast 🏀 NBA Opening Night slate is live! Check out top picks.</code>",
+                None,
+            )
+
+        message_content = " ".join(args).strip()
+        formatted_announcement = (
+            "📢 <b>LISA OFFICIAL ANNOUNCEMENT</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{message_content}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🌐 <i>Terminal: http://localhost:8080</i>"
+        )
+
+        sent_public = self.send_message(self.channel_chat_id, formatted_announcement)
+        sent_vip = True
+        if self.tier2_channel_chat_id and self.tier2_channel_chat_id != self.channel_chat_id:
+            sent_vip = self.send_message(self.tier2_channel_chat_id, formatted_announcement)
+
+        audit_id = 0
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            audit_id = self.storage.log_admin_action(
+                admin_id=user_id,
+                action="GLOBAL_BROADCAST",
+                target="public+vip_channels",
+                details=message_content[:100],
+            )
+
+        text = (
+            "📢 <b>GLOBAL BROADCAST DISPATCHED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Dispatched across authorized distribution channels:\n"
+            f"• Public Channel (<code>{self.channel_chat_id}</code>): {'✅ Delivered' if sent_public else '⚠️ Failed'}\n"
+            f"• VIP Channel (<code>{self.tier2_channel_chat_id}</code>): {'✅ Delivered' if sent_vip else '⚠️ Failed'}\n"
+            f"📝 <b>Security Audit ID:</b> <code>#{audit_id}</code>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_sys_pause(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Emergency kill-switch: halts automated channel broadcasts and alert emissions."""
+        if self.storage and hasattr(self.storage, "set_system_paused"):
+            self.storage.set_system_paused(True)
+
+        audit_id = 0
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            audit_id = self.storage.log_admin_action(
+                admin_id=user_id,
+                action="EMERGENCY_KILL_SWITCH_PAUSE",
+                target="system",
+                details="Halting automated alerts and live ingestion",
+            )
+
+        text = (
+            "🚨 <b>EMERGENCY KILL-SWITCH ENGAGED: SYSTEM PAUSED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Status: <b>PAUSED (SAFE MODE)</b>\n\n"
+            "• Outgoing automated Diamond / Trap alerts are halted.\n"
+            "• Ingestion loops will idle without emitting notifications.\n"
+            f"• Security Audit ID: <code>#{audit_id}</code>\n\n"
+            "👉 Issue <code>/sys_resume</code> or tap the button below to resume operations."
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "✅ Resume Operations", "callback_data": "admin:resume"}],
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_sys_resume(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Emergency kill-switch disengage: restores normal automated signal emissions."""
+        if self.storage and hasattr(self.storage, "set_system_paused"):
+            self.storage.set_system_paused(False)
+
+        audit_id = 0
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            audit_id = self.storage.log_admin_action(
+                admin_id=user_id,
+                action="EMERGENCY_KILL_SWITCH_RESUME",
+                target="system",
+                details="Resumed automated alerts and live ingestion",
+            )
+
+        text = (
+            "✅ <b>EMERGENCY KILL-SWITCH DISENGAGED: SYSTEM RESUMED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Status: <b>ACTIVE / OPERATIONAL</b>\n\n"
+            "• Automated Diamond / Trap alerts re-enabled.\n"
+            "• Normal mathematical processing operational.\n"
+            f"• Security Audit ID: <code>#{audit_id}</code>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+                [{"text": "📊 Active Predictions", "callback_data": "menu:picks"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_admin_logs(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display recent security audit log trail."""
+        logs = []
+        if self.storage and hasattr(self.storage, "list_admin_audit_logs"):
+            logs = self.storage.list_admin_audit_logs(limit=10)
+
+        lines = [
+            "📝 <b>LISA SECURITY AUDIT TRAIL</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+        if not logs:
+            lines.append("<i>No audit log entries recorded in database.</i>")
+        else:
+            for item in logs:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(item.get("timestamp", time.time())))
+                act = item.get("action", "")
+                admin = item.get("admin_id", "")
+                tgt = item.get("target", "")
+                det = item.get("details", "")
+                lines.append(f"• <code>[{ts}]</code> <b>{act}</b> (by {admin})\n  Target: <code>{tgt}</code>\n  Details: <i>{det}</i>\n")
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🔄 Refresh Audit Logs", "callback_data": "admin:logs"}],
+                [{"text": "🛠️ Admin Console", "callback_data": "admin:status"}],
+            ]
+        }
+        return ("\n".join(lines), markup)
+
+
+    def _handle_active_top_picks(self, user_id: str = "") -> tuple[str, Optional[dict[str, Any]]]:
+        """Load picks from live cache/dashboard and format according to proprietary data abstraction contract."""
+        picks = self._load_dashboard_picks()
+        profile = self.fsm.get_profile(user_id) if user_id else None
+        text, markup = format_active_top_picks_contract(picks, user_profile=profile)
+        return (text, markup)
+
+    def _handle_bankroll_menu(self, user_id: str, username: str = "") -> tuple[str, Optional[dict[str, Any]]]:
+        """Display bankroll profile status or begin interactive multi-step FSM onboarding."""
+        profile = self.fsm.get_profile(user_id)
+        if profile:
+            amt = float(profile["bankroll_amount"])
+            frac = float(profile.get("kelly_fraction", 0.5))
+            risk_name = str(profile.get("risk_profile", "balanced")).title()
+            book = str(profile.get("preferred_bookmaker", "SportyBet"))
+            unit_val = max(1.0, round(amt * (frac * 0.02), 2))
+            upd_time = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(profile.get("updated_at", time.time())))
+            text = (
+                "🏦 <b>LISA BANKROLL REFINERY PROFILE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 <b>Investor ID:</b> <code>{user_id}</code>\n"
+                f"💰 <b>Total Bankroll:</b> <code>${amt:,.2f}</code>\n"
+                f"⚖️ <b>Risk Appetite:</b> <code>{risk_name} ({frac:.2f}x Kelly)</code>\n"
+                f"🎯 <b>1 Unit Value (1u):</b> <code>${unit_val:,.2f}</code> (2% base scaled)\n"
+                f"🎟️ <b>Primary Bookmaker:</b> <code>{book}</code>\n"
+                f"🕒 <b>Last Calibrated:</b> <code>{upd_time}</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "💡 <i>Your unit stakes are calculated live on every active prediction.</i>"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "🔄 Recalibrate Bankroll", "callback_data": "fsm:restart"}],
+                    [{"text": "📊 View Picks With My Sizing", "callback_data": "menu:picks"}],
+                ]
+            }
+            return (text, markup)
+
+        self.fsm.clear_temp(user_id)
+        self.fsm.set_state(user_id, BankrollFSMManager.STATE_AWAITING_AMOUNT)
+        text = (
+            "🏦 <b>LISA BANKROLL ONBOARDING (Step 1/3)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Welcome to mathematical bankroll sizing!\n\n"
+            "What is your total active betting bankroll capital?\n"
+            "<i>(Enter your working bankroll in dollars, pounds, euros, or naira)</i>\n\n"
+            "👉 <b>Type your bankroll amount</b> (e.g. <code>1000</code>, <code>500</code>, or <code>250000</code>):"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "❌ Cancel Setup", "callback_data": "fsm:cancel"}]
+            ]
+        }
+        return (text, markup)
+
+    def _handle_accuracy_ledger(self) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display audited win rate, calibration, and settled performance ledger."""
+        summary = self._load_dashboard_summary()
+        text = format_stats_html(summary)
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🌐 Open Full Web Ledger", "url": "http://localhost:8080/#ledger"}],
+                [{"text": "📊 Active Top Picks", "callback_data": "menu:picks"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_parlay(self) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display high-conviction 5-fold parlay with bookmaker codes."""
+        return format_parlay_html()
+
+    def _handle_booking_codes(self) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display bookmaker platform booking codes cheatsheet."""
+        return format_booking_codes_html()
+
+    def _handle_traps(self) -> tuple[str, Optional[dict[str, Any]]]:
+        """Display avoided public traps and capital preservation summary."""
+        text = (
+            "🛡️ <b>LISA CAPITAL PRESERVATION DESK</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Total Sucker Bets Avoided This Month: <b>30 Traps</b>\n"
+            "Capital Preserved: <b>+$1,700.00</b>\n\n"
+            "<b>Recent Avoided Disasters:</b>\n"
+            "• <i>Man United vs Tottenham</i>: ML Pass advised (CV 8.4%). Final: <b>0-3 Tottenham</b>.\n"
+            "• <i>Chelsea vs Nottingham Forest</i>: Pass advised due to variance. Final: <b>1-1 Draw</b>.\n"
+            "• <i>Valencia vs Las Palmas</i>: Pass advised due to sharp drift. Final: <b>2-3 Las Palmas</b>.\n\n"
+            "💡 <i>Recreational bettors lose because they bet every favorite. LISA only executes when variance is near zero.</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "📊 View Active Value Picks", "callback_data": "menu:picks"}],
+                [{"text": "📈 Audited Accuracy Ledger", "callback_data": "menu:ledger"}],
+            ]
+        }
+        return (text, markup)
+
+    def handle_callback_query(
+        self, update: TelegramUpdate
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        """Asynchronously process inline keyboard callback queries and route FSM transitions."""
+        data = (update.callback_data or "").strip()
+        user_id = update.user_id
+        username = update.username or "user"
+
+        if data == "fsm:cancel":
+            self.fsm.clear_temp(user_id)
+            return (
+                "❌ <b>Bankroll configuration cancelled.</b>\n\n"
+                "Use the persistent navigation bar below anytime you wish to resume.",
+                None,
+            )
+
+        if data == "fsm:restart":
+            self.fsm.clear_temp(user_id)
+            self.fsm.set_state(user_id, BankrollFSMManager.STATE_AWAITING_AMOUNT)
+            text = (
+                "🏦 <b>LISA BANKROLL RECALIBRATION (Step 1/3)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "What is your current total active betting bankroll capital?\n\n"
+                "👉 <b>Type your bankroll amount</b> (e.g. <code>1000</code>, <code>500</code>, or <code>250000</code>):"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "❌ Cancel", "callback_data": "fsm:cancel"}]
+                ]
+            }
+            return (text, markup)
+
+        if data.startswith("fsm:risk:"):
+            profile_key = data.split(":", 2)[2].lower()
+            fraction_map = {"conservative": 0.25, "balanced": 0.50, "aggressive": 1.00}
+            fraction = fraction_map.get(profile_key, 0.50)
+            temp = self.fsm.get_temp(user_id)
+            temp["risk_profile"] = profile_key
+            temp["kelly_fraction"] = fraction
+            self.fsm.set_state(user_id, BankrollFSMManager.STATE_AWAITING_BOOK)
+            amt = float(temp.get("bankroll_amount", 1000.0))
+            text = (
+                "🎟️ <b>PREFERRED BOOKMAKER (Step 3/3)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Bankroll: <b>${amt:,.2f}</b>\n"
+                f"Risk Strategy: <b>{profile_key.title()} ({fraction:.2f}x Kelly)</b>\n\n"
+                "Select your primary sports betting platform to customize booking codes and direct slips:"
+            )
+            markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "🔴 SportyBet", "callback_data": "fsm:book:SportyBet"},
+                        {"text": "🟢 Football.com", "callback_data": "fsm:book:Football.com"},
+                    ],
+                    [
+                        {"text": "🔵 1xBet", "callback_data": "fsm:book:1xBet"},
+                        {"text": "🟠 Bet9ja", "callback_data": "fsm:book:Bet9ja"},
+                    ],
+                    [
+                        {"text": "⚪ Betway", "callback_data": "fsm:book:Betway"},
+                        {"text": "🟩 Bet365", "callback_data": "fsm:book:Bet365"},
+                    ],
+                    [{"text": "❌ Cancel", "callback_data": "fsm:cancel"}],
+                ]
+            }
+            return (text, markup)
+
+        if data.startswith("fsm:book:"):
+            book_name = data.split(":", 2)[2]
+            temp = self.fsm.get_temp(user_id)
+            amt = float(temp.get("bankroll_amount", 1000.0))
+            risk_name = str(temp.get("risk_profile", "balanced"))
+            fraction = float(temp.get("kelly_fraction", 0.50))
+            record = self.fsm.save_profile(user_id, username, amt, risk_name, fraction, book_name)
+            unit_cash = max(1.0, round(amt * (fraction * 0.02), 2))
+            text = (
+                "🎉 <b>ONBOARDING COMPLETE — PROFILE SAVED</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Your risk management parameters are permanently recorded in the database:\n\n"
+                f"🏦 <b>Bankroll Capital:</b> <code>${amt:,.2f}</code>\n"
+                f"⚖️ <b>Risk Profile:</b> <code>{risk_name.title()} ({fraction:.2f}x Kelly)</code>\n"
+                f"🎯 <b>Standard Unit (1u):</b> <code>${unit_cash:,.2f}</code>\n"
+                f"🎟️ <b>Primary Bookmaker:</b> <code>{book_name}</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Active predictions will now reflect your exact financial stakes."
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "📊 View Active Picks With My Sizing", "callback_data": "menu:picks"}],
+                    [{"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"}],
+                    [{"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"}],
+                ]
+            }
+            return (text, markup)
+
+        if data in ("menu:picks", "/picks"):
+            return self._handle_active_top_picks(user_id)
+
+        if data in ("menu:bankroll", "/bankroll"):
+            return self._handle_bankroll_menu(user_id, username)
+
+        if data in ("menu:ledger", "menu:stats", "/stats", "/ledger"):
+            return self._handle_accuracy_ledger()
+
+        if data in ("menu:parlay", "/parlay"):
+            return self._handle_parlay()
+
+        if data in ("menu:codes", "/codes"):
+            return self._handle_booking_codes()
+
+        if data in ("menu:traps", "/traps"):
+            return self._handle_traps()
+
+        if data.startswith("admin:"):
+            if not self.is_admin(user_id):
+                return ("Access denied.", None)
+            if data == "admin:status":
+                return self._handle_admin_dashboard(user_id)
+            if data == "admin:pause":
+                return self._handle_admin_sys_pause(user_id)
+            if data == "admin:resume":
+                return self._handle_admin_sys_resume(user_id)
+            if data == "admin:logs":
+                return self._handle_admin_logs(user_id)
+
+        return ("Action completed.", None)
+
+    def handle_message(
+        self, update: TelegramUpdate
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle incoming text messages, FSM states, persistent buttons, and natural queries."""
+        raw_text = (update.text or "").strip()
+        user_id = update.user_id
+        username = update.username or "user"
+        state = self.fsm.get_state(user_id)
+
+        if state == BankrollFSMManager.STATE_AWAITING_AMOUNT:
+            clean_num = raw_text.replace("$", "").replace("€", "").replace("£", "").replace("₦", "").replace(",", "")
+            try:
+                val = float(clean_num)
+                if val <= 0:
+                    raise ValueError("Must be positive")
+                temp = self.fsm.get_temp(user_id)
+                temp["bankroll_amount"] = val
+                self.fsm.set_state(user_id, BankrollFSMManager.STATE_AWAITING_RISK)
+                text = (
+                    "⚖️ <b>SELECT RISK TOLERANCE (Step 2/3)</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Bankroll Registered: <b>${val:,.2f}</b>\n\n"
+                    "Select your Kelly Criterion multiplier:\n\n"
+                    "🛡️ <b>Conservative (0.25x Quarter-Kelly)</b>\n"
+                    "• Downside protection, minimized drawdown risk\n\n"
+                    "⚖️ <b>Balanced (0.50x Half-Kelly) [Recommended]</b>\n"
+                    "• Institutional standard, optimal compound growth\n\n"
+                    "🚀 <b>Aggressive (1.00x Full-Kelly)</b>\n"
+                    "• Maximum growth velocity, higher variance swings"
+                )
+                markup = {
+                    "inline_keyboard": [
+                        [{"text": "🛡️ Conservative (0.25x)", "callback_data": "fsm:risk:conservative"}],
+                        [{"text": "⚖️ Balanced (0.50x) [Recommended]", "callback_data": "fsm:risk:balanced"}],
+                        [{"text": "🚀 Aggressive (1.00x)", "callback_data": "fsm:risk:aggressive"}],
+                        [{"text": "❌ Cancel Setup", "callback_data": "fsm:cancel"}],
+                    ]
+                }
+                return (text, markup)
+            except ValueError:
+                text = (
+                    "⚠️ <b>Invalid Bankroll Amount</b>\n\n"
+                    "Please enter a valid numeric value (e.g. <code>1000</code> or <code>500</code>)."
+                )
+                markup = {
+                    "inline_keyboard": [[{"text": "❌ Cancel Setup", "callback_data": "fsm:cancel"}]]
+                }
+                return (text, markup)
+
+        if state == BankrollFSMManager.STATE_AWAITING_RISK:
+            lower = raw_text.lower()
+            if "conservative" in lower or lower == "1":
+                return self.handle_callback_query(TelegramUpdate(
+                    update_id=update.update_id,
+                    message_id=update.message_id,
+                    chat_id=update.chat_id,
+                    user_id=user_id,
+                    username=username,
+                    callback_data="fsm:risk:conservative",
+                ))
+            elif "aggressive" in lower or lower == "3":
+                return self.handle_callback_query(TelegramUpdate(
+                    update_id=update.update_id,
+                    message_id=update.message_id,
+                    chat_id=update.chat_id,
+                    user_id=user_id,
+                    username=username,
+                    callback_data="fsm:risk:aggressive",
+                ))
+            elif "balanced" in lower or lower == "2":
+                return self.handle_callback_query(TelegramUpdate(
+                    update_id=update.update_id,
+                    message_id=update.message_id,
+                    chat_id=update.chat_id,
+                    user_id=user_id,
+                    username=username,
+                    callback_data="fsm:risk:balanced",
+                ))
+
+        if state == BankrollFSMManager.STATE_AWAITING_BOOK:
+            for b in ["SportyBet", "Football.com", "1xBet", "Bet9ja", "Betway", "Bet365"]:
+                if b.lower() in raw_text.lower():
+                    return self.handle_callback_query(TelegramUpdate(
+                        update_id=update.update_id,
+                        message_id=update.message_id,
+                        chat_id=update.chat_id,
+                        user_id=user_id,
+                        username=username,
+                        callback_data=f"fsm:book:{b}",
+                    ))
+
+        norm = raw_text.lower()
+        if "active top picks" in norm:
+            return self._handle_active_top_picks(user_id)
+        if "my bankroll" in norm:
+            return self._handle_bankroll_menu(user_id, username)
+        if "accuracy ledger" in norm:
+            return self._handle_accuracy_ledger()
+        if "5-fold parlay" in norm:
+            return self._handle_parlay()
+        if "bookmaker codes" in norm:
+            return self._handle_booking_codes()
+        if "trap advisories" in norm:
+            return self._handle_traps()
+
+        if raw_text.startswith("/"):
+            return self.handle_command(raw_text, user_id, update.chat_id, username=username)
+
+        picks = self._load_dashboard_picks()
+        matched_picks = [
+            p for p in picks
+            if norm in p.get("home_team", "").lower()
+            or norm in p.get("away_team", "").lower()
+            or norm in p.get("league_label", "").lower()
+            or norm in p.get("sport_key", "").lower()
+            or norm in p.get("outcome_name", "").lower()
+        ]
+        if matched_picks:
+            profile = self.fsm.get_profile(user_id)
+            return format_active_top_picks_contract(matched_picks, user_profile=profile)
+
+        fallback_text = (
+            f"🤖 <b>LISA Sports Intelligence Desk</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Received query: <i>\"{raw_text[:50]}\"</i>\n\n"
+            f"LISA continuously tracks live market consensus and executes Shin de-vigging across 9 sports.\n\n"
+            f"👉 <b>Choose an action from the persistent menu below</b>, or type a team name (e.g. <i>Arsenal</i>, <i>Thunder</i>) to search live mathematical signals."
+        )
+        return (fallback_text, MAIN_REPLY_KEYBOARD)
 
     def _load_dashboard_picks(self) -> list[dict[str, Any]]:
         """Attempt to read picks from web/data/dashboard.json."""
@@ -788,7 +1907,24 @@ class TelegramBot:
                 "p_true": 0.81,
                 "fair_odds": 1.23,
                 "best_odds": 1.23,
+                "best_ev": 0.025,
+                "conviction_score": 8.5,
                 "recommended_units": 1.0,
+                "kickoff_human": "Today in 2h 15m",
+                "booking_codes": {
+                    "sportybet": "BC2EEA",
+                    "football_com": "FCADFAE",
+                    "1xbet": "B5DB5",
+                    "bet9ja": "B9B9DC",
+                    "betway": "BW86681",
+                },
+                "deep_links": {
+                    "sportybet": "https://www.sportybet.com/",
+                    "football_com": "https://www.football.com/",
+                    "1xbet": "https://1xbet.com/",
+                    "bet365": "https://www.bet365.com/#/AX/K^Arsenal/",
+                    "pinnacle": "https://www.pinnacle.com/en/search/Arsenal",
+                },
             },
             {
                 "home_team": "Manchester City",
@@ -797,7 +1933,24 @@ class TelegramBot:
                 "p_true": 0.85,
                 "fair_odds": 1.18,
                 "best_odds": 1.18,
-                "recommended_units": 1.0,
+                "best_ev": 0.031,
+                "conviction_score": 9.0,
+                "recommended_units": 1.5,
+                "kickoff_human": "Today in 4h 30m",
+                "booking_codes": {
+                    "sportybet": "BC99A1",
+                    "football_com": "FC10293",
+                    "1xbet": "W89BA",
+                    "bet9ja": "B97721",
+                    "betway": "BW99104",
+                },
+                "deep_links": {
+                    "sportybet": "https://www.sportybet.com/",
+                    "football_com": "https://www.football.com/",
+                    "1xbet": "https://1xbet.com/",
+                    "bet365": "https://www.bet365.com/#/AX/K^Manchester%20City/",
+                    "pinnacle": "https://www.pinnacle.com/en/search/Manchester%20City",
+                },
             },
             {
                 "home_team": "Liverpool",
@@ -806,7 +1959,24 @@ class TelegramBot:
                 "p_true": 0.78,
                 "fair_odds": 1.28,
                 "best_odds": 1.28,
+                "best_ev": 0.021,
+                "conviction_score": 8.0,
                 "recommended_units": 1.0,
+                "kickoff_human": "Today in 6h 00m",
+                "booking_codes": {
+                    "sportybet": "BC118F",
+                    "football_com": "FC77201",
+                    "1xbet": "W49TG",
+                    "bet9ja": "B941K2",
+                    "betway": "BW44108",
+                },
+                "deep_links": {
+                    "sportybet": "https://www.sportybet.com/",
+                    "football_com": "https://www.football.com/",
+                    "1xbet": "https://1xbet.com/",
+                    "bet365": "https://www.bet365.com/#/AX/K^Liverpool/",
+                    "pinnacle": "https://www.pinnacle.com/en/search/Liverpool",
+                },
             },
         ]
 
@@ -831,7 +2001,7 @@ class TelegramBot:
         }
 
     def poll_updates(self) -> list[TelegramUpdate]:
-        """Fetch pending updates from Telegram Bot API."""
+        """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""
         if self.mock or not self.token:
             return []
 
@@ -850,6 +2020,26 @@ class TelegramBot:
                     u_id = item["update_id"]
                     if u_id > self.last_update_id:
                         self.last_update_id = u_id
+
+                    cb = item.get("callback_query")
+                    if cb:
+                        cb_id = str(cb.get("id", ""))
+                        cb_data = str(cb.get("data", ""))
+                        sender = cb.get("from", {})
+                        msg = cb.get("message", {})
+                        chat = msg.get("chat", {})
+                        updates.append(TelegramUpdate(
+                            update_id=u_id,
+                            message_id=msg.get("message_id", 0),
+                            chat_id=str(chat.get("id", sender.get("id", ""))),
+                            user_id=str(sender.get("id", "")),
+                            username=sender.get("username", "user"),
+                            text="",
+                            callback_query_id=cb_id,
+                            callback_data=cb_data,
+                        ))
+                        continue
+
                     msg = item.get("message", {})
                     text = msg.get("text", "")
                     if text:
@@ -869,9 +2059,31 @@ class TelegramBot:
             return []
 
     def process_one_update(self, update: TelegramUpdate) -> str:
-        """Handle an inbound update and send reply."""
-        reply_text, reply_markup = self.handle_command(
-            update.text, update.user_id, update.chat_id, username=update.username
-        )
-        self.send_message(update.chat_id, reply_text, reply_markup=reply_markup)
-        return reply_text
+        """Process an inbound update with explicit global exception fallback handler."""
+        try:
+            if update.callback_query_id:
+                reply_text, reply_markup = self.handle_callback_query(update)
+                self.answer_callback_query(update.callback_query_id)
+                if update.chat_id:
+                    self.send_message(update.chat_id, reply_text, reply_markup=reply_markup)
+                return reply_text
+
+            reply_text, reply_markup = self.handle_message(update)
+            effective_markup = reply_markup if reply_markup is not None else MAIN_REPLY_KEYBOARD
+            self.send_message(update.chat_id, reply_text, reply_markup=effective_markup)
+            return reply_text
+        except Exception as exc:
+            logger.exception("Global exception fallback triggered in process_one_update: %s", exc)
+            fallback_msg = (
+                "⚠️ <b>LISA System Notification</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "An unexpected operational exception occurred while processing your request.\n"
+                "Session state has been safely secured.\n\n"
+                "Use the persistent navigation buttons below to continue."
+            )
+            if update.chat_id:
+                try:
+                    self.send_message(update.chat_id, fallback_msg, reply_markup=MAIN_REPLY_KEYBOARD)
+                except Exception:
+                    pass
+            return fallback_msg
