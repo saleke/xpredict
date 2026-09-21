@@ -217,10 +217,10 @@ cp .env.example .env
 # ==============================================================================
 # TELEGRAM BOT & CHANNEL DISPATCH
 # ==============================================================================
-LISA_TELEGRAM_TOKEN=8963364557:AAGQ4_eQDCyhzVY_LY0b0LVEOep9Kh_B8e8
-LISA_TELEGRAM_CHAT_ID=@lisa_sports_alpha
-LISA_TIER2_TELEGRAM_CHAT_ID=-1001234567890
-ADMIN_TELEGRAM_IDS=8720543490
+LISA_TELEGRAM_TOKEN=123456789:dfvwfrevsdwfwbebevswvwvwvv
+LISA_TELEGRAM_CHAT_ID=@user_name
+LISA_TIER2_TELEGRAM_CHAT_ID=-123456789
+ADMIN_TELEGRAM_IDS=123456789
 
 # ==============================================================================
 # DATA SOURCE: THE ODDS API
