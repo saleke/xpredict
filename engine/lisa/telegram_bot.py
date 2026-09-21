@@ -16,6 +16,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 import urllib.parse
@@ -28,7 +29,6 @@ from .gate import Pick
 
 logger = logging.getLogger(__name__)
 
-# Secret salt for verifying browser unlock codes
 _UNLOCK_SECRET = "lisa_quantum_social_unlock_salt_2026"
 DEFAULT_VERIFIED_PATH = "web/data/verified_users.json"
 
@@ -174,11 +174,17 @@ MAIN_REPLY_KEYBOARD = {
 }
 
 
+SYSTEM_LIVE_STATUS: bool = True
+
+
 class BankrollFSMManager:
     STATE_IDLE = "IDLE"
     STATE_AWAITING_AMOUNT = "AWAITING_BANKROLL_AMOUNT"
     STATE_AWAITING_RISK = "AWAITING_RISK_PROFILE"
     STATE_AWAITING_BOOK = "AWAITING_PREFERRED_BOOK"
+    STATE_WAIT_FOR_SETTLEMENT_DATA = "WAIT_FOR_SETTLEMENT_DATA"
+    STATE_WAIT_FOR_PROVISION_DATA = "WAIT_FOR_PROVISION_DATA"
+    STATE_WAIT_FOR_BROADCAST_DATA = "WAIT_FOR_BROADCAST_DATA"
 
     def __init__(self, db_path: Optional[str] = "data/lisa.db"):
         self.db_path = db_path
@@ -337,8 +343,8 @@ def make_execution_buttons(pick: Pick) -> dict[str, Any]:
             ],
             [
                 {
-                    "text": "📊 View Model Calibration Diagram",
-                    "url": "http://localhost:8080/#calibration",
+                    "text": "📊 View Model Calibration & Stats",
+                    "callback_data": "menu:ledger",
                 }
             ]
         ]
@@ -494,6 +500,9 @@ def format_free_picks_html(picks: list[dict[str, Any]]) -> str:
 def format_active_top_picks_contract(
     picks: list[dict[str, Any]],
     user_profile: Optional[dict[str, Any]] = None,
+    is_channel_member: bool = True,
+    user_tier: str = "free",
+    channel_username: str = "@lisa_sports_alpha",
 ) -> tuple[str, dict[str, Any]]:
     """Format active top picks according to proprietary data abstraction contract with inline execution buttons."""
     if not picks:
@@ -523,10 +532,34 @@ def format_active_top_picks_contract(
     if bankroll_header:
         lines.append(bankroll_header.strip())
 
-    for idx, p in enumerate(picks[:3], 1):
-        tier_tag = "🆓 FREE" if idx == 1 else "✈️ TELEGRAM UNLOCKED"
+    if user_tier in ("tier2", "tier3", "admin"):
+        limit = 12
+    elif user_tier == "tier1":
+        limit = 5
+    else:
+        limit = 2
+
+    for idx, p in enumerate(picks[:limit], 1):
         home = p.get("home_team", "Home")
         away = p.get("away_team", "Away")
+        kickoff = p.get("kickoff_human") or "Upcoming"
+
+        if idx == 1:
+            tier_tag = "🆓 FREE"
+        elif idx == 2:
+            tier_tag = "✈️ TELEGRAM UNLOCKED"
+            if not is_channel_member and user_tier == "free":
+                lines.append(
+                    f"<b>Match #2 [{tier_tag}] • {kickoff}</b>\n"
+                    f"• <b>{home} vs {away}</b>\n"
+                    f"• 🔒 <i>Join our Telegram channel to unlock this match and booking codes for free!</i>\n"
+                )
+                continue
+        elif idx in (3, 4, 5):
+            tier_tag = "🥉 TIER 1"
+        else:
+            tier_tag = "🥈 TIER 2"
+
         sel = p.get("outcome_name", "Pick")
         prob = float(p.get("p_true", 0.75)) * 100
         fair_odds = float(p.get("fair_odds", 1.25))
@@ -537,7 +570,6 @@ def format_active_top_picks_contract(
         conviction = float(p.get("conviction_score", 8.0))
         conviction_display = min(10.0, conviction) if conviction <= 10.0 else round(conviction / 3.0, 1)
         stars = "🟩" * min(5, max(1, int(round(conviction_display / 2.0))))
-        kickoff = p.get("kickoff_human") or "Upcoming"
         codes = p.get("booking_codes", {})
 
         sizing_str = f"<code>{units:.1f}u</code>"
@@ -571,10 +603,22 @@ def format_active_top_picks_contract(
         )
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("⚡ <i>Matches #4–#12 available in Tier 2 Pro ($49/mo).</i>")
+    if user_tier == "free":
+        lines.append("🔒 <i>Matches #3–#5 available in Tier 1 ($19/mo).</i>")
+        lines.append("⚡ <i>Matches #6–#12 & 5-Fold Parlay Acca in Tier 2 Pro ($49/mo).</i>")
+    elif user_tier == "tier1":
+        lines.append("⚡ <i>Matches #6–#12 & 5-Fold Parlay Acca in Tier 2 Pro ($49/mo).</i>")
+    else:
+        lines.append("👑 <i>Full institutional slate unlocked.</i>")
     lines.append("🌐 <i>Web Terminal: http://localhost:8080/#picks</i>")
 
     keyboard_rows: list[list[dict[str, Any]]] = []
+    if user_tier == "free" and not is_channel_member:
+        clean_chan = channel_username.replace("@", "")
+        keyboard_rows.append([
+            {"text": f"✈️ Join {channel_username} to Unlock Match #2", "url": f"https://t.me/{clean_chan}"}
+        ])
+
     first_pick = picks[0] if picks else {}
     first_links = first_pick.get("deep_links", {})
 
@@ -604,11 +648,18 @@ def format_active_top_picks_contract(
         {"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"},
         {"text": "🔄 Refresh Picks", "callback_data": "menu:picks"},
     ])
+    if user_tier == "free":
+        keyboard_rows.append([
+            {"text": "👑 Upgrade Tier ($19 / $49)", "callback_data": "/vip"},
+        ])
 
     return ("\n".join(lines), {"inline_keyboard": keyboard_rows})
 
 
-def format_parlay_html(accumulator_codes: Optional[dict[str, str]] = None) -> tuple[str, dict[str, Any]]:
+def format_parlay_html(
+    accumulator_codes: Optional[dict[str, str]] = None,
+    user_tier: str = "free",
+) -> tuple[str, dict[str, Any]]:
     """Format high-conviction 5-fold parlay with booking codes and deep links."""
     codes = accumulator_codes or {
         "sportybet": "BC792K",
@@ -617,6 +668,48 @@ def format_parlay_html(accumulator_codes: Optional[dict[str, str]] = None) -> tu
         "bet9ja": "B941K2",
         "betway": "BW44108",
     }
+
+    if user_tier in ("tier2", "tier3", "admin"):
+        text = (
+            "⚡ <b>LISA HIGH-CONVICTION 5-FOLD PARLAY</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "1️⃣ <b>Arsenal vs Wolves:</b> Arsenal ML @ 1.23\n"
+            "2️⃣ <b>Man City vs Ipswich:</b> Man City ML @ 1.18\n"
+            "3️⃣ <b>Liverpool vs Brentford:</b> Liverpool ML @ 1.28\n"
+            "4️⃣ <b>Real Madrid vs Valladolid:</b> Real Madrid ML @ 1.17\n"
+            "5️⃣ <b>Bayern Munich vs Freiburg:</b> Bayern ML @ 1.22\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>Combined True Probability:</b> <code>74.2%</code>\n"
+            "⚖️ <b>Accumulator Combined Odds:</b> <code>2.38</code>\n"
+            "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n\n"
+            "🎟️ <b>Direct 1-Click Platform Booking Codes:</b>\n"
+            f"• 🔴 <b>SportyBet:</b> <code>{codes.get('sportybet', 'BC792K')}</code>\n"
+            f"• 🟢 <b>Football.com:</b> <code>{codes.get('football_com', 'FC82910')}</code>\n"
+            f"• 🔵 <b>1xBet:</b> <code>{codes.get('1xbet', 'W49TG')}</code>\n"
+            f"• 🟠 <b>Bet9ja:</b> <code>{codes.get('bet9ja', 'B941K2')}</code>\n"
+            f"• ⚪ <b>Betway:</b> <code>{codes.get('betway', 'BW44108')}</code>\n"
+            "• 🟩 <b>Bet365:</b> <i>Auto-loads via Direct Slip Link</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📱 <i>Open your bookmaker app, tap 'Load Bet Slip', and paste code.</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "🔴 SportyBet", "url": "https://www.sportybet.com/"},
+                    {"text": "🟢 Football.com", "url": "https://www.football.com/"},
+                ],
+                [
+                    {"text": "🔵 1xBet", "url": "https://www.1xbet.com/"},
+                    {"text": "🟠 Bet9ja", "url": "https://sports.bet9ja.com/"},
+                ],
+                [
+                    {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
+                    {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
+                ],
+            ]
+        }
+        return (text, markup)
+
     text = (
         "⚡ <b>LISA HIGH-CONVICTION 5-FOLD PARLAY</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -628,27 +721,15 @@ def format_parlay_html(accumulator_codes: Optional[dict[str, str]] = None) -> tu
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "📊 <b>Combined True Probability:</b> <code>74.2%</code>\n"
         "⚖️ <b>Accumulator Combined Odds:</b> <code>2.38</code>\n"
-        "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n\n"
-        "🎟️ <b>Direct 1-Click Platform Booking Codes:</b>\n"
-        f"• 🔴 <b>SportyBet:</b> <code>{codes.get('sportybet', 'BC792K')}</code>\n"
-        f"• 🟢 <b>Football.com:</b> <code>{codes.get('football_com', 'FC82910')}</code>\n"
-        f"• 🔵 <b>1xBet:</b> <code>{codes.get('1xbet', 'W49TG')}</code>\n"
-        f"• 🟠 <b>Bet9ja:</b> <code>{codes.get('bet9ja', 'B941K2')}</code>\n"
-        f"• ⚪ <b>Betway:</b> <code>{codes.get('betway', 'BW44108')}</code>\n"
-        "• 🟩 <b>Bet365:</b> <i>Auto-loads via Direct Slip Link</i>\n"
+        "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📱 <i>Open your bookmaker app, tap 'Load Bet Slip', and paste code.</i>"
+        "🔒 <b>1-CLICK BOOKING CODES GATED (Tier 2 Pro Required)</b>\n\n"
+        "To prevent market line-movement slippage before sharp execution, 1-click booking slips across SportyBet, Football.com, and 1xBet are exclusive to <b>Tier 2 Pro ($49/mo)</b> subscribers.\n\n"
+        "👉 Tap below to upgrade and unlock immediate accumulator slips."
     )
     markup = {
         "inline_keyboard": [
-            [
-                {"text": "🔴 SportyBet", "url": "https://www.sportybet.com/"},
-                {"text": "🟢 Football.com", "url": "https://www.football.com/"},
-            ],
-            [
-                {"text": "🔵 1xBet", "url": "https://www.1xbet.com/"},
-                {"text": "🟠 Bet9ja", "url": "https://sports.bet9ja.com/"},
-            ],
+            [{"text": "👑 Unlock 5-Fold Slip with Tier 2 Pro ($49/mo)", "callback_data": "/vip"}],
             [
                 {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
                 {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
@@ -728,6 +809,10 @@ class TelegramBot:
         self.registry = verification_registry or registry
         self.fsm = BankrollFSMManager(db_path=getattr(self.registry, "db_path", "data/lisa.db"))
         self._mock_members: set[str] = set()
+        self._member_cache: dict[str, tuple[bool, float]] = {}
+        self._tier_cache: dict[str, tuple[str, float]] = {}
+        self._picks_cache: tuple[list[dict[str, Any]], float] = ([], 0.0)
+        self._summary_cache: tuple[dict[str, Any], float] = ({}, 0.0)
 
         if admin_telegram_ids is not None:
             raw_admins = admin_telegram_ids
@@ -756,6 +841,12 @@ class TelegramBot:
     def is_admin(self, user_id: str) -> bool:
         """Check if incoming user ID is explicitly authorized in the admin whitelist."""
         return str(user_id).strip() in self.admin_telegram_ids
+
+    def is_system_paused(self) -> bool:
+        global SYSTEM_LIVE_STATUS
+        if self.storage and hasattr(self.storage, "is_system_paused"):
+            return self.storage.is_system_paused()
+        return not SYSTEM_LIVE_STATUS
 
     def answer_callback_query(
         self,
@@ -901,12 +992,21 @@ class TelegramBot:
             return {"ok": False, "error": str(exc)}
 
     def is_channel_member(self, chat_id: str, user_id: str) -> bool:
-        """Check if user has verified membership (member, admin, creator)."""
+        cache_key = f"{chat_id}:{user_id}"
+        now = time.time()
+        cached = self._member_cache.get(cache_key)
+        if cached is not None:
+            val, exp = cached
+            if now < exp:
+                return val
         res = self.get_chat_member(chat_id, user_id)
         if not res.get("ok"):
+            self._member_cache[cache_key] = (False, now + 60.0)
             return False
         status = res.get("result", {}).get("status", "")
-        return status in ("creator", "administrator", "member", "restricted")
+        is_member = status in ("creator", "administrator", "member", "restricted")
+        self._member_cache[cache_key] = (is_member, now + 300.0)
+        return is_member
 
     def create_single_use_invite(
         self, chat_id: str, member_limit: int = 1, expire_seconds: int = 300
@@ -961,6 +1061,49 @@ class TelegramBot:
         except Exception as exc:
             logger.warning("banChatMember failed: %s", exc)
             return False
+
+    def get_user_tier(self, user_id: str) -> str:
+        if self.is_admin(user_id):
+            return "admin"
+        now = time.time()
+        cached = self._tier_cache.get(user_id)
+        if cached is not None:
+            val, exp = cached
+            if now < exp:
+                return val
+        tier = "free"
+        if self.registry and hasattr(self.registry, "db_path") and self.registry.db_path:
+            try:
+                import sqlite3
+                with sqlite3.connect(self.registry.db_path, timeout=5.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT tier FROM users WHERE id = ? OR email = ? LIMIT 1",
+                        (str(user_id), str(user_id)),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        tier = str(row[0]).lower()
+            except Exception:
+                pass
+        self._tier_cache[user_id] = (tier, now + 300.0)
+        return tier
+
+    def invalidate_user_cache(self, user_id: str) -> None:
+        self._tier_cache.pop(str(user_id), None)
+        target_suffix = f":{user_id}"
+        for k in list(self._member_cache.keys()):
+            if k.endswith(target_suffix):
+                self._member_cache.pop(k, None)
+
+    def is_user_telegram_verified(self, user_id: str) -> bool:
+        if self.is_admin(user_id):
+            return True
+        if self.is_channel_member(self.channel_chat_id, user_id):
+            return True
+        if self.registry and self.registry.is_verified(user_id):
+            return True
+        return False
 
     # -- Channel Broadcasts --------------------------------------------------
 
@@ -1100,11 +1243,10 @@ class TelegramBot:
                     reply_markup,
                 )
 
-            # Default /start message
             code = generate_unlock_token(user_id)
             return (
                 f"🤖 <b>Welcome to LISA Gatekeeper</b>\n\n"
-                f"Institutional sports prediction refinery powered by Shin de-vigging and cross-bookmaker consensus convergence.\n\n"
+                f"Institutional sports prediction refinery powered by proprietary multi-market consensus and real-time efficiency analytics.\n\n"
                 f"🔑 <b>Your Backup Unlock Code:</b> <code>{code}</code>\n\n"
                 f"<b>Available Commands:</b>\n"
                 f"• /picks — View today's free and unlocked selections\n"
@@ -1128,7 +1270,7 @@ class TelegramBot:
             return self._handle_bankroll_menu(user_id, username)
 
         if cmd in ("/parlay", "/accumulator"):
-            return self._handle_parlay()
+            return self._handle_parlay(user_id)
 
         if cmd in ("/codes", "/bookmakers"):
             return self._handle_booking_codes()
@@ -1140,7 +1282,7 @@ class TelegramBot:
                     return (
                         f"✅ <b>Unlock Code Verified!</b>\n"
                         f"Code <code>{arg}</code> is active. Your web browser session at "
-                        f"http://localhost:8080 now has Matches #2 & #3 unlocked.",
+                        f"http://localhost:8080 now has Match #2 unlocked.",
                         None,
                     )
                 return ("❌ Invalid code format. Please check the code and try again.", None)
@@ -1148,7 +1290,7 @@ class TelegramBot:
             return (
                 f"🔑 <b>Your Web Terminal Unlock Code:</b>\n\n"
                 f"<code>{code}</code>\n\n"
-                f"Enter this code on the web dashboard to unlock Match #2 & #3.",
+                f"Enter this code on the web dashboard to unlock Match #2 for free.",
                 None,
             )
 
@@ -1156,16 +1298,22 @@ class TelegramBot:
             return (
                 f"👑 <b>LISA INSTITUTIONAL MEMBERSHIP TIERS</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ <b>Tier 1: Core 5</b> ($19/mo)\n"
-                f"• Top 5 high-conviction Diamond picks daily\n"
-                f"• Kelly Bankroll recommended units\n\n"
-                f"🚀 <b>Tier 2: Full Pro</b> ($49/mo)\n"
-                f"• All 12 daily picks across 5 leagues\n"
-                f"• Dual-Yield Alpha Boosters & Handicap lines\n"
-                f"• Telegram push alerts with instant line movements\n\n"
-                f"👑 <b>Tier 3: Syndicate VIP</b> (Private Desk)\n"
-                f"• Real-time CLV arbitrage alerts\n"
-                f"• Private Discord / Telegram direct feed\n"
+                f"🆓 <b>Free Tier:</b> 1 Daily Anchor Pick + Match #2 free upon joining Telegram\n\n"
+                f"⚡ <b>Tier 1: Sharp Starter</b> ($19/mo)\n"
+                f"• Top 5 Diamond Picks daily (Matches #1 to #5)\n"
+                f"• Real-time Telegram push alerts on value detection\n"
+                f"• Daily Sucker-Bet Avoidance Warnings\n"
+                f"• Full 6-bookmaker booking codes for all 5 picks\n\n"
+                f"🚀 <b>Tier 2: Pro Trader</b> ($49/mo)\n"
+                f"• All 12 daily picks across 9 leagues unlocked\n"
+                f"• Algorithmic 5-Fold Parlay Acca with 1-click booking codes\n"
+                f"• VIP Private Channel priority access\n"
+                f"• CLV early steam alerts before lines drop\n\n"
+                f"👑 <b>Tier 3: Syndicate VIP</b> ($149/mo)\n"
+                f"• Direct REST API & Webhook Feed (/api/v1/stream)\n"
+                f"• Portfolio correlation & joint covariance matrix\n"
+                f"• Real-time arbitrage & soft-book discrepancy stream\n"
+                f"• 1-on-1 Syndicate Desk consultation\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🌐 <i>Upgrade online: http://localhost:8080</i>",
                 None,
@@ -1218,11 +1366,8 @@ class TelegramBot:
 
     def _handle_admin_dashboard(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Display Mobile Executive Override Console with live telemetry and audit stats."""
-        is_paused = False
-        if self.storage and hasattr(self.storage, "is_system_paused"):
-            is_paused = self.storage.is_system_paused()
-
-        status_badge = "🚨 <b>PAUSED (Safe Mode)</b>" if is_paused else "✅ <b>ACTIVE (Live Ingestion)</b>"
+        is_paused = self.is_system_paused()
+        status_badge = "⏸️ <b>PAUSED (Alerts Halted)</b>" if is_paused else "✅ <b>ACTIVE (Live Ingestion)</b>"
 
         pick_counts = {"total": 0, "pending": 0, "settled": 0}
         if self.storage and hasattr(self.storage, "count_picks"):
@@ -1248,23 +1393,28 @@ class TelegramBot:
             f"⚡ <b>System Run-State:</b> {status_badge}\n"
             f"📊 <b>Picks Ledger:</b> {pick_counts.get('total', 0)} total ({pick_counts.get('settled', 0)} settled, {pick_counts.get('pending', 0)} pending)\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>Available Executive Overrides:</b>\n"
-            "• <code>/settle &lt;match_id&gt; &lt;WIN|LOSS|VOID&gt;</code> — Settle match\n"
-            "• <code>/grant &lt;email&gt; &lt;tier1|tier2|tier3&gt;</code> — Provision user\n"
-            "• <code>/broadcast &lt;announcement text&gt;</code> — Dispatch announcement\n"
-            "• <code>/sys_pause</code> — Halt all automated channel alerts\n"
-            "• <code>/sys_resume</code> — Re-enable automated alert pipeline\n"
+            "<b>Interactive Executive Keypad:</b>\n"
+            "• <b>🟢 Settle Match:</b> Resolve match outcome (<match_id>:<status>)\n"
+            "• <b>👤 Grant Access:</b> Provision VIP access (<email>:<tier>)\n"
+            "• <b>⚠️ System Pause:</b> Toggle automated alert kill-switch\n"
+            "• <b>📣 Broadcast:</b> Dispatch announcement across channels\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📝 <b>Recent Audit Activity:</b>\n{logs_text}"
         )
 
-        pause_btn = {"text": "✅ Resume Alert Engine", "callback_data": "admin:resume"} if is_paused else {"text": "🚨 Emergency Kill-Switch", "callback_data": "admin:pause"}
-
+        toggle_btn_text = "⚠️ System Pause" if not is_paused else "▶️ System Resume"
         markup = {
             "inline_keyboard": [
-                [pause_btn],
                 [
-                    {"text": "📝 View Full Audit Trail", "callback_data": "admin:logs"},
+                    {"text": "🟢 Settle Match", "callback_data": "admin_settle_menu"},
+                    {"text": "👤 Grant Access", "callback_data": "admin_grant_menu"},
+                ],
+                [
+                    {"text": toggle_btn_text, "callback_data": "admin_toggle_status"},
+                    {"text": "📣 Broadcast", "callback_data": "admin_msg_menu"},
+                ],
+                [
+                    {"text": "📜 Audit Logs", "callback_data": "admin:logs"},
                     {"text": "🔄 Refresh Console", "callback_data": "admin:status"},
                 ],
                 [
@@ -1275,24 +1425,85 @@ class TelegramBot:
         }
         return (text, markup)
 
-    def _handle_admin_settle(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
-        """Manually force match settlement status across SQLite and public ledger."""
-        if len(args) < 2:
+    def _handle_admin_settle_menu(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        self.fsm.set_state(user_id, BankrollFSMManager.STATE_WAIT_FOR_SETTLEMENT_DATA)
+        keyboard = []
+
+        pending_matches = []
+        if self.storage and hasattr(self.storage, "scan_live_keys"):
+            for k in list(self.storage.scan_live_keys())[:4]:
+                data = self.storage.get_live(k)
+                if data and isinstance(data, dict) and data.get("match_id"):
+                    pending_matches.append(data)
+
+        for m in pending_matches:
+            m_id = m.get("match_id", "")
+            title = f"⚡ {m.get('home_team', 'Home')} vs {m.get('away_team', 'Away')}"[:30]
+            keyboard.append([{"text": title, "callback_data": f"admin_quick_pick:{m_id}"}])
+
+        keyboard.append([{"text": "« Back to Admin Console", "callback_data": "admin:cancel"}])
+
+        text = (
+            "🟢 <b>MANUAL MATCH SETTLEMENT (Interactive Mode)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>State:</b> <code>WAIT_FOR_SETTLEMENT_DATA</code>\n\n"
+            "Send the settlement string in the format:\n"
+            "<code>&lt;match_id&gt;:&lt;WIN/LOSS/VOID&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>soccer_epl_mci_ips:WIN</code>\n"
+            "• <code>nba-thunder-wizards:LOSS</code>\n"
+            "• <code>match-101:2-1</code>\n\n"
+            "<i>Or select an active fixture below to settle with 1 tap:</i>"
+        )
+        return (text, {"inline_keyboard": keyboard})
+
+    def _handle_admin_quick_pick(self, match_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        text = (
+            "🏟️ <b>SELECT OFFICIAL OUTCOME</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Target Fixture: <code>{match_id}</code>\n\n"
+            "Tap the verified match result:"
+        )
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ WIN", "callback_data": f"admin_quick_settle:{match_id}:WIN"},
+                    {"text": "❌ LOSS", "callback_data": f"admin_quick_settle:{match_id}:LOSS"},
+                    {"text": "🔄 VOID", "callback_data": f"admin_quick_settle:{match_id}:VOID"},
+                ],
+                [{"text": "« Cancel", "callback_data": "admin:cancel"}]
+            ]
+        }
+        return (text, markup)
+
+    def _process_admin_settlement_input(self, text: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        raw = text.strip()
+        if ":" in raw:
+            parts = [p.strip() for p in raw.split(":", 1)]
+        else:
+            parts = raw.split()
+
+        if len(parts) < 2:
             return (
-                "⚠️ <b>Usage:</b> <code>/settle &lt;match_id&gt; &lt;WIN|LOSS|VOID|score&gt;</code>\n"
-                "Example: <code>/settle nba-thunder-wizards WIN</code>\n"
-                "Example: <code>/settle test-match-101 2-1</code>",
-                None,
+                "⚠️ <b>Invalid Format</b>\n\n"
+                "Please send: <code>&lt;match_id&gt;:&lt;WIN/LOSS/VOID&gt;</code>\n"
+                "Example: <code>soccer_epl_mci_ips:WIN</code>\n\n"
+                "Type /cancel or tap below to abort.",
+                {"inline_keyboard": [[{"text": "« Cancel", "callback_data": "admin:cancel"}]]}
             )
 
-        match_id = args[0].strip()
-        raw_res = args[1].strip().upper()
+        self.fsm.clear_temp(user_id)
+        return self._execute_settlement(parts[0], parts[1], user_id)
+
+    def _execute_settlement(self, match_id: str, raw_res: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        clean_match = match_id.strip()
+        clean_res = raw_res.strip().upper()
 
         valid_results = {"WIN", "LOSS", "VOID", "PUSH"}
-        if raw_res in valid_results:
-            result = "VOID" if raw_res == "PUSH" else raw_res
-        elif "-" in raw_res:
-            parts = raw_res.split("-")
+        if clean_res in valid_results:
+            result = "VOID" if clean_res == "PUSH" else clean_res
+        elif "-" in clean_res:
+            parts = clean_res.split("-")
             try:
                 h_score = int(parts[0])
                 a_score = int(parts[1])
@@ -1304,19 +1515,19 @@ class TelegramBot:
 
         updated = 0
         if self.storage and hasattr(self.storage, "manual_settle_match"):
-            updated = self.storage.manual_settle_match(match_id, result=result)
+            updated = self.storage.manual_settle_match(clean_match, result=result)
 
         audit_id = 0
         if self.storage and hasattr(self.storage, "log_admin_action"):
             audit_id = self.storage.log_admin_action(
                 admin_id=user_id,
                 action="MANUAL_SETTLEMENT",
-                target=match_id,
+                target=clean_match,
                 details=f"Result forced to {result}. Rows updated: {updated}",
             )
 
         self.broadcast_settlement({
-            "match_id": match_id,
+            "match_id": clean_match,
             "result": result,
             "best_odds": 1.50,
             "recommended_units": 1.0,
@@ -1325,7 +1536,7 @@ class TelegramBot:
         text = (
             "✅ <b>MANUAL MATCH SETTLEMENT SYNCHRONIZED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏟️ <b>Match Target:</b> <code>{match_id}</code>\n"
+            f"🏟️ <b>Match Target:</b> <code>{clean_match}</code>\n"
             f"🎯 <b>Settlement Result:</b> <code>{result}</code>\n"
             f"📊 <b>Ledger Rows Updated:</b> <code>{updated}</code>\n"
             f"📝 <b>Security Audit ID:</b> <code>#{audit_id}</code>\n"
@@ -1341,6 +1552,57 @@ class TelegramBot:
         }
         return (text, markup)
 
+    def _handle_admin_settle(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Manually force match settlement status across SQLite and public ledger."""
+        if len(args) < 2:
+            return (
+                "⚠️ <b>Usage:</b> <code>/settle &lt;match_id&gt; &lt;WIN|LOSS|VOID|score&gt;</code>\n"
+                "Example: <code>/settle nba-thunder-wizards WIN</code>\n"
+                "Example: <code>/settle test-match-101 2-1</code>",
+                None,
+            )
+        return self._execute_settlement(args[0], args[1], user_id)
+
+    def _handle_admin_grant_menu(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        self.fsm.set_state(user_id, BankrollFSMManager.STATE_WAIT_FOR_PROVISION_DATA)
+        text = (
+            "👤 <b>CUSTOMER ACCESS PROVISIONER (Interactive Mode)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>State:</b> <code>WAIT_FOR_PROVISION_DATA</code>\n\n"
+            "Send the provisioning string in the format:\n"
+            "<code>&lt;user_email&gt;:&lt;TIER_1/TIER_2/TIER_3&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>influencer@review.com:TIER_2</code>\n"
+            "• <code>vip_trader@gmail.com:TIER_1</code>\n"
+            "• <code>syndicate@fund.org:TIER_3</code>\n\n"
+            "<i>The profile will be set to ACTIVE with single-use invite and web unlock tokens generated.</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "« Back to Admin Console", "callback_data": "admin:cancel"}]
+            ]
+        }
+        return (text, markup)
+
+    def _process_admin_provision_input(self, text: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        raw = text.strip()
+        if ":" in raw:
+            parts = [p.strip() for p in raw.split(":", 1)]
+        else:
+            parts = raw.split()
+
+        if len(parts) < 2:
+            return (
+                "⚠️ <b>Invalid Format</b>\n\n"
+                "Please send: <code>&lt;user_email&gt;:&lt;TIER_1/TIER_2/TIER_3&gt;</code>\n"
+                "Example: <code>vip@gmail.com:TIER_2</code>\n\n"
+                "Type /cancel or tap below to abort.",
+                {"inline_keyboard": [[{"text": "« Cancel", "callback_data": "admin:cancel"}]]}
+            )
+
+        self.fsm.clear_temp(user_id)
+        return self._handle_admin_grant(parts, user_id)
+
     def _handle_admin_grant(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Manually provision a user account with active subscription tier and invite link."""
         if not args:
@@ -1350,8 +1612,12 @@ class TelegramBot:
                 None,
             )
 
-        target = args[0].strip()
-        tier_input = args[1].lower() if len(args) > 1 else "tier2"
+        if len(args) == 1 and ":" in args[0]:
+            target, tier_input = args[0].split(":", 1)
+        else:
+            target = args[0].strip()
+            tier_input = args[1].lower() if len(args) > 1 else "tier2"
+        target = target.strip()
         clean_tier = "tier2" if "2" in tier_input else "tier3" if "3" in tier_input else "tier1" if "1" in tier_input else "free"
 
         if self.registry and hasattr(self.registry, "db_path") and self.registry.db_path:
@@ -1367,6 +1633,7 @@ class TelegramBot:
                 logger.warning("Failed to update users table during grant: %s", exc)
 
         self.registry.verify(target, telegram_user_id=target if target.isdigit() else "")
+        self.invalidate_user_cache(target)
 
         channel = self.tier2_channel_chat_id if clean_tier in ("tier2", "tier3") else self.channel_chat_id
         invite = self.create_single_use_invite(channel, member_limit=1, expire_seconds=86400)
@@ -1398,6 +1665,26 @@ class TelegramBot:
             ]
         }
         return (text, markup)
+
+    def _handle_admin_broadcast_menu(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        self.fsm.set_state(user_id, BankrollFSMManager.STATE_WAIT_FOR_BROADCAST_DATA)
+        text = (
+            "📣 <b>GLOBAL COMMUNITY BROADCAST (Interactive Mode)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>State:</b> <code>WAIT_FOR_BROADCAST_DATA</code>\n\n"
+            "Please send the message you wish to broadcast across all official public and VIP channels:\n\n"
+            "<i>HTML formatting is supported (&lt;b&gt;, &lt;code&gt;, &lt;i&gt;).</i>"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "« Back to Admin Console", "callback_data": "admin:cancel"}]
+            ]
+        }
+        return (text, markup)
+
+    def _process_admin_broadcast_input(self, text: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        self.fsm.clear_temp(user_id)
+        return self._handle_admin_broadcast([text], user_id)
 
     def _handle_admin_broadcast(self, args: list[str], user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Push global administrative announcement across all official channels."""
@@ -1446,8 +1733,26 @@ class TelegramBot:
         }
         return (text, markup)
 
+    def _handle_admin_toggle_status(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        global SYSTEM_LIVE_STATUS
+        is_paused = self.is_system_paused()
+        new_paused = not is_paused
+        SYSTEM_LIVE_STATUS = not new_paused
+        if self.storage and hasattr(self.storage, "set_system_paused"):
+            self.storage.set_system_paused(new_paused)
+        if self.storage and hasattr(self.storage, "log_admin_action"):
+            self.storage.log_admin_action(
+                admin_id=user_id,
+                action="SYSTEM_PAUSE" if new_paused else "SYSTEM_RESUME",
+                target="automated_pipeline",
+                details=f"SYSTEM_LIVE_STATUS modified to {SYSTEM_LIVE_STATUS}",
+            )
+        return self._handle_admin_dashboard(user_id)
+
     def _handle_admin_sys_pause(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Emergency kill-switch: halts automated channel broadcasts and alert emissions."""
+        global SYSTEM_LIVE_STATUS
+        SYSTEM_LIVE_STATUS = False
         if self.storage and hasattr(self.storage, "set_system_paused"):
             self.storage.set_system_paused(True)
 
@@ -1479,6 +1784,8 @@ class TelegramBot:
 
     def _handle_admin_sys_resume(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Emergency kill-switch disengage: restores normal automated signal emissions."""
+        global SYSTEM_LIVE_STATUS
+        SYSTEM_LIVE_STATUS = True
         if self.storage and hasattr(self.storage, "set_system_paused"):
             self.storage.set_system_paused(False)
 
@@ -1542,7 +1849,15 @@ class TelegramBot:
         """Load picks from live cache/dashboard and format according to proprietary data abstraction contract."""
         picks = self._load_dashboard_picks()
         profile = self.fsm.get_profile(user_id) if user_id else None
-        text, markup = format_active_top_picks_contract(picks, user_profile=profile)
+        is_member = self.is_user_telegram_verified(user_id) if user_id else False
+        tier = self.get_user_tier(user_id) if user_id else "free"
+        text, markup = format_active_top_picks_contract(
+            picks,
+            user_profile=profile,
+            is_channel_member=is_member,
+            user_tier=tier,
+            channel_username=self.channel_chat_id,
+        )
         return (text, markup)
 
     def _handle_bankroll_menu(self, user_id: str, username: str = "") -> tuple[str, Optional[dict[str, Any]]]:
@@ -1598,15 +1913,16 @@ class TelegramBot:
         text = format_stats_html(summary)
         markup = {
             "inline_keyboard": [
-                [{"text": "🌐 Open Full Web Ledger", "url": "http://localhost:8080/#ledger"}],
+                [{"text": "⚡ Refresh Performance Stats", "callback_data": "menu:ledger"}],
                 [{"text": "📊 Active Top Picks", "callback_data": "menu:picks"}],
             ]
         }
         return (text, markup)
 
-    def _handle_parlay(self) -> tuple[str, Optional[dict[str, Any]]]:
+    def _handle_parlay(self, user_id: str = "") -> tuple[str, Optional[dict[str, Any]]]:
         """Display high-conviction 5-fold parlay with bookmaker codes."""
-        return format_parlay_html()
+        tier = self.get_user_tier(user_id) if user_id else "free"
+        return format_parlay_html(user_tier=tier)
 
     def _handle_booking_codes(self) -> tuple[str, Optional[dict[str, Any]]]:
         """Display bookmaker platform booking codes cheatsheet."""
@@ -1738,7 +2054,7 @@ class TelegramBot:
             return self._handle_accuracy_ledger()
 
         if data in ("menu:parlay", "/parlay"):
-            return self._handle_parlay()
+            return self._handle_parlay(user_id)
 
         if data in ("menu:codes", "/codes"):
             return self._handle_booking_codes()
@@ -1746,17 +2062,36 @@ class TelegramBot:
         if data in ("menu:traps", "/traps"):
             return self._handle_traps()
 
-        if data.startswith("admin:"):
+        if data.startswith("admin:") or data.startswith("admin_"):
             if not self.is_admin(user_id):
                 return ("Access denied.", None)
-            if data == "admin:status":
-                return self._handle_admin_dashboard(user_id)
+            if data in ("admin_settle_menu", "admin:settle_menu"):
+                return self._handle_admin_settle_menu(user_id)
+            if data in ("admin_grant_menu", "admin:grant_menu"):
+                return self._handle_admin_grant_menu(user_id)
+            if data in ("admin_toggle_status", "admin:toggle_status"):
+                return self._handle_admin_toggle_status(user_id)
             if data == "admin:pause":
                 return self._handle_admin_sys_pause(user_id)
             if data == "admin:resume":
                 return self._handle_admin_sys_resume(user_id)
-            if data == "admin:logs":
+            if data in ("admin_msg_menu", "admin:msg_menu", "admin:broadcast_menu"):
+                return self._handle_admin_broadcast_menu(user_id)
+            if data in ("admin:status", "admin:dashboard", "admin_dashboard"):
+                return self._handle_admin_dashboard(user_id)
+            if data in ("admin:logs", "admin_logs"):
                 return self._handle_admin_logs(user_id)
+            if data == "admin:cancel":
+                self.fsm.clear_temp(user_id)
+                return self._handle_admin_dashboard(user_id)
+            if data.startswith("admin_quick_pick:"):
+                m_id = data.split(":", 1)[1]
+                return self._handle_admin_quick_pick(m_id)
+            if data.startswith("admin_quick_settle:"):
+                parts = data.split(":")
+                m_id = parts[1]
+                res = parts[2] if len(parts) > 2 else "WIN"
+                return self._execute_settlement(m_id, res, user_id)
 
         return ("Action completed.", None)
 
@@ -1768,6 +2103,17 @@ class TelegramBot:
         user_id = update.user_id
         username = update.username or "user"
         state = self.fsm.get_state(user_id)
+
+        if self.is_admin(user_id):
+            if raw_text.lower() in ("/cancel", "cancel") and state.startswith("WAIT_"):
+                self.fsm.clear_temp(user_id)
+                return self._handle_admin_dashboard(user_id)
+            if state == BankrollFSMManager.STATE_WAIT_FOR_SETTLEMENT_DATA:
+                return self._process_admin_settlement_input(raw_text, user_id)
+            if state == BankrollFSMManager.STATE_WAIT_FOR_PROVISION_DATA:
+                return self._process_admin_provision_input(raw_text, user_id)
+            if state == BankrollFSMManager.STATE_WAIT_FOR_BROADCAST_DATA:
+                return self._process_admin_broadcast_input(raw_text, user_id)
 
         if state == BankrollFSMManager.STATE_AWAITING_AMOUNT:
             clean_num = raw_text.replace("$", "").replace("€", "").replace("£", "").replace("₦", "").replace(",", "")
@@ -1859,7 +2205,7 @@ class TelegramBot:
         if "accuracy ledger" in norm:
             return self._handle_accuracy_ledger()
         if "5-fold parlay" in norm:
-            return self._handle_parlay()
+            return self._handle_parlay(user_id)
         if "bookmaker codes" in norm:
             return self._handle_booking_codes()
         if "trap advisories" in norm:
@@ -1867,6 +2213,10 @@ class TelegramBot:
 
         if raw_text.startswith("/"):
             return self.handle_command(raw_text, user_id, update.chat_id, username=username)
+
+        conv_reply = self._handle_conversational_query(raw_text, user_id, username, update.chat_id)
+        if conv_reply is not None:
+            return conv_reply
 
         picks = self._load_dashboard_picks()
         matched_picks = [
@@ -1879,19 +2229,327 @@ class TelegramBot:
         ]
         if matched_picks:
             profile = self.fsm.get_profile(user_id)
-            return format_active_top_picks_contract(matched_picks, user_profile=profile)
+            is_member = self.is_user_telegram_verified(user_id)
+            tier = self.get_user_tier(user_id)
+            return format_active_top_picks_contract(
+                matched_picks,
+                user_profile=profile,
+                is_channel_member=is_member,
+                user_tier=tier,
+                channel_username=self.channel_chat_id,
+            )
 
         fallback_text = (
             f"🤖 <b>LISA Sports Intelligence Desk</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Received query: <i>\"{raw_text[:50]}\"</i>\n\n"
-            f"LISA continuously tracks live market consensus and executes Shin de-vigging across 9 sports.\n\n"
-            f"👉 <b>Choose an action from the persistent menu below</b>, or type a team name (e.g. <i>Arsenal</i>, <i>Thunder</i>) to search live mathematical signals."
+            f"I didn't find an active fixture or command for that phrase.\n\n"
+            f"💡 <b>You can:</b>\n"
+            f"• Type a <b>team name</b> (e.g. <i>Arsenal</i>, <i>Thunder</i>) to search active signals\n"
+            f"• Ask an <b>analytical question</b> (e.g. <i>'How does it work?'</i>, <i>'What are units?'</i>, <i>'My tier'</i>)\n"
+            f"• Tap any action from the persistent menu below"
         )
         return (fallback_text, MAIN_REPLY_KEYBOARD)
 
+    def _handle_conversational_query(
+        self, raw_text: str, user_id: str, username: str, chat_id: str = ""
+    ) -> Optional[tuple[str, Optional[dict[str, Any]]]]:
+        clean = (raw_text or "").strip().lower()
+        if not clean:
+            return None
+
+        clean_punct = re.sub(r"[^\w\s]", " ", clean)
+        tokens = set(clean_punct.split())
+
+        user_tier = self.get_user_tier(user_id)
+        is_member = self.is_user_telegram_verified(user_id)
+        display_name = f"@{username}" if username and username != "user" else "Investor"
+
+        if user_tier == "admin":
+            tier_badge = "👑 Administrator"
+        elif user_tier == "tier3":
+            tier_badge = "👑 Tier 3: Syndicate VIP"
+        elif user_tier == "tier2":
+            tier_badge = "🚀 Tier 2: Pro Trader"
+        elif user_tier == "tier1":
+            tier_badge = "⚡ Tier 1: Sharp Starter"
+        else:
+            tier_badge = "🆓 Free Member (Match #2 Unlocked)" if is_member else "🆓 Free Member"
+
+        quick_nav_markup = {
+            "inline_keyboard": [
+                [{"text": "📊 Active Top Picks", "callback_data": "menu:picks"}, {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"}],
+                [{"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"}, {"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"}],
+            ]
+        }
+
+        ip_leak_triggers = ["shin", "de-vig", "devig", "de vig", "formula", "secret sauce", "reverse engineer", "source code", "internal mechanism", "how do you de-vig", "how do you devig"]
+        if any(trig in clean for trig in ip_leak_triggers):
+            text = (
+                "🛡️ <b>PROPRIETARY MODEL NOTICE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "LISA's internal quantitative models, pricing convergence algorithms, and risk execution layers are proprietary trade secrets.\n\n"
+                "Subscribers receive institutional-grade, actionable outputs:\n"
+                "• True implied probability & fair odds consensus\n"
+                "• Positive Expected Value (+EV) threshold flags\n"
+                "• Fractional Kelly bankroll allocation stakes\n"
+                "• 1-Click bookmaker booking codes\n\n"
+                "Tap below to review active mathematical selections."
+            )
+            return (text, quick_nav_markup)
+
+        status_phrases = ["how are you", "how are you doing", "how do you do", "how is it going", "hows it going", "what's up", "whats up", "hows everything", "system status", "health check"]
+        if any(p in clean for p in status_phrases):
+            text = (
+                "⚡ <b>LISA INTELLIGENCE DESK — SYSTEM HEALTH</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "🟢 <b>Pipeline Status:</b> Operational (Peak Efficiency)\n"
+                "📡 <b>Market Ingestion:</b> Live consensus monitoring across 9 global leagues\n"
+                "🎯 <b>Calibration:</b> Audited 84.0% win rate across settled Diamond selections\n"
+                "🛡️ <b>Risk Guard:</b> Sucker-bet traps actively screened & suppressed\n"
+                f"👤 <b>Active Terminal Session:</b> {tier_badge}\n\n"
+                "Market liquidity is active. Tap below to inspect today's mathematical edges."
+            )
+            return (text, quick_nav_markup)
+
+        greetings_phrases = ["good morning", "good afternoon", "good evening", "good day"]
+        greetings_tokens = {"hi", "hello", "hey", "heya", "yo", "howdy", "sup", "salut", "hola", "bonjour", "greetings"}
+        is_greeting = any(p in clean for p in greetings_phrases) or bool(tokens & greetings_tokens)
+        if is_greeting and len(clean.split()) <= 4:
+            text = (
+                f"👋 <b>Greetings, {display_name}!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Welcome to the <b>LISA Sports Intelligence Desk</b>.\n\n"
+                f"👤 <b>Your Status:</b> {tier_badge}\n"
+                "📡 <b>Market Status:</b> Tracking 9 leagues with active +EV convergence.\n\n"
+                "How can I assist your bankroll today?\n"
+                "• <b>/picks</b> — View today's active diamond value selections\n"
+                "• <b>/bankroll</b> — Configure your personalized Kelly staking profile\n"
+                "• <b>/parlay</b> — Review high-probability algorithmic accumulator\n"
+                "• <b>/stats</b> — Audit verified 84.0% performance ledger\n"
+                "• <b>/vip</b> — Review membership tiers & Alpha perks\n\n"
+                "<i>You can also ask: 'How does it work?', 'What sports?', 'What is my tier?'</i>"
+            )
+            return (text, quick_nav_markup)
+
+        identity_phrases = ["who are you", "what are you", "what is lisa", "who is lisa", "what do you do", "tell me about yourself", "introduce yourself", "about yourself", "about lisa", "what can you do"]
+        if any(p in clean for p in identity_phrases):
+            text = (
+                "🤖 <b>I AM LISA (LIVE INSTITUTIONAL SPORTS ANALYTICS)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "I am an algorithmic sports intelligence engine designed for disciplined sports investors.\n\n"
+                "🔍 <b>Core Capabilities:</b>\n"
+                "• <b>Market Consensus:</b> Continuously aggregate pricing data across sharp sportsbooks worldwide to isolate true fair probabilities.\n"
+                "• <b>Value Detection:</b> Identify pricing anomalies where soft bookmakers offer odds higher than true fair probability (+EV).\n"
+                "• <b>Trap Screening:</b> Detect artificial public bait lines and preserve capital by flagging sucker bets.\n"
+                "• <b>Bankroll Sizing:</b> Provide dynamic fractional Kelly stakes (Quarter, Half, Full Kelly) customized to your personal capital.\n"
+                "• <b>1-Click Slips:</b> Generate ready-to-bet booking codes across SportyBet, Football.com, 1xBet, Bet9ja, Betway, and Bet365.\n\n"
+                "💡 <i>LISA relies strictly on mathematical expected value, avoiding emotional bias and public hype.</i>"
+            )
+            return (text, quick_nav_markup)
+
+        methodology_phrases = ["how does it work", "how it works", "how do you work", "how do you predict", "how do predictions work", "how does lisa work", "methodology", "how do you calculate", "how does this work"]
+        if any(p in clean for p in methodology_phrases):
+            text = (
+                "🔬 <b>LISA QUANTITATIVE METHODOLOGY</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "LISA models sports betting as an efficient market pricing arbitrage:\n\n"
+                "1️⃣ <b>Market Aggregation:</b> Continuously stream live odds across global market makers.\n"
+                "2️⃣ <b>Consensus Equilibrium:</b> Remove bookmaker overround and isolate true event probability through multi-market consensus.\n"
+                "3️⃣ <b>Edge Isolation (+EV):</b> When a bookmaker's price exceeds fair consensus by our threshold, a Diamond selection is generated.\n"
+                "4️⃣ <b>Capital Allocation:</b> Kelly Criterion models calculate the exact mathematical stake to protect your bankroll while compounding returns.\n\n"
+                "📊 Review our verified track record anytime with <b>/stats</b>."
+            )
+            return (text, quick_nav_markup)
+
+        sports_phrases = ["what sports", "which sports", "sports covered", "what leagues", "which leagues", "coverage", "what games", "supported sports"]
+        if any(p in clean for p in sports_phrases) or (("sport" in tokens or "sports" in tokens or "league" in tokens or "leagues" in tokens) and ("cover" in tokens or "covered" in tokens or "which" in tokens or "what" in tokens)):
+            text = (
+                "🏆 <b>LISA GLOBAL MARKET COVERAGE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "LISA monitors 9 tier-one sports competitions with deep market liquidity:\n\n"
+                "⚽ <b>Football (Soccer):</b>\n"
+                "• English Premier League (EPL)\n"
+                "• UEFA Champions League\n"
+                "• Spanish La Liga\n"
+                "• Italian Serie A\n"
+                "• German Bundesliga\n"
+                "• French Ligue 1\n\n"
+                "🏀 <b>Basketball:</b>\n"
+                "• NBA (National Basketball Association)\n"
+                "• EuroLeague Basketball\n\n"
+                "🏈 <b>American Football:</b>\n"
+                "• NFL (National Football League)\n\n"
+                "Tap <b>/picks</b> to inspect active signals across these leagues."
+            )
+            return (text, quick_nav_markup)
+
+        bankroll_phrases = ["what are units", "what is a unit", "what is unit", "how much to bet", "how much should i bet", "unit sizing", "what is kelly", "kelly criterion", "bankroll management", "unit stake"]
+        if any(p in clean for p in bankroll_phrases) or ("unit" in tokens and ("what" in tokens or "how" in tokens or "mean" in tokens)):
+            text = (
+                "🏦 <b>UNITS & BANKROLL MANAGEMENT</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "A <b>Unit (1u)</b> is a normalized standard stake representing <b>2% of your active bankroll</b>.\n\n"
+                "• Staking by percentage protects you from variance and avoids catastrophic drawdown.\n"
+                "• LISA scales every pick dynamically using fractional Kelly Criterion:\n"
+                "  - 🛡️ <b>Conservative (0.25x):</b> Minimized drawdown, high preservation\n"
+                "  - ⚖️ <b>Balanced (0.50x):</b> Optimal compound growth [Recommended]\n"
+                "  - 🚀 <b>Aggressive (1.00x):</b> Maximum wealth velocity\n\n"
+                "👉 Type <b>/bankroll</b> to establish your personal capital and see exact dollar sizing on every match!"
+            )
+            return (text, quick_nav_markup)
+
+        codes_phrases = ["what are booking codes", "what is a booking code", "booking codes", "booking code", "how to use code", "how to load code", "bet codes", "slip code"]
+        if any(p in clean for p in codes_phrases) or ("code" in tokens and ("booking" in tokens or "how" in tokens or "what" in tokens or "load" in tokens)):
+            text = (
+                "🎟️ <b>BOOKMAKER BOOKING CODES</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Booking codes allow you to load pre-selected bet slips instantly onto your sportsbook without searching manually.\n\n"
+                "<b>Supported Bookmakers:</b>\n"
+                "• 🔴 <b>SportyBet</b>\n"
+                "• 🟢 <b>Football.com</b>\n"
+                "• 🔵 <b>1xBet</b>\n"
+                "• 🟢 <b>Bet9ja</b>\n"
+                "• ⚪ <b>Betway</b>\n"
+                "• 🟢 <b>Bet365</b> (Direct 1-Click Link)\n\n"
+                "<b>How to Use:</b>\n"
+                "1. Copy the code shown in <b>/picks</b> or <b>/parlay</b>\n"
+                "2. Open your bookmaker app\n"
+                "3. Tap 'Load Bet Slip' or 'Booking Code' and paste\n"
+                "4. Enter your stake calculated by <b>/bankroll</b> and confirm"
+            )
+            return (text, quick_nav_markup)
+
+        how_to_bet_phrases = ["how to bet", "how do i bet", "how to place bet", "how to follow picks", "getting started", "how do i use this", "how to use", "how do i start", "how do i play"]
+        if any(p in clean for p in how_to_bet_phrases):
+            text = (
+                "🚀 <b>QUICK-START GUIDE TO FOLLOWING LISA</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "1️⃣ <b>Configure Bankroll:</b> Type <b>/bankroll</b> to establish your working capital and risk appetite. LISA calculates your exact dollar stake.\n"
+                "2️⃣ <b>Inspect Selections:</b> Run <b>/picks</b> to inspect today's top Diamond value picks.\n"
+                "3️⃣ <b>Execute with Booking Codes:</b> Copy the booking code for your preferred bookmaker or use direct bookmaker links.\n"
+                "4️⃣ <b>Unlock Free Perks:</b> Join our community channel @lisa_sports_alpha to unlock Match #2 100% free!\n\n"
+                "Never chase losses; strictly respect recommended unit sizing."
+            )
+            return (text, quick_nav_markup)
+
+        accuracy_phrases = ["win rate", "winrate", "accuracy", "track record", "how accurate", "are you profitable", "past results", "performance", "audit", "ledger"]
+        if any(p in clean for p in accuracy_phrases) or ("win" in tokens and "rate" in tokens) or ("accurate" in tokens and "how" in tokens):
+            text = (
+                "📈 <b>AUDITED PERFORMANCE & LEDGER</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "LISA maintains 100% verified transparency on all settled picks:\n\n"
+                "🎯 <b>Audited Win Rate:</b> <b>84.0%</b>\n"
+                "📐 <b>Brier Calibration Score:</b> <b>0.089</b> (Institutional Grade)\n"
+                "💰 <b>Mean Signal EV:</b> <b>+4.18%</b>\n"
+                "📈 <b>Mean Closing Line Value (CLV):</b> <b>+3.12%</b>\n"
+                "🛡️ <b>Public Traps Avoided:</b> <b>30 Sucker Bets</b> (+$1,700 preserved)\n\n"
+                "Audit the full settled ledger anytime with <b>/stats</b>."
+            )
+            return (text, quick_nav_markup)
+
+        tier_check_phrases = ["my tier", "my plan", "my subscription", "my status", "my account", "what is my tier", "what tier am i", "check tier", "current tier"]
+        if any(p in clean for p in tier_check_phrases):
+            if user_tier == "admin":
+                desc = (
+                    "👑 <b>Tier: Administrator</b>\n"
+                    "• Full platform oversight and administrative command suite\n"
+                    "• Instant settlement, user provisioning, and emergency kill-switch\n"
+                    "• Type <b>/admin</b> for the executive mobile console."
+                )
+            elif user_tier == "tier3":
+                desc = (
+                    "👑 <b>Tier: Tier 3 Syndicate VIP</b>\n"
+                    "• Real-time REST API & Webhook data stream (/api/v1/stream)\n"
+                    "• Full 12 picks + joint covariance & correlation matrix\n"
+                    "• Real-time arbitrage alerts & soft-book discrepancy stream\n"
+                    "• 1-on-1 Syndicate Desk consultation"
+                )
+            elif user_tier == "tier2":
+                desc = (
+                    "🚀 <b>Tier: Tier 2 Pro Trader</b>\n"
+                    "• All 12 daily picks across 9 leagues unlocked\n"
+                    "• Algorithmic 5-Fold Parlay Acca with booking codes\n"
+                    "• VIP Private Channel priority access\n"
+                    "• CLV early steam alerts before lines move"
+                )
+            elif user_tier == "tier1":
+                desc = (
+                    "⚡ <b>Tier: Tier 1 Sharp Starter</b>\n"
+                    "• Top 5 Diamond Picks daily (Matches #1 to #5)\n"
+                    "• Full booking codes across all 6 platforms\n"
+                    "• Daily sucker-bet avoidance warnings\n"
+                    "• <i>Upgrade to Tier 2 Pro for all 12 picks & 5-Fold Parlay.</i>"
+                )
+            else:
+                perk = "✅ Match #2 Unlocked via Channel Membership" if is_member else "🔒 Match #2 Locked (Join @lisa_sports_alpha to unlock free)"
+                desc = (
+                    "🆓 <b>Tier: Free Tier</b>\n"
+                    "• Match #1 Daily Anchor Pick: Always Free\n"
+                    f"• Match #2: {perk}\n"
+                    "• <i>Upgrade to Tier 1 ($19/mo) for 5 daily picks or Tier 2 Pro ($49/mo) for 12 picks & parlays.</i>"
+                )
+            text = (
+                "👤 <b>YOUR LISA MEMBERSHIP PROFILE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Investor ID: <code>{user_id}</code>\n\n"
+                f"{desc}\n\n"
+                "Type <b>/vip</b> for complete tier pricing and upgrade instructions."
+            )
+            return (text, quick_nav_markup)
+
+        match2_phrases = ["match 2", "match #2", "unlock match 2", "why is match 2 locked", "how to unlock match 2", "free unlock", "unlock match"]
+        if any(p in clean for p in match2_phrases):
+            text = (
+                "🔓 <b>MATCH #2 FREE TELEGRAM UNLOCK</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Match #2 is our 100% free community unlock perk!\n\n"
+                "To unlock Match #2 and its booking codes:\n"
+                "1. Tap ✈️ <b>Join Official Channel</b> below\n"
+                "2. Join our channel: <b>@lisa_sports_alpha</b>\n"
+                "3. Tap <b>/picks</b> — Match #2 and booking codes will unlock immediately!\n\n"
+                "No payment or credit card required."
+            )
+            join_markup = {
+                "inline_keyboard": [
+                    [{"text": "✈️ Join @lisa_sports_alpha", "url": "https://t.me/lisa_sports_alpha"}],
+                    [{"text": "📊 Check Picks", "callback_data": "menu:picks"}],
+                ]
+            }
+            return (text, join_markup)
+
+        vip_phrases = ["pricing", "plans", "price", "cost", "how much", "tier 1", "tier 2", "tier 3", "vip", "upgrade", "subscribe", "sharp starter", "pro trader", "syndicate"]
+        if any(p in clean for p in vip_phrases) and len(clean.split()) <= 4:
+            return self.handle_command("/vip", user_id, chat_id, username=username)
+
+        gratitude_tokens = {"thanks", "thank", "thankyou", "thx", "ty", "appreciate", "awesome", "nice", "cool", "wonderful", "kudos", "perfect"}
+        if bool(tokens & gratitude_tokens) or ("good" in tokens and ("job" in tokens or "work" in tokens)):
+            text = (
+                f"🤝 <b>You're welcome, {display_name}!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Disciplined execution is the hallmark of institutional sports investors.\n\n"
+                "Remember: Protect your bankroll, stick strictly to your Kelly unit sizing, and let the mathematical edge compound.\n\n"
+                "Let me know if you need anything else to manage your active portfolio."
+            )
+            return (text, quick_nav_markup)
+
+        farewell_tokens = {"bye", "goodbye", "cya", "farewell", "later"}
+        farewell_phrases = ["good night", "see you", "see ya", "have a good one", "peace out"]
+        if bool(tokens & farewell_tokens) or any(p in clean for p in farewell_phrases):
+            text = (
+                f"👋 <b>Until next slate, {display_name}!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Protect your capital, adhere to your units, and stay disciplined.\n\n"
+                "LISA Intelligence Desk stands by 24/7."
+            )
+            return (text, None)
+
+        return None
+
     def _load_dashboard_picks(self) -> list[dict[str, Any]]:
-        """Attempt to read picks from web/data/dashboard.json."""
+        now = time.time()
+        if self._picks_cache[0] and now < self._picks_cache[1]:
+            return self._picks_cache[0]
         try:
             candidates = ["web/data/dashboard.json", "../web/data/dashboard.json"]
             for path in candidates:
@@ -1900,6 +2558,7 @@ class TelegramBot:
                         data = json.load(f)
                         picks = data.get("active_picks") or data.get("picks")
                         if picks:
+                            self._picks_cache = (picks, now + 30.0)
                             return picks
         except Exception:
             pass
@@ -1985,17 +2644,22 @@ class TelegramBot:
         ]
 
     def _load_dashboard_summary(self) -> dict[str, Any]:
-        """Attempt to read summary from web/data/dashboard.json."""
+        now = time.time()
+        if self._summary_cache[0] and now < self._summary_cache[1]:
+            return self._summary_cache[0]
         try:
             candidates = ["web/data/dashboard.json", "../web/data/dashboard.json"]
             for path in candidates:
                 if os.path.exists(path):
                     with open(path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        return data.get("summary", {})
+                        summary = data.get("summary")
+                        if summary:
+                            self._summary_cache = (summary, now + 30.0)
+                            return summary
         except Exception:
             pass
-        return {
+        fallback = {
             "win_rate": 0.840,
             "brier_score": 0.1305,
             "ece": 0.0361,
@@ -2003,6 +2667,8 @@ class TelegramBot:
             "traps_avoided_month": 30,
             "settled_picks_count": 50,
         }
+        self._summary_cache = (fallback, now + 30.0)
+        return fallback
 
     def poll_updates(self) -> list[TelegramUpdate]:
         """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""

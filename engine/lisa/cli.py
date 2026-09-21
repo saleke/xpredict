@@ -438,14 +438,17 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         def _bot_loop():
             print(f"[telegram-bot] Background polling daemon started for @{settings.telegram_bot_username or 'bot'}")
             while True:
+                had_updates = False
                 try:
                     updates = bot_inst.poll_updates()
+                    if updates:
+                        had_updates = True
                     for u in updates:
                         reply = bot_inst.process_one_update(u)
                         print(f"[telegram-bot] [{u.username} -> {u.text}]: {reply[:60]}...")
                 except Exception:
                     pass
-                time.sleep(2.0)
+                time.sleep(0.05 if had_updates else 0.25)
 
         t = threading.Thread(target=_bot_loop, daemon=True)
         t.start()
@@ -666,14 +669,17 @@ def _cmd_start(args: argparse.Namespace) -> int:
         def _bot_loop():
             print(f"[telegram-bot] Production Gatekeeper daemon running for @{settings.telegram_bot_username or 'bot'}")
             while True:
+                had_updates = False
                 try:
                     updates = bot_inst.poll_updates()
+                    if updates:
+                        had_updates = True
                     for u in updates:
                         reply = bot_inst.process_one_update(u)
                         print(f"[telegram-bot] [{u.username} -> {u.text}]: {reply[:60]}...")
                 except Exception:
                     pass
-                time.sleep(2.0)
+                time.sleep(0.05 if had_updates else 0.25)
         t_bot = threading.Thread(target=_bot_loop, daemon=True)
         t_bot.start()
 
@@ -937,11 +943,14 @@ def _cmd_telegram_bot(args: argparse.Namespace) -> int:
     print("[telegram-bot] Starting Telegram polling loop (Ctrl+C to stop)...")
     try:
         while True:
+            had_updates = False
             updates = bot.poll_updates()
+            if updates:
+                had_updates = True
             for u in updates:
                 reply = bot.process_one_update(u)
                 print(f"[{u.username} -> {u.text}]: {reply[:60]}...")
-            time.sleep(2.0)
+            time.sleep(0.05 if had_updates else 0.25)
     except KeyboardInterrupt:
         print("\n[telegram-bot] Stopped.")
     return 0

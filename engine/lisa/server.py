@@ -431,44 +431,52 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 except Exception:
                     pass
 
-        # 2. Server-side masking to guarantee locked predictions cannot be leaked
         processed_picks = []
         for idx, pick in enumerate(raw_picks):
             p = dict(pick)
             tier_level = p.get("tier_level")
 
-            # In the 4-tier commercial architecture:
-            # - Pick index 0 is open for all (Free)
-            # - Pick indices 1 and 2 require Telegram verification
-            # - Pick indices >= 3 are Syndicate Alpha (Paid Tier 2/Tier 3)
-            is_free_pick = (tier_level == "FREE") if tier_level else (idx == 0)
-            is_telegram_pick = (tier_level == "TELEGRAM_UNLOCK") if tier_level else (idx in (1, 2))
-
-            if is_free_pick and idx == 0:
+            if idx == 0:
                 p["is_locked"] = False
                 p["tier_level"] = "FREE"
-            elif is_telegram_pick or idx in (1, 2):
+            elif idx == 1:
                 p["tier_level"] = "TELEGRAM_UNLOCK"
                 if is_ver or tier in ("tier1", "tier2", "tier3", "all"):
                     p["is_locked"] = False
                 else:
                     p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Join Telegram to Unlock"
+                    p["outcome_name"] = "🔒 Join Telegram to Unlock Match #2"
                     p["best_odds"] = None
                     p["fair_odds"] = None
                     p["best_ev"] = None
                     p["gauge_text"] = "Telegram Unlock Required"
+                    p["booking_codes"] = {}
                     p["deep_links"] = {}
-            else:
-                p["tier_level"] = tier_level or "TIER_2"
-                if (tier == "tier1" and idx < 5) or tier in ("tier2", "tier3", "all"):
+            elif idx in (2, 3, 4):
+                p["tier_level"] = "TIER_1"
+                if tier in ("tier1", "tier2", "tier3", "all"):
                     p["is_locked"] = False
                 else:
                     p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Syndicate Alpha (Tier 2/3)"
+                    p["outcome_name"] = "🔒 Sharp Starter (Tier 1 Required)"
                     p["best_odds"] = None
                     p["fair_odds"] = None
                     p["best_ev"] = None
+                    p["gauge_text"] = "Tier 1 Subscription Required"
+                    p["booking_codes"] = {}
+                    p["deep_links"] = {}
+            else:
+                p["tier_level"] = tier_level or "TIER_2"
+                if tier in ("tier2", "tier3", "all"):
+                    p["is_locked"] = False
+                else:
+                    p["is_locked"] = True
+                    p["outcome_name"] = "🔒 Pro Trader (Tier 2 Required)"
+                    p["best_odds"] = None
+                    p["fair_odds"] = None
+                    p["best_ev"] = None
+                    p["gauge_text"] = "Tier 2 Subscription Required"
+                    p["booking_codes"] = {}
                     p["deep_links"] = {}
 
             processed_picks.append(p)

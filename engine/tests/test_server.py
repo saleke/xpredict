@@ -111,7 +111,6 @@ def test_production_server_endpoints(tmp_path):
             data = json.loads(resp.read().decode("utf-8"))
             assert data["verified"] is True
 
-        # 5. /api/picks for verified user now returns unmasked picks
         req = urllib.request.Request(f"{base_url}/api/picks?user_id=user_seed_42")
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -119,8 +118,15 @@ def test_production_server_endpoints(tmp_path):
             assert picks[1]["is_locked"] is False
             assert picks[1]["outcome_name"] == "Team C"
             assert picks[1]["best_odds"] == 1.20
-            assert picks[2]["is_locked"] is False
-            assert picks[2]["outcome_name"] == "Team E"
+            assert picks[2]["is_locked"] is True
+            assert "Tier 1" in picks[2]["outcome_name"]
+
+        req_tier1 = urllib.request.Request(f"{base_url}/api/picks?user_id=user_seed_42&tier=tier1")
+        with urllib.request.urlopen(req_tier1) as resp:
+            data_t1 = json.loads(resp.read().decode("utf-8"))
+            picks_t1 = data_t1["active_picks"]
+            assert picks_t1[2]["is_locked"] is False
+            assert picks_t1[2]["outcome_name"] == "Team E"
 
         # 6. /api/ledger
         storage.settle_pick("m-open::h2h::Team A", "WIN", utcnow())

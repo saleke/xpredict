@@ -296,6 +296,7 @@ function renderAccumulatorBanner() {
         </div>
       </div>
 
+      ${(state.currentTier === 'tier2' || state.currentTier === 'tier3' || state.currentTier === 'all') ? `
       <div class="accumulator-right">
         <div class="accu-book-selector">
           <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Sportsbook:</span>
@@ -318,6 +319,19 @@ function renderAccumulatorBanner() {
           </button>
         </div>
       </div>
+      ` : `
+      <div class="accumulator-right" style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 8px;">
+        <div style="font-size: 11px; color: var(--accent-gold); font-weight: 700; display: flex; align-items: center; gap: 4px;">
+          <span>🔒 Tier 2 Pro Required</span>
+        </div>
+        <button type="button" 
+          class="btn-accu-copy" 
+          onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier2') : window.setTier('tier2')"
+          style="background: linear-gradient(135deg, var(--accent-gold), #d97706); border: none; color: #000; font-weight: 700; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+          <span>👑</span> Unlock 5-Fold Slip ($49/mo)
+        </button>
+      </div>
+      `}
     </div>
   `;
 }
@@ -678,14 +692,17 @@ function renderPicks() {
 
     // Check lock conditions
     let isLocked = false;
-    let lockType = 'tier2'; // 'telegram' or 'tier2'
+    let lockType = 'tier2'; // 'telegram', 'tier1', or 'tier2'
 
     if (state.currentTier === 'free') {
       if (p.rank === 1) {
         isLocked = false;
-      } else if (p.rank === 2 || p.rank === 3) {
+      } else if (p.rank === 2) {
         isLocked = !state.isTelegramUnlocked;
         lockType = 'telegram';
+      } else if (p.rank >= 3 && p.rank <= 5) {
+        isLocked = true;
+        lockType = 'tier1';
       } else {
         isLocked = true;
         lockType = 'tier2';
@@ -714,7 +731,7 @@ function renderPicks() {
     const betLink = deepLinks.bet365 || '#';
     const dkLink = deepLinks.draftkings || '#';
 
-    // Social Telegram Unlock Card
+    // Social Telegram Unlock Card (Match #2 Only)
     if (isLocked && lockType === 'telegram') {
       return `
         ${headerHtml}
@@ -735,9 +752,9 @@ function renderPicks() {
           </div>
           <div class="locked-overlay">
             <div class="locked-icon">📱</div>
-            <div class="locked-title">Match #${p.rank} · Social Unlock</div>
+            <div class="locked-title">Match #2 · Social Telegram Unlock</div>
             <div class="locked-desc">
-              Join official LISA Telegram to reveal this prediction for free.
+              Join official LISA Telegram to unlock this daily bonus game for free.
             </div>
             <button class="btn-social-unlock" onclick="window.openTelegramModal()">
               <span>✈️</span> Unlock via Telegram (Free)
@@ -747,7 +764,40 @@ function renderPicks() {
       `;
     }
 
-    // Standard Tier 2 Locked Card
+    // Tier 1 Locked Card (Matches #3, #4, #5)
+    if (isLocked && lockType === 'tier1') {
+      return `
+        ${headerHtml}
+        <div class="pick-card locked-card" id="pick-${p.match_id}">
+          <div class="card-content-blur">
+            <div class="card-header">
+              <span class="sport-tag">${league}</span>
+              <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
+                <span class="countdown-icon">${cd.icon}</span>
+                <span class="countdown-text tabular-nums">${cd.text}</span>
+              </div>
+            </div>
+            <div class="match-title">${p.home_team} vs ${p.away_team}</div>
+            <div class="pick-selection">
+              <div class="pick-name">${p.outcome_name}</div>
+              <div class="prob-val">${probPct}%</div>
+            </div>
+          </div>
+          <div class="locked-overlay">
+            <div class="locked-icon">⚡</div>
+            <div class="locked-title">Match #${p.rank} · Sharp Starter (Tier 1)</div>
+            <div class="locked-desc">
+              Unlock Top 5 High-Confidence Diamond Picks daily + instant line alerts.
+            </div>
+            <button class="btn-upgrade-card" onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier1') : window.setTier('tier1')">
+              Upgrade to Tier 1 ($19/mo)
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // Standard Tier 2 Locked Card (Matches #6–#12)
     if (isLocked && lockType === 'tier2') {
       const lockTitle = p.is_pass_advisory ? `Match #${p.rank} · Pass Advisory` : `Match #${p.rank} · Tier 2 Pro`;
       const lockDesc = p.is_pass_advisory
@@ -774,7 +824,7 @@ function renderPicks() {
             <div class="locked-icon">🔒</div>
             <div class="locked-title">${lockTitle}</div>
             <div class="locked-desc">${lockDesc}</div>
-            <button class="btn-upgrade-card" onclick="window.setTier('tier2')">
+            <button class="btn-upgrade-card" onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier2') : window.setTier('tier2')">
               Upgrade to Tier 2 ($49/mo)
             </button>
           </div>

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 import unittest
 from datetime import datetime, timezone
 
@@ -355,8 +356,13 @@ class TestTelegramBot(unittest.TestCase):
         update_parlay = TelegramUpdate(20, 30, "chat_1", "user_1", "user", text="⚡ 5-Fold Parlay")
         reply_parlay = self.bot.process_one_update(update_parlay)
         self.assertIn("LISA HIGH-CONVICTION 5-FOLD PARLAY", reply_parlay)
-        self.assertIn("BC792K", reply_parlay)
-        self.assertIn("FC82910", reply_parlay)
+        self.assertIn("BOOKING CODES GATED (Tier 2 Pro Required)", reply_parlay)
+
+        vip_bot = TelegramBot(token="", channel_chat_id="@test_channel", mock=True, admin_telegram_ids=["vip_boss"])
+        update_vip = TelegramUpdate(22, 32, "chat_1", "vip_boss", "vip_boss", text="⚡ 5-Fold Parlay")
+        reply_vip = vip_bot.process_one_update(update_vip)
+        self.assertIn("BC792K", reply_vip)
+        self.assertIn("FC82910", reply_vip)
 
         update_codes = TelegramUpdate(21, 31, "chat_1", "user_1", "user", text="🎟️ Bookmaker Codes")
         reply_codes = self.bot.process_one_update(update_codes)
@@ -514,6 +520,214 @@ class TestTelegramBot(unittest.TestCase):
         update_logs = TelegramUpdate(52, 603, "chat_admin", admin_id, "boss", callback_query_id="cb_logs", callback_data="admin:logs")
         reply_logs = admin_bot.process_one_update(update_logs)
         self.assertIn("LISA SECURITY AUDIT TRAIL", reply_logs)
+
+    def test_admin_interactive_fsm_control_ui(self):
+        from lisa.storage import InMemoryStorage
+        admin_id = "8720543490"
+        storage = InMemoryStorage()
+        storage.insert_pick(self.sample_pick)
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=[admin_id], storage=storage)
+
+        dash_reply, dash_markup = admin_bot.handle_command("/admin", admin_id, "chat_admin")
+        self.assertIn("LISA MOBILE ADMIN CONSOLE", dash_reply)
+        cb_keys = [btn["callback_data"] for row in dash_markup.get("inline_keyboard", []) for btn in row]
+        self.assertIn("admin_settle_menu", cb_keys)
+        self.assertIn("admin_grant_menu", cb_keys)
+        self.assertIn("admin_toggle_status", cb_keys)
+        self.assertIn("admin_msg_menu", cb_keys)
+
+        settle_menu_cb = TelegramUpdate(61, 701, "chat_admin", admin_id, "boss", callback_query_id="cb_s1", callback_data="admin_settle_menu")
+        menu_reply = admin_bot.process_one_update(settle_menu_cb)
+        self.assertIn("WAIT_FOR_SETTLEMENT_DATA", menu_reply)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_WAIT_FOR_SETTLEMENT_DATA)
+
+        settle_input = TelegramUpdate(62, 702, "chat_admin", admin_id, "boss", text=f"{self.sample_pick.match_id}:WIN")
+        settle_reply = admin_bot.process_one_update(settle_input)
+        self.assertIn("MANUAL MATCH SETTLEMENT SYNCHRONIZED", settle_reply)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_IDLE)
+
+        pick_row = storage.get_pick(f"{self.sample_pick.match_id}::{self.sample_pick.market}::{self.sample_pick.outcome_name}")
+        self.assertEqual(pick_row.get("result"), "WIN")
+
+        grant_menu_cb = TelegramUpdate(63, 703, "chat_admin", admin_id, "boss", callback_query_id="cb_g1", callback_data="admin_grant_menu")
+        grant_reply = admin_bot.process_one_update(grant_menu_cb)
+        self.assertIn("WAIT_FOR_PROVISION_DATA", grant_reply)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_WAIT_FOR_PROVISION_DATA)
+
+        grant_input = TelegramUpdate(64, 704, "chat_admin", admin_id, "boss", text="influencer@review.com:TIER_2")
+        grant_result = admin_bot.process_one_update(grant_input)
+        self.assertIn("CUSTOMER PROVISIONING COMPLETED", grant_result)
+        self.assertIn("TIER2", grant_result)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_IDLE)
+
+        toggle_cb = TelegramUpdate(65, 705, "chat_admin", admin_id, "boss", callback_query_id="cb_t1", callback_data="admin_toggle_status")
+        toggle_reply = admin_bot.process_one_update(toggle_cb)
+        self.assertIn("PAUSED", toggle_reply)
+        self.assertTrue(admin_bot.is_system_paused())
+
+        toggle_cb2 = TelegramUpdate(66, 706, "chat_admin", admin_id, "boss", callback_query_id="cb_t2", callback_data="admin_toggle_status")
+        toggle_reply2 = admin_bot.process_one_update(toggle_cb2)
+        self.assertIn("ACTIVE", toggle_reply2)
+        self.assertFalse(admin_bot.is_system_paused())
+
+        msg_menu_cb = TelegramUpdate(67, 707, "chat_admin", admin_id, "boss", callback_query_id="cb_m1", callback_data="admin_msg_menu")
+        msg_menu_reply = admin_bot.process_one_update(msg_menu_cb)
+        self.assertIn("WAIT_FOR_BROADCAST_DATA", msg_menu_reply)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_WAIT_FOR_BROADCAST_DATA)
+
+        msg_input = TelegramUpdate(68, 708, "chat_admin", admin_id, "boss", text="NBA Season kickoff alert!")
+        msg_result = admin_bot.process_one_update(msg_input)
+        self.assertIn("GLOBAL BROADCAST DISPATCHED", msg_result)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_IDLE)
+
+        cancel_menu_cb = TelegramUpdate(69, 709, "chat_admin", admin_id, "boss", callback_query_id="cb_c1", callback_data="admin_settle_menu")
+        admin_bot.process_one_update(cancel_menu_cb)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_WAIT_FOR_SETTLEMENT_DATA)
+        cancel_input = TelegramUpdate(70, 710, "chat_admin", admin_id, "boss", text="/cancel")
+        cancel_reply = admin_bot.process_one_update(cancel_input)
+        self.assertIn("LISA MOBILE ADMIN CONSOLE", cancel_reply)
+        self.assertEqual(admin_bot.fsm.get_state(admin_id), BankrollFSMManager.STATE_IDLE)
+
+    def test_tier_gating_active_top_picks(self):
+        from lisa.telegram_bot import format_active_top_picks_contract
+        sample_picks = [
+            {"home_team": "Arsenal", "away_team": "Wolves", "outcome_name": "Arsenal", "p_true": 0.81, "fair_odds": 1.23, "best_odds": 1.25, "recommended_units": 1.5, "conviction_score": 9.0},
+            {"home_team": "Man City", "away_team": "Ipswich", "outcome_name": "Man City", "p_true": 0.85, "fair_odds": 1.18, "best_odds": 1.20, "recommended_units": 2.0, "conviction_score": 9.5},
+            {"home_team": "Liverpool", "away_team": "Brentford", "outcome_name": "Liverpool", "p_true": 0.78, "fair_odds": 1.28, "best_odds": 1.30, "recommended_units": 1.0, "conviction_score": 8.0},
+        ]
+
+        text_unjoined, markup_unjoined = format_active_top_picks_contract(
+            sample_picks, is_channel_member=False, user_tier="free"
+        )
+        self.assertIn("Match #1 [🆓 FREE]", text_unjoined)
+        self.assertIn("Arsenal vs Wolves", text_unjoined)
+        self.assertIn("Match #2 [✈️ TELEGRAM UNLOCKED]", text_unjoined)
+        self.assertIn("Join our Telegram channel", text_unjoined)
+        self.assertNotIn("Selection: <code>Man City</code>", text_unjoined)
+        self.assertNotIn("Liverpool vs Brentford", text_unjoined)
+
+        text_member, markup_member = format_active_top_picks_contract(
+            sample_picks, is_channel_member=True, user_tier="free"
+        )
+        self.assertIn("Match #1 [🆓 FREE]", text_member)
+        self.assertIn("Arsenal vs Wolves", text_member)
+        self.assertIn("Match #2 [✈️ TELEGRAM UNLOCKED]", text_member)
+        self.assertIn("Selection: <code>Man City</code>", text_member)
+        self.assertNotIn("Liverpool vs Brentford", text_member)
+
+        text_t1, markup_t1 = format_active_top_picks_contract(
+            sample_picks, is_channel_member=True, user_tier="tier1"
+        )
+        self.assertIn("Liverpool vs Brentford", text_t1)
+        self.assertIn("Selection: <code>Liverpool</code>", text_t1)
+
+    def test_conversational_greetings(self):
+        for greeting in ["hello", "hi", "hey", "good morning", "yo"]:
+            upd = TelegramUpdate(101, 201, "chat_conv", "user_free", "trader_joe", text=greeting)
+            reply = self.bot.process_one_update(upd)
+            self.assertIn("Greetings", reply)
+            self.assertIn("@trader_joe", reply)
+            self.assertIn("LISA Sports Intelligence Desk", reply)
+
+    def test_conversational_status(self):
+        upd = TelegramUpdate(102, 202, "chat_conv", "user_free", "trader_joe", text="how are you")
+        reply = self.bot.process_one_update(upd)
+        self.assertIn("SYSTEM HEALTH", reply)
+        self.assertIn("Operational", reply)
+        self.assertIn("84.0%", reply)
+
+    def test_conversational_identity_and_ip_shield(self):
+        for phrase in ["who are you", "what is lisa", "tell me about yourself"]:
+            upd = TelegramUpdate(103, 203, "chat_conv", "user_free", "trader_joe", text=phrase)
+            reply = self.bot.process_one_update(upd)
+            self.assertIn("LIVE INSTITUTIONAL SPORTS ANALYTICS", reply)
+            self.assertNotIn("Shin", reply)
+            self.assertNotIn("de-vig", reply)
+            self.assertNotIn("devig", reply)
+
+    def test_conversational_methodology_and_ip_shield(self):
+        for phrase in ["how does it work", "how do you work", "how do you predict"]:
+            upd = TelegramUpdate(104, 204, "chat_conv", "user_free", "trader_joe", text=phrase)
+            reply = self.bot.process_one_update(upd)
+            self.assertIn("QUANTITATIVE METHODOLOGY", reply)
+            self.assertNotIn("Shin", reply)
+            self.assertNotIn("de-vig", reply)
+            self.assertNotIn("devig", reply)
+
+    def test_conversational_faq_sports_and_bankroll(self):
+        upd_sports = TelegramUpdate(105, 205, "chat_conv", "user_free", "trader_joe", text="what sports")
+        reply_sports = self.bot.process_one_update(upd_sports)
+        self.assertIn("GLOBAL MARKET COVERAGE", reply_sports)
+        self.assertIn("Premier League", reply_sports)
+        self.assertIn("NBA", reply_sports)
+
+        upd_units = TelegramUpdate(106, 206, "chat_conv", "user_free", "trader_joe", text="what are units")
+        reply_units = self.bot.process_one_update(upd_units)
+        self.assertIn("UNITS & BANKROLL MANAGEMENT", reply_units)
+        self.assertIn("Kelly Criterion", reply_units)
+
+    def test_conversational_faq_codes_and_how_to_bet(self):
+        upd_codes = TelegramUpdate(107, 207, "chat_conv", "user_free", "trader_joe", text="what are booking codes")
+        reply_codes = self.bot.process_one_update(upd_codes)
+        self.assertIn("BOOKMAKER BOOKING CODES", reply_codes)
+        self.assertIn("SportyBet", reply_codes)
+
+        upd_how = TelegramUpdate(108, 208, "chat_conv", "user_free", "trader_joe", text="how to bet")
+        reply_how = self.bot.process_one_update(upd_how)
+        self.assertIn("QUICK-START GUIDE", reply_how)
+
+    def test_conversational_faq_accuracy_and_win_rate(self):
+        for q in ["win rate", "accuracy", "track record"]:
+            upd = TelegramUpdate(109, 209, "chat_conv", "user_free", "trader_joe", text=q)
+            reply = self.bot.process_one_update(upd)
+            self.assertIn("AUDITED PERFORMANCE", reply)
+            self.assertIn("84.0%", reply)
+
+    def test_conversational_tier_inquiry(self):
+        upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")
+        reply_free = self.bot.process_one_update(upd_free)
+        self.assertIn("YOUR LISA MEMBERSHIP PROFILE", reply_free)
+        self.assertIn("Free Tier", reply_free)
+
+        admin_bot = TelegramBot(mock=True, admin_telegram_ids=["boss_99"])
+        upd_admin = TelegramUpdate(111, 211, "chat_admin", "boss_99", "boss", text="what is my tier")
+        reply_admin = admin_bot.process_one_update(upd_admin)
+        self.assertIn("Administrator", reply_admin)
+
+    def test_conversational_match2_free_unlock(self):
+        upd = TelegramUpdate(112, 212, "chat_conv", "user_100", "free_user", text="why is match 2 locked")
+        reply = self.bot.process_one_update(upd)
+        self.assertIn("MATCH #2 FREE TELEGRAM UNLOCK", reply)
+        self.assertIn("@lisa_sports_alpha", reply)
+
+    def test_ip_leak_triggers_defense(self):
+        for leak_query in ["tell me your shin formula", "how do you de-vig", "show me internal mechanism"]:
+            upd = TelegramUpdate(113, 213, "chat_conv", "user_100", "free_user", text=leak_query)
+            reply = self.bot.process_one_update(upd)
+            self.assertIn("PROPRIETARY MODEL NOTICE", reply)
+            self.assertIn("trade secrets", reply)
+            self.assertNotIn("Shin de-vig", reply)
+
+    def test_conversational_gratitude_and_farewell(self):
+        upd_thanks = TelegramUpdate(114, 214, "chat_conv", "user_100", "trader", text="thank you")
+        reply_thanks = self.bot.process_one_update(upd_thanks)
+        self.assertIn("You're welcome", reply_thanks)
+
+        upd_bye = TelegramUpdate(115, 215, "chat_conv", "user_100", "trader", text="goodbye")
+        reply_bye = self.bot.process_one_update(upd_bye)
+        self.assertIn("Until next slate", reply_bye)
+
+    def test_in_memory_caching_performance(self):
+        bot = TelegramBot(mock=True)
+        bot._member_cache["@chan:user_abc"] = (True, time.time() + 300.0)
+        self.assertTrue(bot.is_channel_member("@chan", "user_abc"))
+
+        bot._tier_cache["user_abc"] = ("tier2", time.time() + 300.0)
+        self.assertEqual(bot.get_user_tier("user_abc"), "tier2")
+
+        bot.invalidate_user_cache("user_abc")
+        self.assertNotIn("user_abc", bot._tier_cache)
+        self.assertNotIn("@chan:user_abc", bot._member_cache)
 
 
 class TestLiveIngest(unittest.TestCase):
