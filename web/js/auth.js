@@ -34,6 +34,8 @@ class AuthController {
         }
       } else {
         localStorage.removeItem('lisa_user');
+        localStorage.removeItem('lisa_tier');
+        localStorage.removeItem('lisa_telegram_unlocked');
       }
     } catch (e) {
       console.warn('Failed to persist user to localStorage:', e);

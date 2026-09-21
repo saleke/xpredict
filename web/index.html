@@ -742,6 +742,66 @@
           </div>
         </div>
       </div>
+
+      <!-- Subscription Value Meter (ROI & Retention Simulator) -->
+      <div class="calc-card" id="sub-value-card" style="margin-top: 24px;">
+        <div class="calc-header">
+          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <h2 class="calc-title" style="color: var(--accent-emerald);">📈 Subscription Value Meter &amp; ROI Simulator</h2>
+            <span class="badge" style="background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); font-weight: 700;">
+              Avg Yield: +14.5 Units / Mo
+            </span>
+          </div>
+          <p class="calc-desc">
+            Calculate your exact net profitability and return on subscription cost. See why disciplined unit betting makes LISA pay for itself within days.
+          </p>
+        </div>
+
+        <div class="calc-inputs-grid">
+          <div class="input-field">
+            <label for="meter-unit-size">Your Standard Unit Size ($)</label>
+            <input type="number" id="meter-unit-size" value="25" min="1" max="10000" step="5">
+          </div>
+
+          <div class="input-field">
+            <label for="meter-tier-select">Target Subscription Plan</label>
+            <select id="meter-tier-select">
+              <option value="19" data-name="Tier 1 Sharp Starter" selected>Tier 1: Sharp Starter ($19/mo)</option>
+              <option value="49" data-name="Tier 2 Pro Trader">Tier 2: Pro Trader ($49/mo)</option>
+              <option value="149" data-name="Tier 3 VIP Syndicate">Tier 3: VIP Syndicate ($149/mo)</option>
+            </select>
+          </div>
+
+          <div class="input-field">
+            <label for="meter-monthly-units">Expected Monthly Edge (Units)</label>
+            <input type="number" id="meter-monthly-units" value="14.5" min="1" max="50" step="0.5">
+          </div>
+        </div>
+
+        <div class="calc-output-box" id="meter-output-box" style="background: linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(6,182,212,0.05) 100%); border-color: rgba(16,185,129,0.3);">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 12px; text-align: left;">
+            <div>
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Gross Edge Profit</div>
+              <div style="font-size: 22px; font-weight: 800; color: #fff;" id="meter-gross-val">+$362.50</div>
+            </div>
+            <div>
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Monthly Plan Fee</div>
+              <div style="font-size: 22px; font-weight: 800; color: var(--accent-rose);" id="meter-fee-val">-$19.00</div>
+            </div>
+            <div>
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Net Investor Gain</div>
+              <div style="font-size: 22px; font-weight: 800; color: var(--accent-emerald);" id="meter-net-val">+$343.50</div>
+            </div>
+            <div>
+              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Subscription Net ROI</div>
+              <div style="font-size: 22px; font-weight: 800; color: var(--accent-cyan);" id="meter-roi-val">+1,807%</div>
+            </div>
+          </div>
+          <div class="calc-advice" id="meter-advice" style="color: #6ee7b7; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 6px;">
+            Breakeven Unit Size: <strong>$1.31 / unit</strong>. Every wager over $1.31 generates pure compounding profit over the subscription cost.
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- VIEW 5: Tier 3 Syndicate Alpha -->

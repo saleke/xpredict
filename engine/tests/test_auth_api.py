@@ -5,6 +5,7 @@ import json
 import socket
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -88,6 +89,7 @@ def test_auth_api_flow(tmp_path):
             assert data["user"]["email"] == "sarah@xpredict.ai"
             assert data["user"]["tier"] == "tier2"
             session_id = data["session_id"]
+            user_id = data["user"]["id"]
 
         # 3. /api/auth/me using Cookie
         req = urllib.request.Request(
@@ -173,6 +175,84 @@ def test_auth_api_flow(tmp_path):
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode())
             assert data["authenticated"] is False
+
+        picks_bypass_req = urllib.request.Request(f"{base_url}/api/picks?tier=tier3")
+        with urllib.request.urlopen(picks_bypass_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["tier"] == "free"
+            assert data["active_picks"][3]["is_locked"] is True
+
+        unauth_update_req = urllib.request.Request(
+            f"{base_url}/api/auth/update-tier",
+            data=json.dumps({"tier": "tier3"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(unauth_update_req)
+            assert False, "Expected 403 Forbidden"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+
+        auth_update_req = urllib.request.Request(
+            f"{base_url}/api/auth/update-tier",
+            data=json.dumps({"user_id": user_id, "tier": "tier3"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": "lisa_internal_secret_2026",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(auth_update_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["success"] is True
+            assert data["tier"] == "tier3"
+
+        webhook_provision_req = urllib.request.Request(
+            f"{base_url}/api/v1/webhook/payment",
+            data=json.dumps({
+                "event": "checkout.session.completed",
+                "customer_email": "pro_trader@xpredict.ai",
+                "tier": "tier2",
+                "telegram_id": "99887766",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": "lisa_internal_secret_2026",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(webhook_provision_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["success"] is True
+            assert data["action"] == "PROVISIONED"
+            assert data["tier"] == "tier2"
+
+        provisioned_user = auth.get_user_by_email("pro_trader@xpredict.ai")
+        assert provisioned_user is not None
+        assert provisioned_user["tier"] == "tier2"
+        assert provisioned_user["telegram_id"] == "99887766"
+
+        webhook_churn_req = urllib.request.Request(
+            f"{base_url}/api/v1/webhook/payment",
+            data=json.dumps({
+                "event": "customer.subscription.deleted",
+                "customer_email": "pro_trader@xpredict.ai",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": "lisa_internal_secret_2026",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(webhook_churn_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["success"] is True
+            assert data["action"] == "DOWNGRADED"
+            assert data["tier"] == "free"
+
+        churned_user = auth.get_user_by_email("pro_trader@xpredict.ai")
+        assert churned_user["tier"] == "free"
 
     finally:
         server.shutdown()

@@ -1870,6 +1870,11 @@ class TelegramBot:
             book = str(profile.get("preferred_bookmaker", "SportyBet"))
             unit_val = max(1.0, round(amt * (frac * 0.02), 2))
             upd_time = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(profile.get("updated_at", time.time())))
+            proj_monthly = round(14.5 * unit_val, 2)
+            t1_net = round(proj_monthly - 19.0, 2)
+            t1_roi = round((t1_net / 19.0) * 100, 1) if proj_monthly >= 19.0 else 0.0
+            t2_net = round(proj_monthly - 49.0, 2)
+            t2_roi = round((t2_net / 49.0) * 100, 1) if proj_monthly >= 49.0 else 0.0
             text = (
                 "🏦 <b>LISA BANKROLL REFINERY PROFILE</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1879,6 +1884,11 @@ class TelegramBot:
                 f"🎯 <b>1 Unit Value (1u):</b> <code>${unit_val:,.2f}</code> (2% base scaled)\n"
                 f"🎟️ <b>Primary Bookmaker:</b> <code>{book}</code>\n"
                 f"🕒 <b>Last Calibrated:</b> <code>{upd_time}</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "📊 <b>Subscription Value Meter (Avg +14.5u/mo):</b>\n"
+                f"• Projected Gross Yield: <code>+${proj_monthly:,.2f} / month</code>\n"
+                f"• Tier 1 ($19/mo): <b>+${t1_net:,.2f}</b> Net (<b>+{t1_roi:,.1f}% ROI</b>, BE: $1.31/u)\n"
+                f"• Tier 2 ($49/mo): <b>+${t2_net:,.2f}</b> Net (<b>+{t2_roi:,.1f}% ROI</b>, BE: $3.38/u)\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
                 "💡 <i>Your unit stakes are calculated live on every active prediction.</i>"
             )

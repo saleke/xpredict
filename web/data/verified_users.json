@@ -3,7 +3,7 @@
     "verified": true,
     "telegram_user_id": "tg_user_1",
     "username": "trader_joe",
-    "verified_at": 1789968005.1205087
+    "verified_at": 1789969020.6281486
   },
   "test_valid_user": {
     "verified": true,
@@ -15,7 +15,7 @@
     "verified": true,
     "telegram_user_id": "",
     "username": "",
-    "verified_at": 1789968003.6566396
+    "verified_at": 1789969019.6113362
   },
   "usr_avdtedo": {
     "verified": true,
@@ -33,18 +33,30 @@
     "verified": true,
     "telegram_user_id": "",
     "username": "",
-    "verified_at": 1789968004.8144798
+    "verified_at": 1789969020.4426699
   },
   "influencer@review.com": {
     "verified": true,
     "telegram_user_id": "",
     "username": "",
-    "verified_at": 1789968004.8421638
+    "verified_at": 1789969020.4642262
   },
   "pro_bettor@quant.com": {
     "verified": true,
     "telegram_user_id": "",
     "username": "",
     "verified_at": 1789965819.0473015
+  },
+  "pro_trader@xpredict.ai": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789969017.3298728
+  },
+  "live_test_sub@xpredict.ai": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789968988.441361
   }
 }
