@@ -1,13 +1,19 @@
-"""LISA Rich Rolling Fixture & Commercial Tier Data Generator.
+"""SYNTHETIC DEMO DATA GENERATOR — not real validation data.
 
-Implements the Dual-Track & 3-Tier Confidence Grading Architecture:
-- Grade A (💎 Flagship Diamonds): Strict mathematical certainty (P_true >= 82%, low CV, positive EV).
-  Feeds the Public Audited Ledger to preserve verified 85%+ win rates.
-- Grade B (🧠 Smart Market Pivots): Marquee matches where LISA pivots from sucker moneylines
-  to high-certainty derived micro-bets (Over 1.5 Goals, Double Chance 1X, BTTS).
-- Grade C (🛡️ Pass Advisories): Popular matches where market conditions are coin-flip traps or negative EV.
-  LISA advises users to HOLD OFF / DO NOT BET, preserving subscriber bankrolls without
-  contaminating the official betting ledger!
+Generates a fabricated "commercial 4-tier" dataset for UI prototyping only
+(``lisa export-web --fixtures``). Every pick, odds line, scoreline, and
+accuracy metric in its output is INVENTED. Nothing here is fed into the
+backtest/walk-forward audit engines, and NOTHING here validates a prediction
+against a real match outcome.
+
+The tier-and-grading labels mimic the UI vocabulary (Grade A / Pivots / Pass
+Advisories) but the numbers carry no real-world meaning. For honest, real
+validation use the packaged football-data archive:
+
+    lisa backtest        # grades predictions against real archived results
+    lisa walkforward     # chronological, no-look-ahead model evaluation
+
+See ``lisa.history.HISTORICAL_PROVENANCE`` for the real data source.
 """
 
 from __future__ import annotations
@@ -664,9 +670,21 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
             })
 
     return {
+        "data_provenance": {
+            "synthetic": True,
+            "demo": True,
+            "source": "SYNTHETIC DEMO (invented picks, odds, scores and metrics)",
+            "statement": (
+                "This payload is a UI prototype only. No pick here is validated "
+                "against a real match outcome and no accuracy/calibration number "
+                "in it is real. Run 'lisa backtest' / 'lisa walkforward' on the "
+                "packaged real archive for honest results."
+            ),
+        },
         "meta": {
             "generated_at": now.isoformat(),
             "version": "0.1.0",
+            "demo": True,
             "total_sports": 9,
             "scope_leagues": [
                 "soccer_epl",

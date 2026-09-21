@@ -154,6 +154,14 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._handle_picks(parsed)
             return
 
+        if path == "/api/tiers":
+            self._handle_tiers()
+            return
+
+        if path == "/api/forecast":
+            self._handle_forecast()
+            return
+
         if path == "/api/ledger":
             self._handle_ledger(parsed)
             return
@@ -493,6 +501,22 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             }
         }
         self._send_json(payload)
+
+    def _handle_tiers(self):
+        """Subscription tier value ladder (feature matrix + reveal timing)."""
+        from .tiers import upgrade_path
+
+        self._send_json(upgrade_path())
+
+    def _handle_forecast(self):
+        """Daily match forecast board (10+ fixtures, uncertainty flags)."""
+        from .bulletin import build_bulletin
+
+        cached = getattr(self, "_forecast_cache", None)
+        if not cached or time.time() - cached[0] > 300:
+            cached = (time.time(), build_bulletin())
+            self._forecast_cache = cached
+        self._send_json(cached[1])
 
     def _handle_verify_status(self, parsed: urllib.parse.ParseResult):
         qs = urllib.parse.parse_qs(parsed.query)

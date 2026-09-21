@@ -246,7 +246,7 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
         payload = generate_rolling_commercial_dataset(now=utcnow())
         try:
             from .backtest import BacktestEngine
-            payload["backtest"] = BacktestEngine().run().to_dict()
+            payload["backtest"] = BacktestEngine().run().to_web_dict()
         except Exception as exc:
             print(f"[export-web] Warning: could not attach backtest: {exc}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -391,6 +391,102 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tune(args: argparse.Namespace) -> int:
+    from .tuning import DEFAULT_LEAGUES, format_tuning, tune_subsets
+
+    thresholds: Optional[tuple[float, ...]] = None
+    if args.thresholds:
+        thresholds = tuple(
+            float(t.strip()) for t in args.thresholds.split(",") if t.strip()
+        )
+
+    leagues: Optional[tuple[tuple[str, ...], ...]] = None
+    if args.leagues:
+        keys = tuple(k.strip() for k in args.leagues.split(",") if k.strip())
+        leagues = (keys,) if keys else DEFAULT_LEAGUES
+
+    report = tune_subsets(thresholds=thresholds, league_options=leagues)
+
+    if args.export_json:
+        out_path = Path(args.export_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_json_streaming_generic(report, out_path, "grid")
+        print(f"[tune] Report exported to {out_path}")
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(format_tuning(report))
+
+    return 0
+
+
+def _cmd_study(args: argparse.Namespace) -> int:
+    from .study import MarketStudyEngine, format_study
+
+    report = MarketStudyEngine().run()
+
+    if args.export_json:
+        out_path = Path(args.export_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(report, indent=2))
+        print(f"[study] Report exported to {out_path}")
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(format_study(report))
+
+    return 0
+
+
+def _cmd_forecast(args: argparse.Namespace) -> int:
+    from .bulletin import build_bulletin, format_bulletin
+
+    bulletin = build_bulletin(
+        mode="archive",
+        min_matches=args.min_matches,
+        max_matches=args.limit,
+    )
+    if getattr(args, "top", False):
+        matches = [r for r in bulletin["matches"] if r["marquee"] or r["is_top_pick"]]
+        bulletin = {**bulletin, "matches": matches, "count": len(matches)}
+
+    if args.json:
+        print(json.dumps(bulletin, indent=2))
+    else:
+        print(format_bulletin(bulletin))
+    return 0
+
+
+def _cmd_tiers(args: argparse.Namespace) -> int:
+    from .tiers import format_tiers, upgrade_path
+
+    if args.json:
+        print(json.dumps(upgrade_path(), indent=2))
+    else:
+        print(format_tiers())
+    return 0
+
+
+def _cmd_export_forecast(args: argparse.Namespace) -> int:
+    from .bulletin import build_bulletin
+    from .tiers import upgrade_path
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    bulletin = build_bulletin()
+    bulletin_path = out_dir / "forecast.json"
+    bulletin_path.write_text(json.dumps(bulletin, indent=2))
+
+    tiers_path = out_dir / "tiers.json"
+    tiers_path.write_text(json.dumps(upgrade_path(), indent=2))
+
+    print(f"[export-forecast] Wrote {bulletin_path} ({bulletin['count']} fixtures) + {tiers_path}")
+    return 0
+
+
 def _cmd_backtest(args: argparse.Namespace) -> int:
     from .backtest import BacktestEngine, format_backtest_report
     sports = args.sports.split(",") if args.sports else None
@@ -400,7 +496,11 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     if args.export_json:
         out_path = Path(args.export_json)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(report.to_dict(), indent=2))
+        # Stream the ledger in batches: each records batch is serialized and
+        # written, then cleared from memory before the next batch is processed,
+        # so the full 7k+ record audit never lives in memory (or as one giant
+        # JSON string) at once.
+        _write_report_json_streaming(report, out_path)
         print(f"[backtest] Audit report exported to {out_path}")
 
     if args.json:
@@ -409,6 +509,106 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         print(format_backtest_report(report, verbose=args.verbose))
 
     return 0
+
+
+def _write_report_json_streaming(report, out_path: Path, batch_size: int = 500) -> None:
+    """Write a BacktestReport JSON incrementally, batch-by-batch.
+
+    The report dict is split at ``records``; every other key is written first,
+    then the record array is emitted in batches of ``batch_size`` records. Each
+    batch is serialized to a string, flushed to disk, and dropped before the
+    next batch is built — bounding peak memory on large archives.
+    """
+    import json as _json
+
+    payload = report.to_dict()
+    records = payload.pop("records", [])
+
+    with out_path.open("w", encoding="utf-8") as fh:
+        fh.write("{\n")
+        keys = list(payload.keys())
+        for i, key in enumerate(keys):
+            fh.write(_json.dumps({key: payload[key]}, separators=(",", ":"))[1:-1])
+            fh.write(",\n" if i < len(keys) - 1 or records else "\n")
+        if records:
+            fh.write('"records": [')
+            wrote_any = False
+            while records:
+                batch, records = records[:batch_size], records[batch_size:]
+                if wrote_any:
+                    fh.write(",")
+                fh.write(_json.dumps(batch, separators=(",", ":"))[1:-1])
+                wrote_any = True
+                del batch  # release the batch
+            fh.write("]\n")
+        fh.write("}\n")
+
+
+def _cmd_walk_forward(args: argparse.Namespace) -> int:
+    from .walkforward import format_walk_forward, walk_forward
+
+    league_filter = None
+    if args.sports:
+        league_filter = {s.strip() for s in args.sports.split(",") if s.strip()}
+    report = walk_forward(
+        league_filter=league_filter,
+        min_edge=args.min_edge,
+        min_prob=args.min_prob,
+    )
+
+    if args.export_json:
+        out_path = Path(args.export_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_json_streaming_generic(
+            report, out_path, ("model_value_bets", "market_follower_bets"),
+        )
+        print(f"[walkforward] Report exported to {out_path}")
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(format_walk_forward(report))
+
+    return 0
+
+
+def _write_report_json_streaming_generic(payload: dict, out_path: Path,
+                                         large_keys, batch_size: int = 500) -> None:
+    """Variant of ``_write_report_json_streaming`` for plain-dict reports.
+
+    Each key named in ``large_keys`` may grow large (e.g. the walk-forward
+    per-bet ledgers) and is streamed in cleared batches like the backtest
+    records. Other keys are written verbatim.
+    """
+    import json as _json
+
+    if isinstance(large_keys, str):
+        large_keys = (large_keys,)
+    large = {key: payload.pop(key, None) for key in large_keys}
+    large_present = {key: value for key, value in large.items() if value is not None}
+
+    with out_path.open("w", encoding="utf-8") as fh:
+        fh.write("{\n")
+        keys = list(payload.keys())
+        n_scalar = len(keys)
+        for i, key in enumerate(keys):
+            fh.write(_json.dumps({key: payload[key]}, separators=(",", ":"))[1:-1])
+            fh.write(",\n")
+        for j, (key, records) in enumerate(large_present.items()):
+            fh.write(f'"{key}": [')
+            wrote_any = False
+            while records:
+                batch, records = records[:batch_size], records[batch_size:]
+                if wrote_any:
+                    fh.write(",")
+                fh.write(_json.dumps(batch, separators=(",", ":"))[1:-1])
+                wrote_any = True
+                del batch
+            fh.write("]")
+            if j < len(large_present) - 1:
+                fh.write(",")
+            fh.write("\n")
+        fh.write("}\n")
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
@@ -803,6 +1003,70 @@ def main(argv: list[str] | None = None) -> int:
     bkt.add_argument("--verbose", action="store_true",
                      help="include detailed match-by-match ledger breakdown")
 
+    wft = sub.add_parser(
+        "walkforward",
+        help="honest chronological walk-forward: gated market vs independent Elo/Poisson model vs baselines",
+    )
+    wft.add_argument("--sports", default=None,
+                     help="comma-separated sport keys to evaluate (default: all archived football leagues)")
+
+    tune_sub = sub.add_parser(
+        "tune",
+        help="strategy tuning on the real archive: threshold x league sweep, per-season splits, Kelly risk sim",
+    )
+    tune_sub.add_argument("--thresholds", default=None,
+                          help="comma-separated gate thresholds (default: 0.75,0.78,0.80,0.82,0.85)")
+    tune_sub.add_argument("--leagues", default=None,
+                          help="comma-separated sport keys to restrict tuning to (default: all + each league + EPL&Ligue1)")
+    tune_sub.add_argument("--export-json", default=None,
+                          help="path to save the full tuning report JSON")
+    tune_sub.add_argument("--json", action="store_true",
+                          help="output raw JSON instead of formatted report")
+    wft.add_argument("--min-edge", type=float, default=0.0,
+                     help="minimum model EV edge before a value bet fires (default: 0.0)")
+    wft.add_argument("--min-prob", type=float, default=0.30,
+                     help="minimum model probability before a value bet fires (default: 0.30)")
+    wft.add_argument("--export-json", default=None,
+                     help="path to save walk-forward report JSON")
+    wft.add_argument("--json", action="store_true",
+                     help="output raw JSON instead of formatted report")
+
+    st = sub.add_parser(
+        "study",
+        help="market-efficiency study across all archived markets: 1X2, Asian Handicap, O/U 2.5, BTTS & correct-score analytics",
+    )
+    st.add_argument("--export-json", default=None,
+                    help="path to save the full study report JSON")
+    st.add_argument("--json", action="store_true",
+                    help="output raw JSON instead of formatted report")
+
+    fo = sub.add_parser(
+        "forecast",
+        help="daily match forecast board: 10+ probability forecasts per matchday with honest uncertainty flags",
+    )
+    fo.add_argument("--json", action="store_true",
+                    help="output raw JSON instead of formatted board")
+    fo.add_argument("--top", action="store_true",
+                    help="show only popular fixtures and the pick of the day")
+    fo.add_argument("--limit", type=int, default=40,
+                    help="max fixtures on the board (default: 40)")
+    fo.add_argument("--min-matches", type=int, default=10,
+                    help="minimum fixtures before widening to adjacent day(s) (default: 10)")
+
+    tr = sub.add_parser(
+        "tiers",
+        help="show the subscription tier value ladder, reveal timing and why to upgrade",
+    )
+    tr.add_argument("--json", action="store_true",
+                    help="output raw JSON instead of formatted matrix")
+
+    ef = sub.add_parser(
+        "export-forecast",
+        help="export the forecast board + tier matrix to web/data for the dashboard",
+    )
+    ef.add_argument("--out-dir", default="web/data",
+                    help="output directory (default: web/data)")
+
     tg = sub.add_parser("telegram-bot", help="run interactive Telegram bot for pick reveals, stats & unlocks")
     tg.add_argument("--token", default="", help="Telegram Bot API token")
     tg.add_argument("--chat-id", default="", help="Target chat or channel ID")
@@ -855,6 +1119,18 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_serve(args)
     if args.cmd == "backtest":
         return _cmd_backtest(args)
+    if args.cmd == "walkforward":
+        return _cmd_walk_forward(args)
+    if args.cmd == "tune":
+        return _cmd_tune(args)
+    if args.cmd == "study":
+        return _cmd_study(args)
+    if args.cmd == "forecast":
+        return _cmd_forecast(args)
+    if args.cmd == "tiers":
+        return _cmd_tiers(args)
+    if args.cmd == "export-forecast":
+        return _cmd_export_forecast(args)
     if args.cmd == "telegram-bot":
         return _cmd_telegram_bot(args)
     if args.cmd == "live-ingest":

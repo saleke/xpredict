@@ -1,5 +1,5 @@
 /**
- * LISA Canvas Chart Engine — Pure HTML5 Canvas Rendering
+ * LISA Canvas Chart Engine - Pure HTML5 Canvas Rendering
  * Provides high-DPI interactive reliability diagram & CLV performance charts.
  */
 

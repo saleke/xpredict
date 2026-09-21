@@ -3,7 +3,7 @@
 > **Enterprise-grade algorithmic sports forecasting, consensus de-vigging, and execution routing with an autonomous Telegram Gatekeeper and Mobile Admin Console.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests Passing](https://img.shields.io/badge/tests-187%20passed-brightgreen.svg)]()
+[![Tests Passing](https://img.shields.io/badge/tests-262%20passed-brightgreen.svg)]()
 [![Zero Dependencies Runtime](https://img.shields.io/badge/runtime-stdlib%20only-blueviolet.svg)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)]()
 
@@ -80,6 +80,8 @@ The LISA server runs by default on `http://localhost:8080` and provides the foll
 | `/api/health` | `GET` | System health, database driver, active fixtures count, bot status | JSON (`status`, `ledger_counts`, `telegram_bot`, `odds_feed`) |
 | `/api/picks` or `/data/dashboard.json` | `GET` | Active refined picks, fair odds, execution recommendations, booking codes | JSON Array of Pick Objects |
 | `/api/ledger` | `GET` | Audited historical settlement ledger, win rates, net units, CLV, Brier calibration | JSON (`summary`, `picks_settled`, `monthly_breakdown`) |
+| `/api/forecast` | `GET` | Daily match forecast board — 10+ fixtures with consensus/model probabilities, micro pack (BTTS/O-U/scorelines), uncertainty flags, popular games | JSON (`day`, `count`, `matches[]`, `disclaimer`) |
+| `/api/tiers` | `GET` | Subscription value ladder — feature matrix, per-tier reveal timing, upgrade hints | JSON (`tiers`, `features[]`, `ladder`) |
 | `/data/live_booking_codes.json` | `GET` | Configurable platform-specific booking codes for accumulator / straight slips | JSON Object (`sportybet`, `football_com`, `1xbet`, etc.) |
 | `/api/verify-status?user_id={id}` | `GET` | Checks if a web visitor has verified their Telegram channel membership | JSON (`verified`: `bool`, `tier`: `str`) |
 | `/api/auth/me` | `GET` | Current authenticated user profile, bankroll parameters, and tier level | JSON (`user_id`, `email`, `tier`, `bankroll`) |
@@ -257,7 +259,7 @@ PYTHONPATH=engine python3 -m lisa.cli telegram-bot --interactive
 ```
 
 ### 3. Run Automated Tests
-Execute the 187 unit and integration tests covering the mathematical core, FSM, admin overrides, and REST endpoints:
+Execute the 262 unit and integration tests covering the mathematical core, FSM, admin overrides, REST endpoints, and the real-archive audit canaries:
 
 ```bash
 PYTHONPATH=engine pytest engine/tests
@@ -269,6 +271,106 @@ Deploy via Docker Compose with zero external dependencies:
 ```bash
 docker compose up -d --build
 ```
+
+---
+
+## 8. Honest Historical Evaluation
+
+LISA's audit tooling was rebuilt on a **real, sourced, reproducible archive** — no synthetic fixtures are used anywhere in the backtest.
+
+### Data
+
+* **Source**: [football-data.co.uk](https://www.football-data.co.uk) — real early pre-match odds (bet365, Bet&Win, Pinnacle, William Hill, VC Bet) **plus each book's closing (`*C`) snapshot**, paired with the official final scorelines.
+* **Coverage**: 5 top-flight leagues × seasons 2021/22–2024/25 — EPL `soccer_epl`, La Liga `soccer_spain_la_liga`, Bundesliga `soccer_germany_bundesliga`, Serie A `soccer_italy_serie_a`, Ligue 1 `soccer_france_ligue_one`. **7,155 completed matches**.
+* **Packaged under** `engine/lisa/historical/` (see `NOTICE` for attribution). *NBA was removed from the historical layer* (football-data.co.uk publishes soccer-only archive lines).
+
+### `lisa backtest`
+
+Grades the real archive through the production refinery (Shin de-vigging → consensus → certainty gate → Fractional Kelly) and reports honest institutional metrics:
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli backtest --json --export-json /tmp/bt.json
+```
+
+Every report carries a `data_provenance` block stating exactly what it ran on, and **Grade B "smart pivots" were removed** because that market type cannot be honestly priced from a 1X2-only archive. The per-strategy profiles (Conservative, market-favourite baseline, always-home baseline, Derived 2-Leg Parlays, Derived 70/30 Blend) are all computed from real recorded outcomes; derived scenarios are explicitly labelled "derived".
+
+**CLV is now measured against the real closing line.** The archive ships *two* snapshots per match: the executed early line (the five books' pre-match prices) and the true closing line (each book's `*C` late price). `positive_clv_rate` is no longer trivially 1.0 — it is the honest fraction of bets whose executed price beat the later closing price (**37.9%**, mean CLV **−1.1%**): the early snapshot did not beat the close on average.
+
+**Real data only**: every prediction result and scoreline in the ledger is bound to the packaged archive's official final score and re-graded against it in tests (`test_backtest_validation_binds_to_archived_scores`, `test_every_bet_result_validated_against_archived_outcome`). The live demo generator (`fixtures_generator.py`) is quarantined behind `--fixtures`, self-labels its payloads `synthetic/demo`, and is never fed into the audit engines. `lisa backtest --export-json` streams the full 7k-record ledger in cleared batches to keep peak memory bounded.
+
+### `lisa tune`
+
+A threshold × league sweep over the real archive — the profitability experiment. Every cell is graded against official archived results, the best configs are re-checked **per season** (guards against tuning on one lucky window), and a risk-controlled Kelly simulation applies fractional Kelly (50%, 5% per-bet cap, 25% drawdown stop):
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli tune --export-json /tmp/tune.json
+PYTHONPATH=engine python3 -m lisa.cli tune --thresholds 0.75,0.80 --leagues soccer_epl --json
+```
+
+**Verdict (honest): no config is robustly profitable on this archive.** Full-sample ROI is negative for most settings (e.g. 0.75/ALL: −1.7%); the handful of positive cells (e.g. 0.80/EPL +5.5%, n=75) each have at least one **losing season** (EPL 0.80's 2022/23 was −8.0%) and *every cell loses to the closing line* (negative CLV across the board). The Kelly simulation stakes ≈0 for the recommended config because the model's `p_true` on these favourites implies positive-fraction-of-Kelly ≈ 0 — prices sit at or above fair. Treat the positive cells strictly as hypotheses to re-validate on fresh matches; do not ship a "profitable" claim from this archive.
+
+### `lisa study`
+
+The market-efficiency study across **every market the archive ships**: 1X2, Asian Handicap, and Over/Under 2.5 — each with real early *and* closing snapshots and a close/early movement ratio per outcome. It answers *"is there ANY exploitable pattern in the markets we can price?"* using only archived prices and official scores:
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli study --export-json /tmp/study.json
+```
+
+* Bins early implied probability against the **real** outcome frequency per market (a market-calibration curve).
+* Chases the early favourite and measures true late-to-close CLV, broken down by **movement direction** (closing/early price ratio: `steam_in` < 0.97, `slight_in`, `slight_out`, `drift_out` > 1.03).
+* Reports score-derived analytics — BTTS frequency (54.7% overall), most-common correct scores — plus an **independent no-look-ahead Poisson model BTTS calibration** (no odds used).
+
+**The honest headline finding: the closing line is more efficient than the early line.** Early favourites that *shortened* toward the close (`steam_in`) cover at materially higher rates than those that drifted out — e.g. 1X2 steam-in favourites win 55.1% with **+6.6% CLV** vs 48.9% / **−7.3%** for drift-out. Because the final move is unknowable in advance, this is *not* directly bankable from the archive — but it is precisely the mechanism a **real-time early-bird line-movement system** (poll odds from kick-off minus N hours, enter as steam builds, before the close) would try to capture. That is the only literature-backed route to edge identified so far, and it requires the live odds tier, not the archive.
+
+### `lisa forecast`
+
+The **daily match forecast board** — the honest volume product that pairs with the rare staked picks. It separates *forecasts* (a probability for every fixture — 10+ a day by design) from *staked bets* (only the tiny subset that clears a real certainty gate). The board is served from the real packaged archive in offline/demo mode (`mode: archive`); in production the identical schema streams from live odds.
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli forecast            # full board
+PYTHONPATH=engine python3 -m lisa.cli forecast --top      # popular + pick of the day only
+PYTHONPATH=engine python3 -m lisa export-forecast         # writes web/data/forecast.json + tiers.json
+```
+
+Per fixture: **market consensus 1X2** (Shin de-vig across the day's books), **independent model probabilities** (no look-ahead), a **micro pack** (BTTS %, over/under 2.5 %, expected goals, most-likely scorelines), steam/movement direction, and an **uncertainty flag** (`low` / `medium` / `high`) with plain-English reasons — market disagreement (high CV), model-vs-market disagreement, thin book coverage, short model history, or a heavy favourite where the model and market diverge (a classic sucker spot). **High-uncertainty fixtures are labeled "do not stake"** — the board is a forecast, not a betting tip. The most-covered fixtures are surfaced as `❤ POPULAR` (marquee), and the day's single strongest *genuine* consensus is `★ Pick of the Day` — which is omitted entirely when nothing clears the honesty bar.
+
+The web dashboard renders this board live (Forecast Board tab), with per-tier lock teasers on the micro pack / Pick of the Day / diamond picks / steam radar.
+
+### `lisa tiers`
+
+The production **subscription value ladder** — the single source of truth the pricing page, `/api/tiers`, the web comparison matrix and any dispatch gating all read from:
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli tiers[--json]
+```
+
+Four tiers (`free`, `tier1`, `tier2`, `tier3`) map to 14 features with explicit **reveal timing** (how many minutes before kickoff each tier receives a signal: the higher the tier, the earlier). The honest ladder: every upgrade buys *earliness + breadth + depth* — never a promised win. Tier 3 owns the earliness/speed layer (earliest reveals, API + webhook feed, portfolio risk, soft-book stream, weekly audit PDF).
+
+### `lisa walkforward`
+
+A strictly chronological evaluation comparing LISA's market-gated consensus to an **independent Elo + Poisson model** that has never seen any odds:
+
+```bash
+PYTHONPATH=engine python3 -m lisa.cli walkforward --json --export-json /tmp/wf.json
+```
+
+* No look-ahead: each match is predicted from state that existed strictly *before* it, then state is updated.
+* Reports calibration (Brier, LogLoss, ECE, Wilson CI) plus head-to-head ROI at both "best recorded price" and "mean of five books" (the realistic price a bettor receives).
+
+### Reference results (as shipped)
+
+| Strategy | Bets | Win % | ROI @ best price | ROI @ avg price |
+|---|---|---|---|---|
+| Gated 🛡️ Conservative Singles (`backtest`) | 380 | 79.7% | −1.8% | — |
+| Market Favourites baseline (`walkforward`) | 7,155 | 53.9% | −0.8% | −2.8% |
+| Independent Elo/Poisson model value | 4,910 | 40.5% | −6.5% | −8.9% |
+
+The honest headline: the archive spans a market-efficient period — a quality-gated 79.7% win-rate book still produced **negative ROI at closing prices**, and neither baseline nor an independent model beat the market. Calibration metrics are reported openly (Brier, ECE, reliability curve) rather than curated.
+
+### Un-gameable test suite
+
+`engine/tests/` includes integrity canaries that make it impossible to silently reintroduce synthetic data: no future-dated or NBA fixtures, a real closing snapshot on **every** archived match, **three real markets per match** (1X2, Asian Handicap, O/U 2.5) with self-consistent close/early movement, real provenance on every export, exact archive fingerprints, walk-forward determinism, no-look-ahead model tests, AH grading unit tests (quarter/half/whole balls, pushes), a tuning-parity test asserting `lisa tune`'s 0.75/all-leagues cell reproduces the backtest's executed ledger exactly, forecast-board determinism + volume guarantees (8+ fixtures/day, honest disclaimer), and tier-entitlement canaries (monotonic unlocks, reveal timing never later for a higher tier, and a 4-tier upgrade ladder that adds value at every step).
 
 ---
 
@@ -285,13 +387,23 @@ docker compose up -d --build
 │   │   ├── shin.py            # Shin (1993) de-vigging & z-parameter root finder
 │   │   ├── consensus.py       # Sharp/margin-weighted consensus aggregation
 │   │   ├── gate.py            # 75% Certainty gate, Leave-One-Out EV, and Trap detector
+│   │   ├── history.py         # Real historical archive loader (football-data.co.uk)
+│   │   ├── markets.py         # AH / O/U grading (quarter balls) + BTTS/correct-score analytics
+│   │   ├── study.py           # Multi-market efficiency + steam/movement study engine
+│   │   ├── bulletin.py        # Daily match forecast board (10+/day, uncertainty flags, popular games)
+│   │   ├── tiers.py           # Subscription value ladder: feature matrix, reveal timing, upgrades
+│   │   ├── historical/        # Packaged real CSVs + NOTICE attribution
+│   │   ├── model.py           # Independent Elo + Poisson 1X2 model (no-look-ahead)
+│   │   ├── walkforward.py     # Chronological walk-forward evaluation engine
+│   │   ├── backtest.py        # Honest archive backtest + calibration + provenance
+│   │   ├── tuning.py          # Threshold×league sweep, per-season splits, Kelly risk sim
 │   │   ├── storage.py         # SQLite WAL, Postgres, and Redis storage drivers
 │   │   ├── telegram_bot.py    # Telegram Bot, FSM bankroll onboarding & Admin console
 │   │   ├── live_ingest.py     # Background odds poller & alert dispatcher
 │   │   ├── server.py          # Decoupled HTTP/REST API server
 │   │   ├── settle.py          # Automated match settlement & CLV calculator
-│   │   └── cli.py             # Unified CLI commands (start, telegram-bot, live-ingest)
-│   └── tests/                 # 187 comprehensive automated unit and integration tests
+│   │   └── cli.py             # Unified CLI commands (start, telegram-bot, backtest, walkforward, tune, study, forecast, tiers, export-forecast)
+│   └── tests/                 # 262 comprehensive automated unit and integration tests
 ├── web/                       # Reference decoupled web terminal
 │   ├── index.html             # UI structure & layout
 │   ├── css/                   # Vanilla styling & responsive glassmorphic system

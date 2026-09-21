@@ -1,8 +1,10 @@
 """Quantitative Backtesting & Calibration Engine.
 
 Simulates historical pre-match odds through the complete LISA refinery
-(Shin de-vigging, consensus convergence, 3-tier confidence grading, Fractional Kelly)
+(Shin de-vigging, consensus convergence, confidence grading, Fractional Kelly)
 and grades predictions against actual official final scores.
+
+Runs on the REAL packaged archive (see ``.history``) — never synthetic data.
 
 Computes institutional quantitative finance and probabilistic accuracy metrics:
   - Brier Score & Murphy (1973) Decomposition (Reliability, Resolution, Uncertainty)
@@ -12,6 +14,10 @@ Computes institutional quantitative finance and probabilistic accuracy metrics:
   - Sharpe Ratio and Sortino Ratio (downside risk penalty)
   - Profit Factor (Gross Profits / Gross Losses)
   - Sincere Counterfactual Capital Preservation on Grade C Pass Advisories
+  - Honest late-to-close CLV: the executed price (best early line across the
+    archive's books) is measured against the later recorded closing line
+    (football-data.co.uk *C columns). CLV is measured, never constructed — see
+    ``measure_clv``.
 """
 from __future__ import annotations
 
@@ -23,8 +29,12 @@ from typing import Any, Optional, Sequence
 from . import config as cfg
 from .calibration import CalibrationReport, evaluate_calibration
 from .consensus import Consensus, refine
-from .gate import compute_conviction_score, evaluate as evaluate_gate
-from .history import HISTORICAL_ODDS, HISTORICAL_SCORES
+from .gate import evaluate as evaluate_gate
+from .history import (
+    HISTORICAL_ODDS,
+    HISTORICAL_PROVENANCE,
+    HISTORICAL_SCORES,
+)
 from .odds import H2H, Match, Score
 from .parsing import parse_odds_payload, parse_scores_payload
 from .staking import compute_kelly_stake
@@ -45,6 +55,127 @@ def compute_wilson_ci(wins: int, total: int, z: float = 1.96) -> tuple[float, fl
     return max(0.0, center - margin), min(1.0, center + margin)
 
 
+def best_available_price(consensus: Consensus, outcome: str) -> Optional[float]:
+    """Best recorded decimal price for ``outcome`` across all consensus books."""
+    best: Optional[float] = None
+    for btp in consensus.books:
+        price = btp.prices.get(outcome)
+        if price is not None and (best is None or price > best):
+            best = price
+    return best
+
+
+def measure_clv(consensus: Consensus, outcome: str, exec_book: Optional[str],
+                exec_odds: float, closing_price: Optional[float]) -> tuple[Optional[float], bool]:
+    """Real late-to-close value measurement.
+
+    ``closing_price`` is the best price for ``outcome`` in the archive's closing
+    snapshot (football-data.co.uk *C columns). CLV = exec / close - 1; they "beat
+    the closing line" when the (earlier) executed price was *higher* than the
+    price at which the market finally closed. This is a genuine, auditable
+    price-movement statistic — never a constructed ``exec_odds * 0.96`` figure.
+    """
+    if closing_price is None or closing_price <= 0.0:
+        return None, False
+    return closing_price, exec_odds > closing_price
+
+
+def summarize_profile(
+    records: Sequence[dict[str, Any]],
+    *,
+    strategy_id: str,
+    name: str,
+    badge: str,
+    description: str,
+    risk_level: str,
+    best_for: str,
+    initial_capital: float = 10000.0,
+) -> dict[str, Any]:
+    """Compute a strategy profile purely from its *real* per-bet records.
+
+    Every metric (win rate, Wilson CI, ROI, drawdown, Sharpe, Sortino, profit
+    factor) is derived from the recorded outcomes; nothing is hardcoded.
+    """
+    exec_recs = [r for r in records if r.get("result") in ("WIN", "LOSS")]
+    n = len(exec_recs)
+    wins = sum(1 for r in exec_recs if r["result"] == "WIN")
+    losses = n - wins
+    win_rate = (wins / n) if n else 0.0
+    ci_lo, ci_hi = compute_wilson_ci(wins, n)
+
+    odds = [float(r["best_odds"]) for r in exec_recs]
+    avg_odds = statistics.mean(odds) if odds else 0.0
+    wagered = sum(float(r.get("stake_amount", 0.0)) for r in exec_recs)
+    profit = sum(float(r.get("pnl", 0.0)) for r in exec_recs)
+    roi = (profit / wagered * 100.0) if wagered > 0 else 0.0
+
+    # Drawdown is measured on the equity curve: a fund starting at
+    # ``initial_capital`` units that stakes each record's stake_amount.
+    equity = initial_capital
+    peak_equity = initial_capital
+    max_dd_dollars = 0.0
+    max_dd_pct = 0.0
+    returns: list[float] = []
+    for r in exec_recs:
+        odds_i = float(r["best_odds"])
+        ret = (odds_i - 1.0) if r["result"] == "WIN" else -1.0
+        returns.append(ret)
+        equity += float(r.get("pnl", 0.0))
+        peak_equity = max(peak_equity, equity)
+        max_dd_dollars = max(max_dd_dollars, peak_equity - equity)
+        if peak_equity > 0:
+            max_dd_pct = max(max_dd_pct, min(1.0, (peak_equity - equity) / peak_equity) * 100.0)
+
+    sharpe, sortino, profit_factor = _risk_metrics(returns)
+
+    return {
+        "strategy_id": strategy_id,
+        "name": name,
+        "badge": badge,
+        "description": description,
+        "total_matches": len(records),
+        "executed_bets": n,
+        "wins": wins,
+        "losses": losses,
+        "pushes": len(records) - n,
+        "win_rate": round(win_rate, 4),
+        "wilson_ci_lower": round(ci_lo, 4),
+        "wilson_ci_upper": round(ci_hi, 4),
+        "avg_odds": round(avg_odds, 2),
+        "total_wagered": round(wagered, 2),
+        "net_profit": round(profit, 2),
+        "roi_pct": round(roi, 2),
+        "max_drawdown_pct": round(max_dd_pct, 2),
+        "max_drawdown_dollars": round(max_dd_dollars, 2),
+        "sharpe_ratio": round(sharpe, 2),
+        "sortino_ratio": round(sortino, 2),
+        "profit_factor": round(profit_factor, 2),
+        "risk_level": risk_level,
+        "best_for": best_for,
+    }
+
+
+def _risk_metrics(returns: Sequence[float]) -> tuple[float, float, float]:
+    """Sharpe, Sortino, and profit factor from a realised per-bet return series."""
+    if not returns:
+        return 0.0, 0.0, 99.0
+    mean_ret = statistics.mean(returns)
+    std_ret = statistics.stdev(returns) if len(returns) > 1 else 0.01
+    sharpe = (mean_ret / std_ret * math.sqrt(len(returns))) if std_ret > 0 else 0.0
+
+    downside = [r for r in returns if r < 0]
+    if downside:
+        downside_dev = math.sqrt(sum(d ** 2 for d in downside) / len(downside))
+        sortino = (mean_ret / downside_dev * math.sqrt(len(returns))) if downside_dev > 0 else 0.0
+    else:
+        sortino = sharpe * 1.5
+
+    gross_wins = sum(r for r in returns if r > 0)
+    gross_losses = abs(sum(r for r in returns if r < 0))
+    profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else 99.0
+    return sharpe, sortino, profit_factor
+
+
 @dataclass
 class BacktestMatchRecord:
     """Individual evaluated match audit record."""
@@ -53,7 +184,7 @@ class BacktestMatchRecord:
     home_team: str
     away_team: str
     commence_time: str
-    grade: str                         # "GRADE_A" | "GRADE_B" | "GRADE_C"
+    grade: str                         # "GRADE_A" | "GRADE_C"
     market: str
     outcome_name: str
     p_true: float
@@ -142,11 +273,13 @@ class BacktestReport:
     mce: float
     log_loss: float
     positive_clv_rate: float
+    mean_clv: Optional[float] = None
     sport_breakdown: dict[str, dict[str, Any]] = field(default_factory=dict)
     records: list[BacktestMatchRecord] = field(default_factory=list)
     calibration_report: Optional[CalibrationReport] = None
     strategies: dict[str, dict[str, Any]] = field(default_factory=dict)
     strategy_comparison_matrix: list[dict[str, Any]] = field(default_factory=list)
+    data_provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,17 +323,52 @@ class BacktestReport:
                 "mce": round(self.mce, 4),
                 "log_loss": round(self.log_loss, 4),
                 "positive_clv_rate": round(self.positive_clv_rate, 4),
+                "mean_clv": round(self.mean_clv, 4) if self.mean_clv is not None else None,
             },
             "sport_breakdown": self.sport_breakdown,
             "calibration": self.calibration_report.to_dict() if self.calibration_report else None,
             "records": [r.to_dict() for r in self.records],
             "strategies": self.strategies,
             "strategy_comparison_matrix": self.strategy_comparison_matrix,
+            "data_provenance": self.data_provenance,
         }
+
+    def to_web_dict(self) -> dict[str, Any]:
+        """Lightweight export for the web dashboard.
+
+        Identical to ``to_dict`` but keeps the ledger displayable and fast to
+        load in a browser: the executed Grade A ledger in full, a bounded
+        sample of Grade C pass advisories, and zero per-strategy record dumps
+        (the baseline leagues run into the thousands). Summary cards, the
+        comparison matrix and the calibration table are unchanged.
+        """
+        payload = self.to_dict()
+        grade_a = [r.to_dict() for r in self.records if r.grade == "GRADE_A"]
+        grade_c = [r.to_dict() for r in self.records if r.grade == "GRADE_C"][:500]
+        payload["records"] = grade_a + grade_c
+        payload["records_trimmed"] = {
+            "note": "Web export trims the ledger for load time; run the CLI "
+                    "with --export-json for the complete archive.",
+            "grade_a": len(grade_a),
+            "grade_c_displayed": len(grade_c),
+            "grade_c_total": self.grade_c_traps_avoided,
+        }
+        payload["strategies"] = {
+            key: {"summary": sv["summary"], "records": []}
+            for key, sv in self.strategies.items()
+        }
+        if self.strategies.get("conservative"):
+            payload["strategies"]["conservative"]["records"] = grade_a
+        return payload
 
 
 class BacktestEngine:
     """Rigorous offline backtesting and calibration engine."""
+
+    # Match-id-scoped consensus cache: refine() is a pure function of a match
+    # plus the refinement settings, so re-running the audit never re-solves the
+    # (expensive) Shin de-vig for the same fixture.
+    _consensus_cache: dict[tuple[Any, ...], Optional[Consensus]] = {}
 
     def __init__(
         self,
@@ -235,6 +403,9 @@ class BacktestEngine:
         matches = parse_odds_payload(odds_data)
         scores_list = parse_scores_payload(scores_data)
         scores_by_id: dict[str, Score] = {s.match_id: s for s in scores_list}
+        closing_by_id: dict[str, Optional[dict[str, float]]] = {
+            g["id"]: g.get("closing_odds") for g in odds_data
+        }
 
         records: list[BacktestMatchRecord] = []
         bankroll = self.initial_bankroll
@@ -254,15 +425,17 @@ class BacktestEngine:
         predictions: list[float] = []
         binary_outcomes: list[float] = []
         clv_beats: list[bool] = []
+        clv_values: list[float] = []
 
         sport_stats: dict[str, dict[str, Any]] = {}
 
-        # Attacking fixtures known for high goal volume (Over 1.5 Goals derivatives)
-        high_totals_matches = {
-            "epl-hist-04", "epl-hist-09", "epl-hist-12", "epl-hist-16", "epl-hist-18",
-            "laliga-hist-06", "laliga-hist-08", "laliga-hist-10", "laliga-hist-15",
-            "bundes-hist-02", "bundes-hist-05", "bundes-hist-07",
-            "seriea-hist-03",
+        # Honest baselines collected on every match that produced a consensus:
+        #  - market_favorite: bet the de-vigged market favourite at its best
+        #    recorded price (a "just chase favourites" strategy).
+        #  - always_home: bet the home side at its best recorded price.
+        baseline_trades: dict[str, list[tuple[float, str]]] = {
+            "market_favorite": [],
+            "always_home": [],
         }
 
         for match in matches:
@@ -276,17 +449,45 @@ class BacktestEngine:
             sport_stats[match.sport_key]["matches"] += 1
 
             # 1. Pipeline Consensus De-vigging (Shin Model)
-            consensus = refine(
-                match,
-                now=match.commence_time,
-                min_books=self.settings.min_books_telemetry,
-                sharp_keys=self.settings.sharp_keys,
-                sharp_multiplier=self.settings.sharp_multiplier,
+            cons_key = (
+                match.id,
+                self.settings.min_books_telemetry,
+                tuple(self.settings.sharp_keys),
+                self.settings.sharp_multiplier,
+                self.settings.margin_weighted,
+                self.settings.min_margin_floor,
             )
+            consensus = self._consensus_cache.get(cons_key)
+            if consensus is None and cons_key not in self._consensus_cache:
+                consensus = refine(
+                    match,
+                    now=match.commence_time,
+                    min_books=self.settings.min_books_telemetry,
+                    sharp_keys=self.settings.sharp_keys,
+                    sharp_multiplier=self.settings.sharp_multiplier,
+                )
+                self._consensus_cache[cons_key] = consensus
             if consensus is None:
                 continue
 
-            # 2. Gate Evaluation (P_true >= 82%, CV <= 2.5%, EV > 0)
+            # Baselines use the best *recorded* price for the chosen outcome.
+            p_home = consensus.p.get(match.home_team, 0.0)
+            p_draw = consensus.p.get("Draw", 0.0)
+            p_away = consensus.p.get(match.away_team, 0.0)
+            fav_outcome = max(
+                ((match.home_team, p_home), ("Draw", p_draw), (match.away_team, p_away)),
+                key=lambda tup: tup[1],
+            )[0]
+            for label, b_outcome in (
+                ("market_favorite", fav_outcome),
+                ("always_home", match.home_team),
+            ):
+                b_price = best_available_price(consensus, b_outcome)
+                b_res = score.grade_pick(H2H, b_outcome)
+                if b_price is not None and b_res in ("WIN", "LOSS"):
+                    baseline_trades[label].append((b_price, b_res))
+
+            # 2. Gate Evaluation
             gate_res = evaluate_gate(
                 consensus,
                 threshold=self.settings.gate_threshold,
@@ -316,9 +517,16 @@ class BacktestEngine:
                 if res is None:
                     res = "WIN" if score.winner() == outcome else "LOSS"
 
-                closing_odds = round(best_odds * 0.96, 2)
-                beat_clv = best_odds > closing_odds
+                closing_price = (closing_by_id.get(match.id) or {}).get(outcome)
+                closing_odds, beat_clv = measure_clv(
+                    consensus, outcome,
+                    pick.best_execution.book_key if pick.best_execution else None,
+                    best_odds,
+                    closing_price,
+                )
                 clv_beats.append(beat_clv)
+                if closing_odds:
+                    clv_values.append(best_odds / closing_odds - 1.0)
 
                 if res == "WIN":
                     pnl = stake_amount * (best_odds - 1.0)
@@ -381,174 +589,65 @@ class BacktestEngine:
                 ))
 
             else:
-                # Did not pass Grade A. Systemically evaluate for Grade B Smart Pivot vs Grade C Pass
-                is_soccer = match.sport_key.startswith("soccer_")
-                p_home = consensus.p.get(match.home_team, 0.0)
-                p_draw = consensus.p.get("Draw", 0.0)
-                p_away = consensus.p.get(match.away_team, 0.0)
+                # Pass Advisory (Grade C): the certainty gate did not fire, so no bet
+                # is placed. Grade B "smart pivots" (double-chance / over-1.5 / NBA)
+                # were removed because those markets cannot be priced honestly from
+                # the football-data.co.uk archive (the record contains 1X2 lines
+                # only) — the old implementation used invented fixed prices.
+                grade = "GRADE_C"
+                fav_team = match.home_team if p_home >= p_away else match.away_team
+                p_fav = max(p_home, p_away)
 
-                # Determine if a high-certainty derivative pivot is mathematically viable
-                qualifies_grade_b = False
-                market = "h2h"
-                outcome = ""
-                p_true = 0.0
-                best_odds = 1.20
-                best_book = "Bet365"
+                # Check counterfactual: did the favorite win?
+                fav_won = (score.winner() == fav_team)
 
-                if is_soccer:
-                    if (p_home + p_draw) >= 0.84 and p_home >= 0.48:
-                        qualifies_grade_b = True
-                        market = "double_chance"
-                        outcome = f"1X ({match.home_team} or Draw)"
-                        p_true = min(0.91, p_home + p_draw)
-                        best_odds = 1.20
-                    elif (p_away + p_draw) >= 0.84 and p_away >= 0.48:
-                        qualifies_grade_b = True
-                        market = "double_chance"
-                        outcome = f"X2 ({match.away_team} or Draw)"
-                        p_true = min(0.90, p_away + p_draw)
-                        best_odds = 1.22
-                    elif match.id in high_totals_matches:
-                        qualifies_grade_b = True
-                        market = "totals"
-                        outcome = "Over 1.5 Goals"
-                        p_true = 0.88
-                        best_odds = 1.20
-                        best_book = "Pinnacle"
+                if not fav_won:
+                    # Genuine trap avoided: favorite lost or drew!
+                    res = "PASS_TRAP_AVOIDED"
+                    capital_saved = 100.0
+                    hazard_warning = (
+                        f"Negative EV Sucker Trap / Dispersion Disagreement. "
+                        f"Avoided bet lost: {fav_team} failed to win."
+                    )
                 else:
-                    # NBA: if top outcome has moderate certainty (P >= 0.68), pivot to home win/cover
-                    if consensus.p_top >= 0.68:
-                        qualifies_grade_b = True
-                        market = "h2h"
-                        outcome = consensus.top_outcome
-                        p_true = 0.85
-                        best_odds = 1.22
-                        best_book = "Pinnacle"
+                    # Favorite happened to win, but bet had negative EV
+                    res = "PASS_ADVISORY"
+                    capital_saved = 0.0
+                    hazard_warning = (
+                        f"Negative EV Coin-Flip Trap (P_true={p_fav*100:.1f}%). "
+                        f"Passing avoided negative vigorish exposure."
+                    )
 
-                if qualifies_grade_b:
-                    grade = "GRADE_B"
-                    fair_odds = 1.0 / p_true
-                    ev = (p_true * best_odds) - 1.0
-                    stake_amount = 150.0
-                    stake_units = 1.5
+                # The favourite's real best price across the archive books (the
+                # price a naive favourite-chaser would actually have got), and
+                # the honest counterfactual EV at that price — never fabricated.
+                fav_price = best_available_price(consensus, fav_team) or fair_odds
+                fav_ev = round(p_fav * fav_price - 1.0, 4)
 
-                    res = score.grade_pick(market, outcome)
-                    if res is None:
-                        res = "WIN"
-
-                    closing_odds = round(best_odds * 0.97, 2)
-                    beat_clv = True
-                    clv_beats.append(True)
-
-                    if res == "WIN":
-                        pnl = stake_amount * (best_odds - 1.0)
-                        flat_pnl = self.flat_stake_unit * (best_odds - 1.0)
-                        predictions.append(p_true)
-                        binary_outcomes.append(1.0)
-                        trade_returns.append((best_odds - 1.0))
-                        gross_wins += pnl
-                        sport_stats[match.sport_key]["wins"] += 1
-                    elif res == "LOSS":
-                        pnl = -stake_amount
-                        flat_pnl = -self.flat_stake_unit
-                        predictions.append(p_true)
-                        binary_outcomes.append(0.0)
-                        trade_returns.append(-1.0)
-                        gross_losses += abs(pnl)
-                        sport_stats[match.sport_key]["losses"] += 1
-                    else:
-                        pnl = 0.0
-                        flat_pnl = 0.0
-
-                    bankroll += pnl
-                    peak_bankroll = max(peak_bankroll, bankroll)
-                    dd_d = peak_bankroll - bankroll
-                    dd_p = (dd_d / peak_bankroll * 100.0) if peak_bankroll > 0 else 0.0
-                    max_dd_dollars = max(max_dd_dollars, dd_d)
-                    max_dd_pct = max(max_dd_pct, dd_p)
-
-                    total_wagered += stake_amount
-                    net_profit += pnl
-                    flat_profit += flat_pnl
-                    total_flat_wagered += self.flat_stake_unit
-
-                    sport_stats[match.sport_key]["profit"] += pnl
-                    sport_stats[match.sport_key]["wagered"] += stake_amount
-
-                    records.append(BacktestMatchRecord(
-                        match_id=match.id,
-                        sport_key=match.sport_key,
-                        home_team=match.home_team,
-                        away_team=match.away_team,
-                        commence_time=match.commence_time.isoformat(),
-                        grade=grade,
-                        market=market,
-                        outcome_name=outcome,
-                        p_true=p_true,
-                        fair_odds=fair_odds,
-                        best_book=best_book,
-                        best_odds=best_odds,
-                        ev=ev,
-                        conviction_score=compute_conviction_score(p_true, cv=0.02, ev=ev),
-                        stake_units=stake_units,
-                        stake_amount=stake_amount,
-                        actual_score=f"{score.home_score}-{score.away_score}",
-                        result=res,
-                        pnl=pnl,
-                        capital_saved=0.0,
-                        closing_odds=closing_odds,
-                        beat_clv=beat_clv,
-                    ))
-
-                else:
-                    # Grade C: 🛡️ Sucker Coin-Flip / High Dispersion Pass Advisory
-                    grade = "GRADE_C"
-                    fav_team = match.home_team if p_home >= p_away else match.away_team
-                    p_fav = max(p_home, p_away)
-
-                    # Check counterfactual: did the favorite win?
-                    fav_won = (score.winner() == fav_team)
-
-                    if not fav_won:
-                        # Genuine trap avoided: favorite lost or drew!
-                        res = "PASS_TRAP_AVOIDED"
-                        capital_saved = 100.0
-                        hazard_warning = (
-                            f"Negative EV Sucker Trap / Dispersion Disagreement. "
-                            f"Avoided bet lost: {fav_team} failed to win."
-                        )
-                    else:
-                        # Favorite happened to win, but bet had negative EV
-                        res = "PASS_ADVISORY"
-                        capital_saved = 0.0
-                        hazard_warning = (
-                            f"Negative EV Coin-Flip Trap (P_true={p_fav*100:.1f}%). "
-                            f"Passing avoided negative vigorish exposure."
-                        )
-
-                    records.append(BacktestMatchRecord(
-                        match_id=match.id,
-                        sport_key=match.sport_key,
-                        home_team=match.home_team,
-                        away_team=match.away_team,
-                        commence_time=match.commence_time.isoformat(),
-                        grade=grade,
-                        market="h2h",
-                        outcome_name=f"HOLD OFF (No Bet)",
-                        p_true=p_fav,
-                        fair_odds=round(1.0 / p_fav, 2) if p_fav > 0 else 2.50,
-                        best_book="Consensus",
-                        best_odds=2.45,
-                        ev=-0.065,
-                        conviction_score=0.0,
-                        stake_units=0.0,
-                        stake_amount=0.0,
-                        actual_score=f"{score.home_score}-{score.away_score}",
-                        result=res,
-                        pnl=0.0,
-                        capital_saved=capital_saved,
-                        hazard_warning=hazard_warning,
-                    ))
+                records.append(BacktestMatchRecord(
+                    match_id=match.id,
+                    sport_key=match.sport_key,
+                    home_team=match.home_team,
+                    away_team=match.away_team,
+                    commence_time=match.commence_time.isoformat(),
+                    grade=grade,
+                    market="h2h",
+                    outcome_name=f"HOLD OFF (No Bet)",
+                    p_true=p_fav,
+                    fair_odds=round(1.0 / p_fav, 2) if p_fav > 0 else 2.50,
+                    best_book="Consensus",
+                    best_odds=fav_price,
+                    ev=fav_ev,
+                    conviction_score=0.0,
+                    stake_units=0.0,
+                    stake_amount=0.0,
+                    actual_score=f"{score.home_score}-{score.away_score}",
+                    result=res,
+                    pnl=0.0,
+                    capital_saved=capital_saved,
+                    closing_odds=(closing_by_id.get(match.id) or {}).get(fav_team),
+                    hazard_warning=hazard_warning,
+                ))
 
         # 3. Aggregate Statistical Calibration & Accuracy Benchmarks
         n_won = sum(1 for r in records if r.result == "WIN")
@@ -596,6 +695,19 @@ class BacktestEngine:
 
         profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else 99.0
 
+        # Provenance of the evaluated dataset — every exported report states what
+        # it actually ran on, so a report can never silently claim synthetic data.
+        if odds_payloads is None and scores_payloads is None:
+            provenance: dict[str, Any] = dict(HISTORICAL_PROVENANCE)
+        else:
+            provenance = {
+                "statement": "Custom payloads supplied by the caller; not the packaged real archive.",
+                "odds_payloads": len(odds_data),
+                "scores_payloads": len(scores_data),
+            }
+        if sport_keys:
+            provenance["filtered_sport_keys"] = sorted(wanted_sports)
+
         # Quantitative Calibration Metrics
         settled_dicts = [
             {"p_true": r.p_true, "result": r.result}
@@ -614,6 +726,7 @@ class BacktestEngine:
         roi_pct = (net_profit / total_wagered * 100.0) if total_wagered > 0 else 0.0
         flat_roi_pct = (flat_profit / total_flat_wagered * 100.0) if total_flat_wagered > 0 else 0.0
         clv_rate = (sum(1 for b in clv_beats if b) / len(clv_beats)) if clv_beats else 1.0
+        mean_clv = (sum(clv_values) / len(clv_values)) if clv_values else None
 
         for s_key, s_data in sport_stats.items():
             tot = s_data["wins"] + s_data["losses"]
@@ -621,106 +734,119 @@ class BacktestEngine:
             s_data["roi_pct"] = round(s_data["profit"] / s_data["wagered"] * 100.0, 2) if s_data["wagered"] > 0 else 0.0
 
         # --- MULTI-STRATEGY EXECUTION PROFILES ---
-        # 1. Conservative Singles Profile (The original baseline: 84% win rate, ultra-low drawdown)
-        conservative_summary = {
-            "strategy_id": "conservative",
-            "name": "Conservative Singles",
-            "badge": "🛡️ Original Baseline",
-            "description": "Heavy favorites & safe pivots as standalone singles. Minimizes drawdown volatility.",
-            "total_matches": len(records),
-            "executed_bets": executed,
-            "wins": n_won,
-            "losses": n_lost,
-            "pushes": n_void,
-            "win_rate": round(win_rate, 4),
-            "wilson_ci_lower": round(ci_lower, 4),
-            "wilson_ci_upper": round(ci_upper, 4),
-            "avg_odds": 1.22,
-            "total_wagered": round(total_wagered, 2),
-            "net_profit": round(net_profit, 2),
-            "roi_pct": round(roi_pct, 2),
-            "max_drawdown_pct": round(max_dd_pct, 2),
-            "max_drawdown_dollars": round(max_dd_dollars, 2),
-            "sharpe_ratio": round(sharpe, 2),
-            "sortino_ratio": round(sortino, 2),
-            "profit_factor": round(profit_factor, 2),
-            "capital_preserved_dollars": round(total_capital_saved, 2),
-            "net_counterfactual_value": round(net_counterfactual, 2),
-            "risk_level": "Ultra-Low",
-            "best_for": "Large institutional syndicate bankrolls & pure capital defense",
-        }
+        # Every profile below is computed from the REAL per-bet records above; no
+        # win rate, odds, or risk metric is hardcoded. Two entries are honest
+        # baselines / derived scenarios and are labelled as such.
+
+        # 1. Conservative — LISA quality-gated singles (real executed bets).
         conservative_records = [r.to_dict() for r in records]
+        conservative_summary = summarize_profile(
+            conservative_records,
+            strategy_id="conservative",
+            name="Conservative Singles",
+            badge="🛡️ Quality-Gated Singles",
+            description=(
+                "LISA quality gate (P_true >= threshold, CV <= max_cv, >= min books) "
+                "executed at the best recorded price. Realised, not simulated."
+            ),
+            risk_level="Determined by data",
+            best_for="Honest baseline for the gated pipeline",
+            initial_capital=self.initial_bankroll,
+        )
+        conservative_summary["capital_preserved_dollars"] = round(total_capital_saved, 2)
+        conservative_summary["net_counterfactual_value"] = round(net_counterfactual, 2)
 
-        # 2. High-Yield Value Pivots Profile (-1.5 Asian Handicaps & Team Totals)
-        pivots_records: list[dict[str, Any]] = []
-        for r in records:
-            rd = r.to_dict()
-            if rd["grade"] == "GRADE_A" and rd["result"] in ("WIN", "LOSS"):
-                h, a = map(int, rd["actual_score"].split("-"))
-                diff = abs(h - a)
-                pivot_odds = round(rd["best_odds"] * 1.48, 2)
-                rd["market"] = "spreads"
-                rd["outcome_name"] = f"{rd['outcome_name']} -1.5 AH"
-                rd["best_odds"] = pivot_odds
-                rd["stake_amount"] = 100.0
-                if rd["result"] == "WIN" and diff >= 2:
-                    rd["result"] = "WIN"
-                    rd["pnl"] = round(100.0 * (pivot_odds - 1.0), 2)
-                else:
-                    rd["result"] = "LOSS"
-                    rd["pnl"] = -100.0
-            pivots_records.append(rd)
+        # 2. Unfiltered market favourites — betting every de-vigged favourite at the
+        #    best recorded price. Shows what naive favourite-chasing actually returns.
+        fav_records: list[dict[str, Any]] = []
+        for i, (odds, res) in enumerate(baseline_trades["market_favorite"]):
+            fav_records.append({
+                "match_id": f"fav-{i}",
+                "sport_key": "baseline",
+                "home_team": "market",
+                "away_team": "favourite",
+                "commence_time": "",
+                "grade": "GRADE_A",
+                "market": "h2h",
+                "outcome_name": "favourite",
+                "p_true": 0.0,
+                "fair_odds": 0.0,
+                "best_book": "best",
+                "best_odds": odds,
+                "ev": 0.0,
+                "conviction_score": 0.0,
+                "stake_units": 1.0,
+                "stake_amount": 100.0,
+                "actual_score": "",
+                "result": res,
+                "pnl": round(100.0 * (odds - 1.0), 2) if res == "WIN" else -100.0,
+                "capital_saved": 0.0,
+                "closing_odds": odds,
+                "beat_clv": False,
+            })
+        fav_summary = summarize_profile(
+            fav_records,
+            strategy_id="high_yield_pivots",
+            name="Market Favourites (Baseline)",
+            badge="📊 Baseline",
+            description=(
+                "Bet every de-vigged market favourite at its best recorded price — no "
+                "quality gate. Realised; an honest benchmark for the gate above."
+            ),
+            risk_level="Determined by data",
+            best_for="Benchmark: does the gate add value vs. chasing favourites?",
+        )
 
-        pivots_exec = [r for r in pivots_records if r["result"] in ("WIN", "LOSS")]
-        piv_wins = sum(1 for r in pivots_exec if r["result"] == "WIN")
-        piv_losses = sum(1 for r in pivots_exec if r["result"] == "LOSS")
-        piv_wr = (piv_wins / len(pivots_exec)) if pivots_exec else 0.0
-        piv_ci_l, piv_ci_u = compute_wilson_ci(piv_wins, len(pivots_exec))
-        piv_wagered = sum(r["stake_amount"] for r in pivots_exec)
-        piv_profit = sum(r["pnl"] for r in pivots_exec)
-        piv_roi = (piv_profit / piv_wagered * 100.0) if piv_wagered > 0 else 0.0
+        # 2b. Always-home baseline — betting the home team blind at best price.
+        home_records: list[dict[str, Any]] = []
+        for i, (odds, res) in enumerate(baseline_trades["always_home"]):
+            home_records.append({
+                "match_id": f"home-{i}",
+                "sport_key": "baseline",
+                "home_team": "home",
+                "away_team": "side",
+                "commence_time": "",
+                "grade": "GRADE_A",
+                "market": "h2h",
+                "outcome_name": "home",
+                "p_true": 0.0,
+                "fair_odds": 0.0,
+                "best_book": "best",
+                "best_odds": odds,
+                "ev": 0.0,
+                "conviction_score": 0.0,
+                "stake_units": 1.0,
+                "stake_amount": 100.0,
+                "actual_score": "",
+                "result": res,
+                "pnl": round(100.0 * (odds - 1.0), 2) if res == "WIN" else -100.0,
+                "capital_saved": 0.0,
+                "closing_odds": odds,
+                "beat_clv": False,
+            })
+        home_summary = summarize_profile(
+            home_records,
+            strategy_id="always_home",
+            name="Always Home (Baseline)",
+            badge="📊 Baseline",
+            description=(
+                "Bet the home team blind at its best recorded price — no gate, no "
+                "model. The naive 'home advantage' baseline."
+            ),
+            risk_level="Determined by data",
+            best_for="Benchmark: does the gate add value vs. blind home betting?",
+        )
 
-        pivots_summary = {
-            "strategy_id": "high_yield_pivots",
-            "name": "High-Yield Value Pivots",
-            "badge": "⚡ Alpha Overlays",
-            "description": "Upgrades 1.20 moneylines to -1.5 Asian Handicaps and Team Totals at 1.75-2.05 odds.",
-            "total_matches": len(pivots_records),
-            "executed_bets": len(pivots_exec),
-            "wins": piv_wins,
-            "losses": piv_losses,
-            "pushes": 0,
-            "win_rate": round(piv_wr, 4),
-            "wilson_ci_lower": round(piv_ci_l, 4),
-            "wilson_ci_upper": round(piv_ci_u, 4),
-            "avg_odds": 1.85,
-            "total_wagered": round(piv_wagered, 2),
-            "net_profit": round(piv_profit, 2),
-            "roi_pct": round(piv_roi, 2),
-            "max_drawdown_pct": 5.40,
-            "max_drawdown_dollars": 540.00,
-            "sharpe_ratio": 1.15,
-            "sortino_ratio": 1.42,
-            "profit_factor": 1.48,
-            "capital_preserved_dollars": round(total_capital_saved, 2),
-            "net_counterfactual_value": round(net_counterfactual, 2),
-            "risk_level": "Moderate",
-            "best_for": "Bettors wanting substantial cash profit per game without multi-game accumulator risk",
-        }
-
-        # 3. Smart Correlated Parlays Profile (2-Leg Accumulators)
-        exec_base = [r.to_dict() for r in records if r.result in ("WIN", "LOSS")]
+        # 3. Derived 2-leg parlays from real records. Not a live market — payout odds
+        #    equal the product of the two recorded best prices, so the scenario is
+        #    computable from real data but is explicitly labelled derived.
+        exec_base = [r for r in conservative_records if r.get("result") in ("WIN", "LOSS")]
         parlay_records: list[dict[str, Any]] = []
         for i in range(0, len(exec_base) - 1, 2):
             l1 = exec_base[i]
             l2 = exec_base[i + 1]
-            odds = round(l1["best_odds"] * l2["best_odds"] * 1.25, 2)
+            odds = round(l1["best_odds"] * l2["best_odds"], 2)
             both_won = (l1["result"] == "WIN" and l2["result"] == "WIN")
-            pnl = round(200.0 * (odds - 1.0), 2) if both_won else -200.0
-            failed_leg = ""
-            if not both_won:
-                failed_leg = l1["home_team"] if l1["result"] == "LOSS" else l2["home_team"]
-
             parlay_records.append({
                 "match_id": f"parlay-{i // 2 + 1:02d}",
                 "sport_key": l1["sport_key"],
@@ -728,66 +854,43 @@ class BacktestEngine:
                 "away_team": f"vs {l1['away_team']} & {l2['away_team']}",
                 "commence_time": l1["commence_time"],
                 "grade": "GRADE_A",
-                "market": "2-Leg Parlay",
+                "market": "2-Leg Parlay (derived)",
                 "outcome_name": f"{l1['outcome_name']} + {l2['outcome_name']}",
-                "p_true": 0.72,
-                "fair_odds": 1.39,
-                "best_book": f"{l1['best_book']} / {l2['best_book']}",
+                "p_true": round(l1["p_true"] * l2["p_true"], 4),
+                "fair_odds": round(1.0 / l1["p_true"] / l2["p_true"], 2)
+                if l1["p_true"] * l2["p_true"] > 0 else 0.0,
+                "best_book": "derived",
                 "best_odds": odds,
-                "ev": 0.18,
-                "conviction_score": 92.5,
+                "ev": round(l1["p_true"] * l2["p_true"] * odds - 1.0, 4),
+                "conviction_score": 0.0,
                 "stake_units": 2.0,
                 "stake_amount": 200.0,
                 "actual_score": f"{l1['actual_score']} & {l2['actual_score']}",
                 "result": "WIN" if both_won else "LOSS",
-                "pnl": pnl,
+                "pnl": round(200.0 * (odds - 1.0), 2) if both_won else -200.0,
                 "capital_saved": 0.0,
-                "hazard_warning": f"Leg failed: {failed_leg}" if not both_won else None,
-                "closing_odds": round(odds * 0.95, 2),
-                "beat_clv": True,
+                "hazard_warning": None,
+                "closing_odds": odds,
+                "beat_clv": False,
             })
+        parlays_summary = summarize_profile(
+            parlay_records,
+            strategy_id="smart_parlays",
+            name="Derived 2-Leg Parlays",
+            badge="🎰 Derived Scenario",
+            description=(
+                "DERIVED (not a live market): consecutive quality-gated singles paired "
+                "into 2-leg parlays at the product of their recorded best prices."
+            ),
+            risk_level="Determined by data",
+            best_for="Illustrative only — parlays must be priced at a real book",
+        )
 
-        parlay_wins = sum(1 for r in parlay_records if r["result"] == "WIN")
-        parlay_losses = sum(1 for r in parlay_records if r["result"] == "LOSS")
-        parlay_wr = (parlay_wins / len(parlay_records)) if parlay_records else 0.0
-        parlay_ci_l, parlay_ci_u = compute_wilson_ci(parlay_wins, len(parlay_records))
-        parlay_wagered = sum(r["stake_amount"] for r in parlay_records)
-        parlay_profit = sum(r["pnl"] for r in parlay_records)
-        parlay_roi = (parlay_profit / parlay_wagered * 100.0) if parlay_wagered > 0 else 0.0
-
-        parlays_summary = {
-            "strategy_id": "smart_parlays",
-            "name": "Smart Correlated Parlays",
-            "badge": "🎯 High-Yield Multipliers",
-            "description": "Pairs top two 84% Grade A/B selections into 2-leg accumulators at 1.80-2.20 combined odds.",
-            "total_matches": len(parlay_records),
-            "executed_bets": len(parlay_records),
-            "wins": parlay_wins,
-            "losses": parlay_losses,
-            "pushes": 0,
-            "win_rate": round(parlay_wr, 4),
-            "wilson_ci_lower": round(parlay_ci_l, 4),
-            "wilson_ci_upper": round(parlay_ci_u, 4),
-            "avg_odds": 1.92,
-            "total_wagered": round(parlay_wagered, 2),
-            "net_profit": round(parlay_profit, 2),
-            "roi_pct": round(parlay_roi, 2),
-            "max_drawdown_pct": 6.10,
-            "max_drawdown_dollars": 610.00,
-            "sharpe_ratio": 1.35,
-            "sortino_ratio": 1.65,
-            "profit_factor": 1.70,
-            "capital_preserved_dollars": round(total_capital_saved, 2),
-            "net_counterfactual_value": round(net_counterfactual, 2),
-            "risk_level": "Moderate-High",
-            "best_for": "Maximum cash acceleration ($1,700+ profit) while maintaining a high 72% win rate",
-        }
-
-        # 4. Syndicate Hybrid Profile (70% Safe Base + 30% Booster Parlays)
+        # 4. Derived 70/30 blend of the gated singles and derived parlay series.
         hybrid_records: list[dict[str, Any]] = []
         for r in conservative_records:
             rc = dict(r)
-            if rc["result"] in ("WIN", "LOSS"):
+            if rc.get("result") in ("WIN", "LOSS"):
                 rc["stake_amount"] = 70.0
                 rc["pnl"] = round(rc["pnl"] * 0.7, 2)
             hybrid_records.append(rc)
@@ -796,54 +899,31 @@ class BacktestEngine:
             pc["stake_amount"] = 100.0
             pc["pnl"] = round(pc["pnl"] * 0.5, 2)
             hybrid_records.append(pc)
-
-        hyb_exec = [r for r in hybrid_records if r["result"] in ("WIN", "LOSS")]
-        hyb_wins = sum(1 for r in hyb_exec if r["result"] == "WIN")
-        hyb_losses = sum(1 for r in hyb_exec if r["result"] == "LOSS")
-        hyb_wr = (hyb_wins / len(hyb_exec)) if hyb_exec else 0.0
-        hyb_ci_l, hyb_ci_u = compute_wilson_ci(hyb_wins, len(hyb_exec))
-        hyb_wagered = sum(r["stake_amount"] for r in hyb_exec)
-        hyb_profit = sum(r["pnl"] for r in hyb_exec)
-        hyb_roi = (hyb_profit / hyb_wagered * 100.0) if hyb_wagered > 0 else 0.0
-
-        hybrid_summary = {
-            "strategy_id": "hybrid_portfolio",
-            "name": "Syndicate Hybrid (70/30)",
-            "badge": "👑 Recommended Portfolio",
-            "description": "70% allocated to safe singles for floor defense + 30% to smart parlays for profit acceleration.",
-            "total_matches": len(hybrid_records),
-            "executed_bets": len(hyb_exec),
-            "wins": hyb_wins,
-            "losses": hyb_losses,
-            "pushes": 0,
-            "win_rate": round(hyb_wr, 4),
-            "wilson_ci_lower": round(hyb_ci_l, 4),
-            "wilson_ci_upper": round(hyb_ci_u, 4),
-            "avg_odds": 1.45,
-            "total_wagered": round(hyb_wagered, 2),
-            "net_profit": round(hyb_profit, 2),
-            "roi_pct": round(hyb_roi, 2),
-            "max_drawdown_pct": 3.85,
-            "max_drawdown_dollars": 385.00,
-            "sharpe_ratio": 0.88,
-            "sortino_ratio": 1.10,
-            "profit_factor": 1.38,
-            "capital_preserved_dollars": round(total_capital_saved, 2),
-            "net_counterfactual_value": round(net_counterfactual, 2),
-            "risk_level": "Low-Moderate",
-            "best_for": "Balanced compound growth with 80%+ win rate & robust bankroll protection",
-        }
+        hybrid_summary = summarize_profile(
+            hybrid_records,
+            strategy_id="hybrid_portfolio",
+            name="Derived 70/30 Blend",
+            badge="🧩 Derived Scenario",
+            description=(
+                "DERIVED (not a live market): 70% of the gated singles series plus 30% "
+                "of the derived parlay series, both scaled from their real records."
+            ),
+            risk_level="Determined by data",
+            best_for="Illustrative only",
+        )
 
         strategies_dict = {
             "conservative": {"summary": conservative_summary, "records": conservative_records},
-            "high_yield_pivots": {"summary": pivots_summary, "records": pivots_records},
+            "high_yield_pivots": {"summary": fav_summary, "records": fav_records},
             "smart_parlays": {"summary": parlays_summary, "records": parlay_records},
             "hybrid_portfolio": {"summary": hybrid_summary, "records": hybrid_records},
+            "always_home": {"summary": home_summary, "records": home_records},
         }
 
         comparison_matrix = [
             conservative_summary,
-            pivots_summary,
+            fav_summary,
+            home_summary,
             parlays_summary,
             hybrid_summary,
         ]
@@ -888,11 +968,13 @@ class BacktestEngine:
             mce=mce,
             log_loss=logloss,
             positive_clv_rate=clv_rate,
+            mean_clv=mean_clv,
             sport_breakdown=sport_stats,
             records=records,
             calibration_report=cal_report,
             strategies=strategies_dict,
             strategy_comparison_matrix=comparison_matrix,
+            data_provenance=provenance,
         )
 
 
@@ -906,16 +988,21 @@ def format_backtest_report(report: BacktestReport, verbose: bool = False) -> str
 
     lines.append("\n[1] EXECUTIVE ACCURACY & PREDICTION METRICS")
     lines.append("-" * w)
+    prov = report.data_provenance or {}
+    lines.append(f"  Data Source:                       {prov.get('source', 'custom payloads')}")
+    if prov.get("note"):
+        lines.append(f"  Data Note:                         {prov['note']}")
+    if report.data_provenance:
+        lines.append(f"  Matches Archived:                  {report.data_provenance.get('total_matches', report.total_matches)}")
     lines.append(f"  Total Historical Matches Evaluated: {report.total_matches}")
-    lines.append(f"  Executed Wagers (Grade A & B):      {report.executed_bets} ({report.wins} Won, {report.losses} Lost, {report.pushes} Void)")
+    lines.append(f"  Executed Wagers (Grade A):          {report.executed_bets} ({report.wins} Won, {report.losses} Lost, {report.pushes} Void)")
     lines.append(f"  Overall Realized Win Rate:          {report.win_rate * 100:.1f}%")
     lines.append(f"  Wilson 95% Confidence Interval:     [{report.wilson_ci_lower * 100:.1f}%, {report.wilson_ci_upper * 100:.1f}%]")
     lines.append(f"  💎 Grade A (Flagship Diamonds):      {report.grade_a_wins}/{report.grade_a_count} ({report.grade_a_win_rate * 100:.1f}% Win Rate)")
-    lines.append(f"  🧠 Grade B (Smart Market Pivots):    {report.grade_b_wins}/{report.grade_b_count} ({report.grade_b_win_rate * 100:.1f}% Win Rate)")
-    lines.append(f"  🛡️ Grade C (Sucker Traps Evaluated): {report.grade_c_traps_avoided} Traps Avoided")
-    lines.append(f"    - Favorite Lost / Drew:           {report.grade_c_traps_that_lost} Traps  (Saved ${report.capital_preserved_dollars:,.2f} in losses)")
+    lines.append(f"  🛡️ Grade C (Pass Advisories):        {report.grade_c_traps_avoided} Passes (No Bet)")
+    lines.append(f"    - Favorite Lost / Drew:           {report.grade_c_traps_that_lost} Traps  (counterfactual ${report.capital_preserved_dollars:,.2f} avoided)")
     lines.append(f"    - Favorite Won (Negative EV):     {report.grade_c_traps_that_won} Traps  (Avoided negative-juice exposure)")
-    lines.append(f"    - Net Counterfactual Saved:       ${report.net_counterfactual_value:,.2f} Net Economic Advantage")
+    lines.append(f"    - Net Counterfactual Value:       ${report.net_counterfactual_value:,.2f} (theoretical, not realized)")
 
     lines.append("\n[2] STATISTICAL CALIBRATION & PROBABILITY BENCHMARKS")
     lines.append("-" * w)
@@ -927,15 +1014,17 @@ def format_backtest_report(report: BacktestReport, verbose: bool = False) -> str
     lines.append(f"    - Reliability (Calibration Error): {report.reliability:.6f}  (Near 0 = Optimal alignment)")
     lines.append(f"    - Resolution (Sorting Power):      {report.resolution:.6f}  (Higher = Greater Discrimination)")
     lines.append(f"    - Uncertainty (Base Rate Entropy): {report.uncertainty:.6f}")
-    lines.append(f"  Positive CLV Beat Rate:             {report.positive_clv_rate * 100:.1f}%  (Beats Pinnacle/Closing Line)")
+    lines.append(f"  Positive CLV Beat Rate:             {report.positive_clv_rate * 100:.1f}%")
+    if report.mean_clv is not None:
+        lines.append(f"  Mean CLV (exec / closing - 1):     {report.mean_clv * 100:+.2f}%  (vs recorded closing line)")
 
     lines.append("\n[3] FINANCIAL & RISK-ADJUSTED PERFORMANCE (FRACTIONAL KELLY)")
     lines.append("-" * w)
     lines.append(f"  Initial Bankroll:                   ${report.initial_bankroll:,.2f}")
     lines.append(f"  Final Bankroll:                     ${report.ending_bankroll:,.2f}")
     lines.append(f"  Total Wagered:                      ${report.total_wagered:,.2f}")
-    lines.append(f"  Net Profit (Kelly Compounded):      ${report.net_profit:,.2f}  (Kelly ROI: +{report.roi_pct:.2f}%)")
-    lines.append(f"  Flat Staking Comparison (1 Unit):   ${report.flat_profit:,.2f}  (Flat ROI: +{report.flat_roi_pct:.2f}%)")
+    lines.append(f"  Net Profit (Kelly Compounded):      ${report.net_profit:,.2f}  (Kelly ROI: {report.roi_pct:.2f}%)")
+    lines.append(f"  Flat Staking Comparison (1 Unit):   ${report.flat_profit:,.2f}  (Flat ROI: {report.flat_roi_pct:.2f}%)")
     lines.append(f"  Maximum Peak-to-Trough Drawdown:    -{report.max_drawdown_pct:.2f}%  (-${report.max_drawdown_dollars:,.2f})")
     lines.append(f"  Sharpe Ratio (Risk-Adjusted):       {report.sharpe_ratio:.2f}")
     lines.append(f"  Sortino Ratio (Downside Risk):      {report.sortino_ratio:.2f}")
@@ -947,7 +1036,7 @@ def format_backtest_report(report: BacktestReport, verbose: bool = False) -> str
         lines.append(f"  {'Strategy':<26} {'Win %':<8} {'Odds':<6} {'Wagered':<10} {'Net Profit':<12} {'ROI %':<8} {'Max DD'}")
         lines.append("  " + "-" * 76)
         for s in report.strategy_comparison_matrix:
-            lines.append(f"  {s['name']:<26} {s['win_rate']*100:>5.1f}%  {s['avg_odds']:>5.2f}  ${s['total_wagered']:>8.2f}  +${s['net_profit']:>9.2f}  +{s['roi_pct']:>5.1f}%  -{s['max_drawdown_pct']:>5.2f}%")
+            lines.append(f"  {s['name']:<26} {s['win_rate']*100:>5.1f}%  {s['avg_odds']:>5.2f}  ${s['total_wagered']:>8.2f}  {s['net_profit']:>9.2f}  {s['roi_pct']:>5.1f}%  {s['max_drawdown_pct']:>5.2f}%")
 
     lines.append("\n[5] SPORT & LEAGUE BREAKDOWN")
     lines.append("-" * w)
@@ -955,7 +1044,7 @@ def format_backtest_report(report: BacktestReport, verbose: bool = False) -> str
     lines.append("  " + "-" * 76)
     for sport, s in report.sport_breakdown.items():
         wl_str = f"{s['wins']}-{s['losses']}"
-        lines.append(f"  {sport:<28} {s['matches']:<8} {wl_str:<10} {s['win_rate']*100:>5.1f}%     +{s['roi_pct']:>5.1f}%    +${s['profit']:>7.2f}")
+        lines.append(f"  {sport:<28} {s['matches']:<8} {wl_str:<10} {s['win_rate']*100:>5.1f}%     {s['roi_pct']:>5.1f}%    ${s['profit']:>7.2f}")
 
     if verbose:
         lines.append("\n[6] DETAILED MATCH-BY-MATCH AUDIT TRAIL")

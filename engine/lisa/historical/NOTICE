@@ -1,0 +1,31 @@
+FOOTBALL MATCH DATA ATTRIBUTION & LICENSE NOTICE
+=================================================
+
+The CSV files in this directory are sourced from football-data.co.uk:
+
+  https://www.football-data.co.uk/mmz4281/<season>/<league>.csv
+
+where <season> is one of 2122, 2223, 2324, 2425 and <league> is one of:
+
+  E0   English Premier League      -> soccer_epl
+  SP1  Spanish La Liga             -> soccer_spain_la_liga
+  D1   German Bundesliga           -> soccer_germany_bundesliga
+  I1   Italian Serie A             -> soccer_italy_serie_a
+  F1   French Ligue 1              -> soccer_france_ligue_one
+
+Terms of use (as stated by football-data.co.uk):
+  * Data is free for personal / research / educational use.
+  * Commercial resale or public redistribution without acknowledgement is not permitted.
+  * If you use this data in any public product, you must credit
+    "Data courtesy of football-data.co.uk".
+
+These files contain pre-match closing odds from the following bookmakers
+(real prices as published):
+  B365  Bet365,   BW   Bet&Win,   PS  Pinnacle,  WH   William Hill,  VC  VC Bet
+plus the official final result (FTR: H/D/A) and scorelines (FTHG/FTAG).
+
+No synthetic, simulated, or future-dated fixtures are present. Match IDs,
+teams, dates, odds, and results are exactly as downloaded.
+
+Downloaded: 2026-09-21 by the LISA engineering audit.
+Re-download any season at will from the URL template above.

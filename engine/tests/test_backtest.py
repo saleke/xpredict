@@ -1,19 +1,29 @@
-"""Comprehensive tests for the large-scale LISA historical backtest and calibration engine."""
+"""Honest tests for the LISA large-scale historical backtest engine.
+
+These tests verify BOTH that the engine is truthful (honest sign conventions,
+no fabricated tier, real provenance) AND that it behaves correctly against the
+REAL packaged archive. The exact counts below are snapshot values for the
+packaged football-data.co.uk archive (seasons 2021/22..2024/25, 5 leagues).
+If the archive is extended, the snapshots must be recomputed — that is by
+design (a test suite that cannot be silently re-gamed against synthetic data).
+"""
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
 import pytest
 
 from lisa.backtest import (
     BacktestEngine,
-    BacktestReport,
     BacktestMatchRecord,
+    BacktestReport,
     compute_wilson_ci,
     format_backtest_report,
 )
 from lisa.cli import _cmd_backtest
 from lisa.history import HISTORICAL_ODDS, HISTORICAL_SCORES
+from lisa.parsing import parse_scores_payload
 
 
 def test_wilson_score_interval_math():
@@ -23,111 +33,127 @@ def test_wilson_score_interval_math():
     assert 0.90 < high < 0.95
     assert low < 42 / 50 < high
 
-    # Edge cases
     assert compute_wilson_ci(0, 0) == (0.0, 0.0)
 
 
-def test_backtest_runs_successfully():
-    """Verify that BacktestEngine processes all 80 historical matches with honest grading."""
+def test_backtest_runs_on_real_archive():
+    """Real archive: executed ledger, win rate, and Wilson bounds are consistent."""
     engine = BacktestEngine(initial_bankroll=10000.0, flat_stake_unit=100.0)
     report = engine.run()
 
     assert isinstance(report, BacktestReport)
-    assert report.total_matches == 80
-    assert report.executed_bets == 50
-    assert report.wins == 42
-    assert report.losses == 8
+    # 7,155 archived matches; 426 lacked the minimum book depth for de-vigging
+    # and are honestly excluded from evaluation (not fabricated into the run).
+    assert report.total_matches == 6729
+    assert report.executed_bets == 380
+    assert report.wins == 303
+    assert report.losses == 77
     assert report.pushes == 0
-    assert report.win_rate == pytest.approx(0.84, abs=0.01)
+    assert report.win_rate == pytest.approx(0.7974, abs=0.005)
 
-    # Wilson Score 95% Confidence Interval bounds
-    assert report.wilson_ci_lower == pytest.approx(0.715, abs=0.01)
-    assert report.wilson_ci_upper == pytest.approx(0.917, abs=0.01)
+    # Wilson interval must contain the realised win rate.
+    assert report.wilson_ci_lower <= report.win_rate <= report.wilson_ci_upper
+    assert report.wilson_ci_lower == pytest.approx(0.7541, abs=0.01)
+    assert report.wilson_ci_upper == pytest.approx(0.8347, abs=0.01)
 
-    # Grade breakdown
-    assert report.grade_a_count == 29
-    assert report.grade_a_wins == 24
-    assert report.grade_a_win_rate == pytest.approx(0.8276, abs=0.01)
+    # Grade A is the ONLY executed grade now — Grade B was removed because its
+    # markets (double-chance / over-1.5 / NBA) cannot be priced from the archive.
+    assert report.grade_a_count == 380
+    assert report.grade_a_wins == 303
+    assert report.grade_b_count == 0
 
-    assert report.grade_b_count == 21
-    assert report.grade_b_wins == 18
-    assert report.grade_b_win_rate == pytest.approx(0.8571, abs=0.01)
-
-
-def test_backtest_statistical_calibration():
-    """Verify Murphy decomposition, Expected Calibration Error, and Brier accuracy."""
-    engine = BacktestEngine()
-    report = engine.run()
-
-    # Empirical calibration error must be exceptionally tight (< 5%)
-    assert report.ece < 0.05
-    assert report.ece == pytest.approx(0.0361, abs=0.01)
-    assert report.mce < 0.10
-
-    # Murphy decomposition components
-    assert report.reliability < 0.01  # Near 0 reflects near-perfect probabilistic calibration
-    assert report.resolution > 0.0
-    assert report.uncertainty > 0.0
-
-    # Closing Line Value
-    assert report.positive_clv_rate == 1.0
+    # Provenance is baked into every report so a report can never claim
+    # synthetic data silently.
+    prov = report.data_provenance
+    assert prov is not None
+    assert "football-data.co.uk" in prov["source"]
+    assert prov["total_matches"] == 7155
+    assert "No synthetic" in prov["statement"]
 
 
-def test_backtest_capital_preservation_and_counterfactual():
-    """Verify that Grade C pass advisories provide honest counterfactual analysis."""
-    engine = BacktestEngine()
-    report = engine.run()
-
-    assert report.grade_c_traps_avoided == 30
-    assert report.grade_c_traps_that_lost == 17
-    assert report.grade_c_traps_that_won == 13
-    assert report.capital_preserved_dollars == 1700.0
-    assert report.net_counterfactual_value == 660.0
-
-    # Inspect the avoided matches
-    avoided_records = [r for r in report.records if r.grade == "GRADE_C"]
-    assert len(avoided_records) == 30
-    for rec in avoided_records:
-        assert rec.hazard_warning is not None
-        if rec.result == "PASS_TRAP_AVOIDED":
-            assert rec.capital_saved == 100.0
-        else:
-            assert rec.capital_saved == 0.0
-
-
-def test_backtest_risk_and_drawdown_metrics():
-    """Verify Maximum Drawdown, Sharpe ratio, Sortino ratio, and Profit Factor."""
+def test_backtest_is_honest_about_money():
+    """The honest report shows NEGATIVE returns on the real archive."""
     engine = BacktestEngine(initial_bankroll=10000.0, flat_stake_unit=100.0)
     report = engine.run()
 
-    assert report.ending_bankroll > report.initial_bankroll
-    assert report.net_profit > 0.0
+    # Losing real money must be reported as such (never forced positive).
+    assert report.net_profit < 0.0
+    assert report.roi_pct < 0.0
+    assert report.flat_profit < 0.0
+    assert report.flat_roi_pct < 0.0
+    assert report.ending_bankroll < report.initial_bankroll
+    assert report.net_profit == pytest.approx(-687.19, abs=20.0)
+    assert report.roi_pct == pytest.approx(-1.81, abs=0.2)
 
-    # Drawdown must be bounded (< 5% max peak-to-trough drop)
-    assert 0.0 < report.max_drawdown_pct < 5.0
-    assert report.max_drawdown_dollars > 0.0
-
-    # Risk-adjusted ratios
-    assert report.sharpe_ratio > 0.2
-    assert report.sortino_ratio > 0.1
-    assert report.profit_factor > 1.0
+    # Drawdown / risk ratios reflect the losing streak size honestly.
+    assert report.max_drawdown_pct == pytest.approx(9.98, abs=1.0)
+    assert report.max_drawdown_dollars == pytest.approx(1029.44, abs=50.0)
+    assert report.sharpe_ratio < 0.0
+    assert report.profit_factor < 1.0
 
 
-def test_backtest_filter_by_sport():
-    """Verify that filtering by sport isolates only the requested sport keys."""
+def test_backtest_level_clv_and_calibration():
+    """CLV is measured against the real closing line, and calibration empirically."""
+    engine = BacktestEngine()
+    report = engine.run()
+
+    # CLV is now a genuine late-to-close measure: executed early price vs the
+    # later recorded closing line (football-data.co.uk *C columns). The old,
+    # trivially-true 1.0 rate is gone — real markets move against the bettor.
+    assert 0.0 < report.positive_clv_rate < 1.0
+    assert report.mean_clv is not None
+    assert report.mean_clv < 0.0  # on average the early line did NOT beat the close
+
+    assert report.brier_score == pytest.approx(0.1584, abs=0.01)
+    assert report.ece == pytest.approx(0.0213, abs=0.01)
+    assert report.mce < 0.15
+    assert report.reliability < 0.005
+    assert report.resolution > 0.0
+
+
+def test_backtest_grade_c_counterfactual():
+    """Grade C pass advisories produce a sincere counterfactual ledger."""
+    engine = BacktestEngine()
+    report = engine.run()
+
+    assert report.grade_c_traps_avoided == 6349
+    assert report.grade_c_traps_that_lost == 3032
+    assert report.grade_c_traps_that_won == 3317
+    assert report.capital_preserved_dollars == 3032 * 100.0
+    assert report.net_counterfactual_value == (3032 * 100.0) - (3317 * 80.0)
+
+    for rec in report.records:
+        if rec.grade == "GRADE_C":
+            assert rec.result in ("PASS_TRAP_AVOIDED", "PASS_ADVISORY")
+            assert rec.stake_amount == 0.0
+            assert rec.pnl == 0.0
+            if rec.result == "PASS_TRAP_AVOIDED":
+                assert rec.capital_saved == 100.0
+            else:
+                assert rec.capital_saved == 0.0
+
+
+def test_backtest_filter_by_sport_without_nba():
+    """Filtering to a soccer league works; NBA simply has no archive data."""
     engine = BacktestEngine()
     report = engine.run(sport_keys=["soccer_epl"])
 
-    assert report.total_matches == 20
-    assert report.executed_bets == 14  # 6 sucker traps avoided
-    assert report.wins == 12
-    assert report.losses == 2
+    assert report.total_matches == 1429  # 1520 archived EPL, 91 lacked book depth
+    assert report.executed_bets == 132
+    assert report.wins == 110
+    assert report.losses == 22
+    assert report.win_rate == pytest.approx(0.8333, abs=0.01)
     assert "soccer_epl" in report.sport_breakdown
     assert len(report.sport_breakdown) == 1
+    assert report.data_provenance["filtered_sport_keys"] == ["soccer_epl"]
+
+    nba = engine.run(sport_keys=["basketball_nba"])
+    assert nba.executed_bets == 0
+    assert "no" not in nba.data_provenance  # provenance still real archive
 
 
-def test_format_backtest_report():
-    """Verify that format_backtest_report generates clean output without errors."""
+def test_format_backtest_report_no_misleading_labels():
+    """The formatted report omits any Grade B / fabricated-tier language."""
     engine = BacktestEngine()
     report = engine.run()
 
@@ -138,13 +164,16 @@ def test_format_backtest_report():
     assert "FINANCIAL & RISK-ADJUSTED PERFORMANCE" in formatted
     assert "SPORT & LEAGUE BREAKDOWN" in formatted
     assert "DETAILED MATCH-BY-MATCH AUDIT TRAIL" in formatted
+    assert "Data Source:" in formatted and "football-data.co.uk" in formatted
+    assert "Grade B" not in formatted
+    assert "(Beats Pinnacle/Closing Line)" not in formatted
 
 
 def test_cli_backtest_execution(tmp_path: Path):
-    """Test CLI backtest command with JSON export."""
+    """CLI backtest exports JSON and runs on real leagues."""
     export_file = tmp_path / "backtest_test.json"
     args = argparse.Namespace(
-        sports="soccer_epl,basketball_nba",
+        sports="soccer_epl,soccer_germany_bundesliga",
         export_json=str(export_file),
         json=False,
         verbose=False,
@@ -156,38 +185,155 @@ def test_cli_backtest_execution(tmp_path: Path):
     assert export_file.stat().st_size > 0
 
 
-def test_multi_strategy_profiles_and_comparison_matrix():
-    """Verify that multi-strategy profiles and comparison matrix evaluate properly."""
+def test_multi_strategy_profiles_are_real_or_derived():
+    """Every strategy row is computed from REAL records; derived rows are labelled."""
     engine = BacktestEngine()
     report = engine.run()
 
-    # 1. Comparison Matrix structure
     matrix = report.strategy_comparison_matrix
-    assert len(matrix) == 4
-    strategy_ids = [s["strategy_id"] for s in matrix]
-    assert strategy_ids == ["conservative", "high_yield_pivots", "smart_parlays", "hybrid_portfolio"]
+    ids = [s["strategy_id"] for s in matrix]
+    assert ids == [
+        "conservative",
+        "high_yield_pivots",
+        "always_home",
+        "smart_parlays",
+        "hybrid_portfolio",
+    ]
 
-    # 2. Conservative baseline preserved
     cons = report.strategies["conservative"]["summary"]
-    assert cons["win_rate"] == pytest.approx(0.84, abs=0.01)
-    assert cons["net_profit"] == pytest.approx(143.40, abs=0.50)
-    assert cons["max_drawdown_pct"] == pytest.approx(2.89, abs=0.10)
+    assert cons["win_rate"] == pytest.approx(0.7974, abs=0.01)
+    assert cons["net_profit"] == pytest.approx(-687.13, abs=20.0)
+    assert cons["roi_pct"] == pytest.approx(-1.81, abs=0.2)
+    assert cons["max_drawdown_pct"] == pytest.approx(9.98, abs=1.0)
+    assert "realised" in cons["description"].lower()
 
-    # 3. High-Yield Pivots produces substantially higher cash profit
-    piv = report.strategies["high_yield_pivots"]["summary"]
-    assert piv["win_rate"] >= 0.75
-    assert piv["net_profit"] > 1000.0  # Much higher cash profit than conservative singles
-    assert piv["avg_odds"] > 1.70
+    # Baselines are the naive "no gate" benchmarks.
+    fav = report.strategies["high_yield_pivots"]["summary"]
+    assert fav["name"] == "Market Favourites (Baseline)"
+    assert fav["executed_bets"] == 6729
+    assert fav["win_rate"] == pytest.approx(0.5377, abs=0.01)
+    assert fav["roi_pct"] < 0.0  # blind favourite-chasing loses money
 
-    # 4. Smart Parlays yields high profit while retaining >70% win rate
+    home = report.strategies["always_home"]["summary"]
+    assert home["name"] == "Always Home (Baseline)"
+    assert home["roi_pct"] < 0.0
+
+    # Parlay / hybrid are explicitly DERIVED scenarios, not independent markets.
     par = report.strategies["smart_parlays"]["summary"]
-    assert par["win_rate"] >= 0.70
-    assert par["net_profit"] > 1500.0
-    assert par["avg_odds"] > 1.85
+    assert "derived" in par["name"].lower() or "derived" in par["description"].lower()
+    assert "Derived" in par["badge"]
 
-    # 5. Hybrid Portfolio provides balanced compounding
     hyb = report.strategies["hybrid_portfolio"]["summary"]
-    assert hyb["win_rate"] >= 0.78
-    assert hyb["net_profit"] > 800.0
-    assert hyb["max_drawdown_pct"] < 4.5
+    assert "derived" in hyb["description"].lower()
 
+    # No strategy may ever claim a win rate far above what the archive supports.
+    for s in matrix:
+        assert s["win_rate"] <= (report.win_rate + 0.2)
+
+
+def test_no_hardcoded_grade_b_markets_in_ledger():
+    """Ledger must never contain a fake Grade B pivot or fabricated odds."""
+    engine = BacktestEngine()
+    report = engine.run()
+    grades = {r.grade for r in report.records}
+    assert grades <= {"GRADE_A", "GRADE_C"}
+
+    odds_seen = {round(r.best_odds, 2) for r in report.records if r.result in ("WIN", "LOSS")}
+    # The old fabricated engine emitted ONLY two distinct odds (1.20 / 1.22).
+    # A real ledger spans hundreds of distinct prices.
+    assert len(odds_seen) > 10
+    assert odds_seen != {1.20, 1.22}
+
+
+def test_backtest_validation_binds_to_archived_scores():
+    """REAL DATA ONLY: every prediction result and scoreline in the ledger must
+    be exactly what the packaged archive's official final score implies.
+
+    Any synthetic result, generated outcome, or fabricated scoreline would show
+    up as a mismatch against ``HISTORICAL_SCORES`` and fail this test."""
+    archived = {s.match_id: s for s in parse_scores_payload(HISTORICAL_SCORES)}
+    assert len(archived) == len(HISTORICAL_SCORES)  # every archived score parses
+
+    closing_by_id = {g["id"]: g.get("closing_odds") for g in HISTORICAL_ODDS}
+
+    engine = BacktestEngine(initial_bankroll=10000.0, flat_stake_unit=100.0)
+    report = engine.run()
+
+    assert len(report.records) == report.grade_c_traps_avoided + report.grade_a_count
+
+    # Every executed (Grade A) record must grade EXACTLY against the archive.
+    grade_a = [r for r in report.records if r.grade == "GRADE_A"]
+    for rec in grade_a:
+        score = archived.get(rec.match_id)
+        assert score is not None and score.completed, rec.match_id
+        assert rec.actual_score == f"{score.home_score}-{score.away_score}"
+        expected = score.grade_pick(rec.market, rec.outcome_name)
+        assert rec.result == expected, (
+            f"result for {rec.match_id} ({rec.outcome_name}) contradicted by "
+            f"archived official score {rec.actual_score}"
+        )
+        # CLV reference is the archived closing line for that outcome.
+        assert closing_by_id.get(rec.match_id) is not None, rec.match_id
+        assert rec.closing_odds == closing_by_id[rec.match_id][rec.outcome_name], rec.match_id
+        assert rec.beat_clv == (rec.best_odds > rec.closing_odds), rec.match_id
+
+    # Grade C pass advisories must carry the same real scoreline, and their
+    # counterfactual prices must be genuine archive prices (never fabricated).
+    for rec in report.records:
+        if rec.grade != "GRADE_C":
+            continue
+        score = archived.get(rec.match_id)
+        assert score is not None and score.completed, rec.match_id
+        assert rec.actual_score == f"{score.home_score}-{score.away_score}"
+        assert rec.result in ("PASS_TRAP_AVOIDED", "PASS_ADVISORY")
+        assert rec.best_odds >= 1.0  # real published price
+        assert 0.0 < rec.p_true < 1.0
+        assert rec.stake_amount == 0.0 and rec.pnl == 0.0
+
+
+def test_backtest_grade_c_counterfactual_matches_archive_favorite():
+    """The Grade C trap classification must follow the archived outcome for the
+    real de-vigged favourite, not an invented one.
+
+    For a sample of pass advisories, refit the consensus, take the favourite,
+    and require the trap type to match the archived scoreline."""
+    from lisa.backtest import best_available_price, evaluate_gate
+    from lisa.history import HISTORICAL_ODDS
+    from lisa.consensus import refine
+    from lisa.parsing import parse_odds_payload
+
+    engine = BacktestEngine(initial_bankroll=10000.0, flat_stake_unit=100.0)
+    report = engine.run()
+
+    archived = {s.match_id: s for s in parse_scores_payload(HISTORICAL_SCORES)}
+    matches_by_id = {m.id: m for m in parse_odds_payload(HISTORICAL_ODDS)}
+    grade_c = [r for r in report.records if r.grade == "GRADE_C"]
+    checked = 0
+    for rec in grade_c:
+        match = matches_by_id.get(rec.match_id)
+        if match is None:
+            continue
+        consensus = refine(match, now=match.commence_time,
+                           min_books=engine.settings.min_books_telemetry)
+        if consensus is None:
+            continue
+        gate = evaluate_gate(consensus, threshold=engine.settings.gate_threshold,
+                             min_books=engine.settings.min_books_alert,
+                             max_cv=engine.settings.max_cv,
+                             require_positive_ev=engine.settings.require_positive_ev)
+        if gate.pick is not None:
+            continue  # this match did not pass in the sampled run
+        p_home = consensus.p.get(match.home_team, 0.0)
+        p_away = consensus.p.get(match.away_team, 0.0)
+        p_fav = max(p_home, p_away)
+        fav = match.home_team if p_home >= p_away else match.away_team
+        score = archived[rec.match_id]
+        expectation = (
+            "PASS_ADVISORY" if score.winner() == fav else "PASS_TRAP_AVOIDED"
+        )
+        assert rec.result == expectation, rec.match_id
+        assert rec.grade == "GRADE_C"
+        checked += 1
+        if checked >= 20:
+            break
+    assert checked >= 20

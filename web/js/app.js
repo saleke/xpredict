@@ -7,6 +7,28 @@ import { auth } from './auth.js';
 import { initCalculator } from './calculator.js';
 import { renderReliabilityChart } from './charts.js';
 
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{2190}-\u{21FF}\u{2705}\u{274C}\u{25CF}\u{2605}]/gu;
+function cleanText(value) {
+  if (value == null) return '';
+  return String(value)
+    .replace(EMOJI_RE, '')
+    .replace(/\s*[\u2014\u2013]\s*/g, ', ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function formatKo(iso) {
+  if (!iso) return 'Time TBC';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso).replace('T', ' ').replace('Z', ' UTC');
+  const day = d.getUTCDate();
+  const mon = MONTHS_SHORT[d.getUTCMonth()];
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${day} ${mon}, ${hh}:${mm} UTC`;
+}
+
 let state = {
   data: null,
   activeGradeFilter: 'all',
@@ -27,7 +49,7 @@ export const SPORTSBOOKS = [
     codeLength: 6,
     brandColor: '#E41C26',
     url: 'https://www.sportybet.com/',
-    tip: 'Paste 6-character code into SportyBet &rarr; Load Bet Slip',
+    tip: 'Paste the 6-character code in SportyBet, then Load Bet Slip',
     svg: `<svg viewBox="0 0 46 20" width="46" height="20" aria-label="SportyBet"><rect width="46" height="20" rx="4" fill="#E41C26"/><text x="23" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.2">SPORTY</text></svg>`
   },
   {
@@ -37,7 +59,7 @@ export const SPORTSBOOKS = [
     codeLength: 7,
     brandColor: '#008744',
     url: 'https://www.football.com/',
-    tip: 'Paste 7-digit code into Football.com &rarr; Load Booking Slip',
+    tip: 'Paste the 7-digit code in Football.com, then Load Booking Slip',
     svg: `<svg viewBox="0 0 52 20" width="52" height="20" aria-label="Football.com"><rect width="52" height="20" rx="4" fill="#008744"/><circle cx="10" cy="10" r="4.5" fill="#ffffff"/><circle cx="10" cy="10" r="2.2" fill="#008744"/><text x="32" y="13.5" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="7.5" text-anchor="middle" letter-spacing="-0.3">FOOTBALL</text></svg>`
   },
   {
@@ -47,7 +69,7 @@ export const SPORTSBOOKS = [
     codeLength: 5,
     brandColor: '#00C4FF',
     url: 'https://1xbet.com/',
-    tip: 'Paste 5-character code into 1xBet &rarr; Save/Load Slip',
+    tip: 'Paste the 5-character code in 1xBet, then Save or Load Slip',
     svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="1xBet"><rect width="38" height="20" rx="4" fill="#0B4A8F"/><text x="12" y="14.5" fill="#00D2FF" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">1</text><text x="24" y="14.5" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">X</text></svg>`
   },
   {
@@ -57,7 +79,7 @@ export const SPORTSBOOKS = [
     codeLength: 6,
     brandColor: '#22C55E',
     url: 'https://sports.bet9ja.com/',
-    tip: 'Paste code into Bet9ja &rarr; Booking Slip',
+    tip: 'Paste the code in Bet9ja, then Booking Slip',
     svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet9ja"><rect width="38" height="20" rx="4" fill="#005C2B"/><text x="14" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">9</text><text x="24" y="14" fill="#FFD700" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">ja</text></svg>`
   },
   {
@@ -67,7 +89,7 @@ export const SPORTSBOOKS = [
     codeLength: 7,
     brandColor: '#00A826',
     url: 'https://www.betway.com/',
-    tip: 'Paste code into Betway &rarr; Load Bet Slip',
+    tip: 'Paste the code in Betway, then Load Bet Slip',
     svg: `<svg viewBox="0 0 44 20" width="44" height="20" aria-label="Betway"><rect width="44" height="20" rx="4" fill="#1A1A1A" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/><text x="22" y="14" fill="#ffffff" font-weight="800" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.3">betway</text></svg>`
   },
   {
@@ -86,7 +108,7 @@ export const SPORTSBOOKS = [
     brandColor: '#FF6B00',
     url: 'https://sportsbook.draftkings.com/',
     tip: 'DraftKings uses Direct Links (No booking code needed)',
-    svg: `<svg viewBox="0 0 40 20" width="40" height="20" aria-label="DraftKings"><rect width="40" height="20" rx="4" fill="#18191A" stroke="rgba(255,107,0,0.4)" stroke-width="0.8"/><text x="20" y="14" fill="#FF6B00" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle">👑DK</text></svg>`
+    svg: `<svg viewBox="0 0 40 20" width="40" height="20" aria-label="DraftKings"><rect width="40" height="20" rx="4" fill="#18191A" stroke="rgba(255,107,0,0.4)" stroke-width="0.8"/><text x="20" y="14" fill="#FF6B00" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle">DK</text></svg>`
   }
 ];
 
@@ -188,8 +210,7 @@ function renderBetSlipBox(p) {
     <div class="bet-slip-box" id="bet-box-${matchId}">
       <div class="bet-slip-header">
         <div class="bet-slip-label">
-          <span class="slip-ticket-icon">${isDirectLinkOnly ? '🔗' : '🎟️'}</span>
-          <span>${isDirectLinkOnly ? 'Direct Slip Link:' : 'Direct Bet Code:'}</span>
+          <span>${isDirectLinkOnly ? 'Direct Slip Link' : 'Direct Bet Code'}</span>
         </div>
         <div class="book-logos-row" id="chips-row-${matchId}">
           ${chipsHtml}
@@ -203,7 +224,7 @@ function renderBetSlipBox(p) {
           <span class="pill-book-dot" style="background: ${currentBook.brandColor};"></span>
           <span class="pill-book-tag" id="pill-book-tag-${matchId}">${currentBook.name}:</span>
           <span class="pill-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="pill-code-val-${matchId}">
-            ${isDirectLinkOnly ? '🔗 Direct Slip (No code needed)' : currentCode}
+            ${isDirectLinkOnly ? 'Direct slip, no code needed' : currentCode}
           </span>
         </div>
 
@@ -213,7 +234,6 @@ function renderBetSlipBox(p) {
             id="copy-btn-${matchId}" 
             onclick="${isDirectLinkOnly ? `window.open('${directLink}', '_blank', 'noopener,noreferrer')` : `window.copyBookingCode('${matchId}')`}"
             title="${isDirectLinkOnly ? `Open selection on ${currentBook.name}` : `Copy ${currentBook.name} code to clipboard`}">
-            <span class="copy-icon">${isDirectLinkOnly ? '↗' : '📋'}</span>
             <span class="copy-label">${isDirectLinkOnly ? 'Open' : 'Copy'}</span>
           </button>
           <a href="${directLink}" 
@@ -221,14 +241,15 @@ function renderBetSlipBox(p) {
             rel="noopener noreferrer" 
             class="btn-open-book" 
             id="open-link-${matchId}" 
-            title="Open ${currentBook.name} website/app in new tab">
-            ↗
+            title="Open ${currentBook.name} website/app in new tab"
+            aria-label="Open ${currentBook.name} in new tab">
+            Open
           </a>
         </div>
       </div>
 
       <div class="bet-code-helper" id="helper-${matchId}">
-        <span>💡 ${currentBook.tip}</span>
+        ${currentBook.tip}
       </div>
     </div>
   `;
@@ -286,12 +307,12 @@ function renderAccumulatorBanner() {
   bannerContainer.innerHTML = `
     <div class="accumulator-banner">
       <div class="accumulator-left">
-        <div class="accumulator-badge">⚡ 1-Click Multi-Bet Slip (Parlay)</div>
+        <div class="accumulator-badge">1-Click Multi-Bet Slip (Parlay)</div>
         <div class="accumulator-title">Today's 5-Fold Diamond High-Conviction Slip</div>
         <div class="accumulator-meta">
-          <span>${diamonds.length} Elite Consensus Legs</span> · 
-          <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span> · 
-          <span>1st Leg: <span class="kickoff-countdown-badge ${firstLegCd.status}" data-commence="${earliestIso}"><span class="countdown-icon">${firstLegCd.icon}</span> <span class="countdown-text tabular-nums">${firstLegCd.text}</span></span></span> · 
+          <span>${diamonds.length} Elite Consensus Legs</span>
+          <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span>
+          <span>1st Leg: <span class="kickoff-countdown-badge ${firstLegCd.status}" data-commence="${earliestIso}"><span class="countdown-text tabular-nums">${firstLegCd.text}</span></span></span>
           <span style="color: var(--accent-emerald); font-weight: 700;">+14.8% Edge</span>
         </div>
       </div>
@@ -308,27 +329,24 @@ function renderAccumulatorBanner() {
             title="${isDirectLinkOnly ? `Open on ${currentBook.name}` : `Click to copy 5-Game Slip Code`}">
             <span class="accu-book-name" id="accu-book-label">${currentBook.name}:</span>
             <span class="accu-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="accu-code-display">
-              ${isDirectLinkOnly ? '🔗 Direct Parlay Selections' : accuCode}
+              ${isDirectLinkOnly ? 'Direct parlay selections' : accuCode}
             </span>
           </div>
           <button type="button" 
             class="btn-accu-copy" 
             id="accu-copy-btn" 
             onclick="${isDirectLinkOnly ? `window.open('${currentBook.url}', '_blank', 'noopener,noreferrer')` : `window.copyAccumulatorCode()`}">
-            <span>${isDirectLinkOnly ? '↗' : '📋'}</span> ${isDirectLinkOnly ? `Open on ${currentBook.name}` : 'Copy 5-Fold Slip'}
+            <span>${isDirectLinkOnly ? 'Open' : 'Copy'} 5-Fold Slip</span>
           </button>
         </div>
       </div>
       ` : `
-      <div class="accumulator-right" style="display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 8px;">
-        <div style="font-size: 11px; color: var(--accent-gold); font-weight: 700; display: flex; align-items: center; gap: 4px;">
-          <span>🔒 Tier 2 Pro Required</span>
-        </div>
+      <div class="accumulator-right">
+        <div style="font-size: 11px; color: var(--accent-gold); font-weight: 700;">Tier 2 Pro required</div>
         <button type="button" 
-          class="btn-accu-copy" 
-          onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier2') : window.setTier('tier2')"
-          style="background: linear-gradient(135deg, var(--accent-gold), #d97706); border: none; color: #000; font-weight: 700; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-          <span>👑</span> Unlock 5-Fold Slip ($49/mo)
+          class="btn-upgrade-glow" 
+          onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier2') : window.setTier('tier2')">
+          Unlock 5-Fold Slip ($49/mo)
         </button>
       </div>
       `}
@@ -338,12 +356,12 @@ function renderAccumulatorBanner() {
 
 export function formatCountdown(commenceTimeIso, fallbackText = 'Today') {
   if (!commenceTimeIso) {
-    return { text: fallbackText, status: 'upcoming', icon: '🕒' };
+    return { text: fallbackText, status: 'upcoming' };
   }
 
   const target = new Date(commenceTimeIso).getTime();
   if (isNaN(target)) {
-    return { text: fallbackText, status: 'upcoming', icon: '🕒' };
+    return { text: fallbackText, status: 'upcoming' };
   }
 
   const now = Date.now();
@@ -361,16 +379,14 @@ export function formatCountdown(commenceTimeIso, fallbackText = 'Today') {
     if (days > 0) {
       return {
         text: `Starts in ${days}d ${hours}h ${pad(mins)}m ${pad(secs)}s`,
-        status: 'upcoming',
-        icon: '⏳'
+        status: 'upcoming'
       };
     }
 
     if (hours > 0) {
       return {
         text: `Starts in ${hours}h ${pad(mins)}m ${pad(secs)}s`,
-        status: 'upcoming',
-        icon: '⏳'
+        status: 'upcoming'
       };
     }
 
@@ -378,8 +394,7 @@ export function formatCountdown(commenceTimeIso, fallbackText = 'Today') {
     const isImminent = mins < 15;
     return {
       text: isImminent ? `Kicks off in ${mins}m ${pad(secs)}s` : `Starts in ${mins}m ${pad(secs)}s`,
-      status: isImminent ? 'imminent' : 'upcoming',
-      icon: isImminent ? '⚡' : '⏳'
+      status: isImminent ? 'imminent' : 'upcoming'
     };
   }
 
@@ -391,16 +406,14 @@ export function formatCountdown(commenceTimeIso, fallbackText = 'Today') {
   if (elapsedMins < 115) {
     return {
       text: `LIVE · ${elapsedMins}'${pad(remSecs)}" in-play`,
-      status: 'live',
-      icon: '🔴'
+      status: 'live'
     };
   }
 
   // Case 3: Completed (> 115 mins)
   return {
     text: `Full Time · Awaiting Result`,
-    status: 'ended',
-    icon: '🏁'
+    status: 'ended'
   };
 }
 
@@ -439,12 +452,15 @@ export function startKickoffCountdown() {
 
 async function loadData() {
   try {
-    const [res, liveRes] = await Promise.all([
+    const [res, liveRes, fcRes, tgRes] = await Promise.all([
       fetch('data/dashboard.json'),
-      fetch('data/live_booking_codes.json').catch(() => null)
+      fetch('data/live_booking_codes.json').catch(() => null),
+      fetch('data/forecast.json').catch(() => null),
+      fetch('data/tiers.json').catch(() => null)
     ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
+    renderProvenanceBanner();
 
     if (liveRes && liveRes.ok) {
       try {
@@ -460,6 +476,22 @@ async function loadData() {
         console.warn('Could not parse live booking codes config:', e);
       }
     }
+
+    if (fcRes && fcRes.ok) {
+      try {
+        state.forecast = await fcRes.json();
+      } catch (e) {
+        console.warn('Could not parse forecast.json:', e);
+      }
+    }
+    if (tgRes && tgRes.ok) {
+      try {
+        state.tierCatalog = await tgRes.json();
+      } catch (e) {
+        console.warn('Could not parse tiers.json:', e);
+      }
+    }
+
     renderAll();
   } catch (err) {
     console.error('Failed to load dashboard data:', err);
@@ -468,10 +500,21 @@ async function loadData() {
       grid.innerHTML = `
         <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-secondary);">
           <p style="font-size: 16px; margin-bottom: 8px;">Waiting for pipeline cycle data...</p>
-          <p style="font-size: 13px; color: var(--text-muted);">Run <code>python -m lisa export-web --fixtures</code> to populate dashboard data.</p>
+          <p style="font-size: 13px; color: var(--text-muted);">Run <code>python -m lisa export-web</code> (real archive audit plus live cycle) to populate dashboard data.</p>
         </div>
       `;
     }
+  }
+}
+
+function renderProvenanceBanner() {
+  const banner = document.getElementById('provenance-banner');
+  if (!banner) return;
+  const prov = state.data && state.data.data_provenance;
+  const demo = (prov && prov.synthetic) || (state.data && state.data.meta && state.data.meta.demo);
+  banner.style.display = demo ? 'block' : 'none';
+  if (demo && prov && prov.statement) {
+    banner.title = prov.statement;
   }
 }
 
@@ -483,6 +526,9 @@ function renderAll() {
   renderCalibration();
   renderTier3Alpha();
   renderBacktest();
+  renderForecastBoard();
+  renderTierMatrix();
+  renderTicker();
 }
 
 function renderKPIs() {
@@ -521,15 +567,15 @@ function renderKPIs() {
   }
   const catGradeA = document.getElementById('cat-grade-a');
   if (catGradeA && s.diamonds_count !== undefined) {
-    catGradeA.textContent = `💎 Flagship Diamonds (${s.diamonds_count})`;
+    catGradeA.textContent = `Flagship Diamonds (${s.diamonds_count})`;
   }
   const catGradeB = document.getElementById('cat-grade-b');
   if (catGradeB && s.pivots_count !== undefined) {
-    catGradeB.textContent = `🧠 Smart Pivots (${s.pivots_count})`;
+    catGradeB.textContent = `Smart Pivots (${s.pivots_count})`;
   }
   const catGradeC = document.getElementById('cat-grade-c');
   if (catGradeC && s.pass_advisories_count !== undefined) {
-    catGradeC.textContent = `🛡️ Pass Advisories (${s.pass_advisories_count})`;
+    catGradeC.textContent = `Pass Advisories (${s.pass_advisories_count})`;
   }
 }
 
@@ -554,12 +600,12 @@ function renderTierControls() {
     badgeEl.style.color = 'var(--accent-cyan)';
     badgeEl.style.borderColor = 'rgba(6, 182, 212, 0.4)';
     textEl.innerHTML = state.isTelegramUnlocked
-      ? 'Match #1 free. Matches #2 & #3 <strong>unlocked via Telegram</strong>. Matches #4–#12 require Tier 2 Pro.'
-      : 'Displaying Match #1 completely free. Matches #2 & #3 unlock via Telegram. Matches #4–#12 locked.';
+      ? 'Match #1 free. Matches #2 and #3 <strong>unlocked via Telegram</strong>. Matches #4 through #12 require Tier 2 Pro.'
+      : 'Displaying Match #1 completely free. Matches #2 and #3 unlock via Telegram. Matches #4 through #12 locked.';
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" onclick="window.switchTab('overview')">
-          ⚡ Upgrade to Tier 2 ($49/mo)
+          Upgrade to Tier 2 ($49/mo)
         </button>
       `;
     }
@@ -567,7 +613,7 @@ function renderTierControls() {
     badgeEl.textContent = 'TIER 1 STARTER ($19/MO)';
     badgeEl.style.color = 'var(--accent-emerald)';
     badgeEl.style.borderColor = 'rgba(16, 185, 129, 0.4)';
-    textEl.innerHTML = 'Top 5 daily high-conviction consensus picks unlocked. Matches #6–#12 locked for Tier 2 Pro.';
+    textEl.innerHTML = 'Top 5 daily high-conviction consensus picks unlocked. Matches #6 through #12 locked for Tier 2 Pro.';
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" onclick="window.setTier('tier2')">
@@ -582,8 +628,8 @@ function renderTierControls() {
     textEl.innerHTML = 'All 12 daily match predictions unlocked with smart safety picks and recommended bet sizes.';
     if (ctaBox) {
       ctaBox.innerHTML = `
-        <button class="btn-upgrade-glow" style="background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); color: #07090e;" onclick="window.setTier('tier3')">
-          👑 Explore Tier 3 VIP Syndicate
+        <button class="btn-upgrade-glow" onclick="window.setTier('tier3')">
+          Explore Tier 3 VIP Syndicate
         </button>
       `;
     }
@@ -595,7 +641,7 @@ function renderTierControls() {
     if (ctaBox) {
       ctaBox.innerHTML = `
         <span style="font-size: 12px; font-weight: 700; color: var(--accent-gold); padding: 6px 14px; background: rgba(245, 158, 11, 0.15); border-radius: var(--radius-pill); border: 1px solid rgba(245, 158, 11, 0.3);">
-          ✔ Active VIP Member
+          Active VIP Member
         </span>
       `;
     }
@@ -656,7 +702,7 @@ function renderPicks() {
         headerHtml = `
           <div class="section-divider-banner diamond-section">
             <div class="section-divider-title">
-              <span>💎 Flagship Diamonds (Tier 1 Core)</span>
+              <span>Flagship Diamonds (Tier 1 Core)</span>
             </div>
             <div class="section-divider-sub">
               Strict mathematical consensus (P<sub>true</sub> ≥ 82%, CV ≤ 2.5%) feeding the public audited ledger.
@@ -668,7 +714,7 @@ function renderPicks() {
         headerHtml = `
           <div class="section-divider-banner pivot-section">
             <div class="section-divider-title">
-              <span>🧠 Smart Market Pivots (High-Yield Micro-Lines)</span>
+              <span>Smart Market Pivots (High-Yield Micro-Lines)</span>
             </div>
             <div class="section-divider-sub">
               Marquee clashes where LISA pivots away from 50/50 moneyline coin-flips into high-certainty derivative markets.
@@ -680,7 +726,7 @@ function renderPicks() {
         headerHtml = `
           <div class="section-divider-banner pass-section">
             <div class="section-divider-title">
-              <span>🛡️ LISA Pass Advisories (Bankroll Capital Preservation)</span>
+              <span>LISA Pass Advisories (Bankroll Capital Preservation)</span>
             </div>
             <div class="section-divider-sub">
               Popular sucker bets LISA explicitly warns subscribers to PASS on. $0 wagered, win rate protected.
@@ -740,7 +786,6 @@ function renderPicks() {
             <div class="card-header">
               <span class="sport-tag">${league}</span>
               <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
-                <span class="countdown-icon">${cd.icon}</span>
                 <span class="countdown-text tabular-nums">${cd.text}</span>
               </div>
             </div>
@@ -751,13 +796,12 @@ function renderPicks() {
             </div>
           </div>
           <div class="locked-overlay">
-            <div class="locked-icon">📱</div>
             <div class="locked-title">Match #2 · Social Telegram Unlock</div>
             <div class="locked-desc">
               Join official LISA Telegram to unlock this daily bonus game for free.
             </div>
             <button class="btn-social-unlock" onclick="window.openTelegramModal()">
-              <span>✈️</span> Unlock via Telegram (Free)
+              Unlock via Telegram (Free)
             </button>
           </div>
         </div>
@@ -773,7 +817,6 @@ function renderPicks() {
             <div class="card-header">
               <span class="sport-tag">${league}</span>
               <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
-                <span class="countdown-icon">${cd.icon}</span>
                 <span class="countdown-text tabular-nums">${cd.text}</span>
               </div>
             </div>
@@ -784,7 +827,6 @@ function renderPicks() {
             </div>
           </div>
           <div class="locked-overlay">
-            <div class="locked-icon">⚡</div>
             <div class="locked-title">Match #${p.rank} · Sharp Starter (Tier 1)</div>
             <div class="locked-desc">
               Unlock Top 5 High-Confidence Diamond Picks daily + instant line alerts.
@@ -797,12 +839,12 @@ function renderPicks() {
       `;
     }
 
-    // Standard Tier 2 Locked Card (Matches #6–#12)
+    // Standard Tier 2 Locked Card (Matches #6 through #12)
     if (isLocked && lockType === 'tier2') {
       const lockTitle = p.is_pass_advisory ? `Match #${p.rank} · Pass Advisory` : `Match #${p.rank} · Tier 2 Pro`;
       const lockDesc = p.is_pass_advisory
         ? 'Unlock capital preservation advisory, hazard breakdown, and avoidance metrics.'
-        : 'Unlock all 12 Diamonds, Smart Pivots & Pass Advisories with 1-click slips.';
+        : 'Unlock all 12 Diamonds, Smart Pivots and Pass Advisories with 1-click slips.';
       return `
         ${headerHtml}
         <div class="pick-card locked-card" id="pick-${p.match_id}">
@@ -810,7 +852,6 @@ function renderPicks() {
             <div class="card-header">
               <span class="sport-tag">${league}</span>
               <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
-                <span class="countdown-icon">${cd.icon}</span>
                 <span class="countdown-text tabular-nums">${cd.text}</span>
               </div>
             </div>
@@ -821,7 +862,6 @@ function renderPicks() {
             </div>
           </div>
           <div class="locked-overlay">
-            <div class="locked-icon">🔒</div>
             <div class="locked-title">${lockTitle}</div>
             <div class="locked-desc">${lockDesc}</div>
             <button class="btn-upgrade-card" onclick="window.openAuthModal ? window.openAuthModal('signup', 'tier2') : window.setTier('tier2')">
@@ -841,7 +881,7 @@ function renderPicks() {
             <div class="card-header">
               <div style="display: flex; gap: 8px; align-items: center;">
                 <span class="sport-tag">${league}</span>
-                <span class="pass-shield-tag">🛡️ PASS ADVISORY</span>
+                <span class="pass-shield-tag">PASS ADVISORY</span>
               </div>
               <span class="odds-tag" style="background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); border-color: rgba(244, 63, 94, 0.3);">Vig Trap ${p.best_odds ? p.best_odds.toFixed(2) : '2.50'}</span>
             </div>
@@ -849,7 +889,6 @@ function renderPicks() {
             <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
               <div class="match-title">${p.home_team} vs ${p.away_team}</div>
               <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
-                <span class="countdown-icon">${cd.icon}</span>
                 <span class="countdown-text tabular-nums">${cd.text}</span>
               </div>
             </div>
@@ -860,19 +899,19 @@ function renderPicks() {
 
             <div class="pass-hazard-box">
               <div class="pass-hazard-title">
-                <span>⚠️ HAZARD DETECTED:</span> ${p.hazard_title || 'Negative EV / Market Trap'}
+                <span>Hazard detected:</span> ${cleanText(p.hazard_title) || 'Negative EV / Market Trap'}
               </div>
               <div class="pass-hazard-desc">
-                ${p.hazard_reason || 'High-entropy trap pricing identified across bookmaker consensus.'}
+                ${cleanText(p.hazard_reason) || 'High-entropy trap pricing identified across bookmaker consensus.'}
               </div>
             </div>
 
             <div class="pass-preservation-box">
               <div class="pass-preservation-title">
-                <span>🛡️ LISA CAPITAL PRESERVATION:</span> ${p.pass_verdict || 'DO NOT BET'}
+                <span>LISA capital preservation:</span> ${cleanText(p.pass_verdict) || 'DO NOT BET'}
               </div>
               <div class="pass-preservation-desc">
-                ${p.preservation_rationale || 'Zero mathematical edge. Capital preserved for high-conviction Diamond picks.'}
+                ${cleanText(p.preservation_rationale) || 'Zero mathematical edge. Capital preserved for high-conviction Diamond picks.'}
               </div>
             </div>
 
@@ -897,7 +936,7 @@ function renderPicks() {
           </div>
 
           <div class="btn-bankroll-preserved">
-            <span>🛡️</span> $0 Wagered · Bankroll Capital Preserved
+            $0 Wagered · Bankroll Capital Preserved
           </div>
         </div>
       `;
@@ -906,11 +945,11 @@ function renderPicks() {
     // Unlocked Card (Grade A Diamonds & Grade B Pivots)
     let socialBadge = '';
     if (state.currentTier === 'free' && (p.rank === 2 || p.rank === 3)) {
-      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(0, 136, 204, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(0, 136, 204, 0.3);">✔ Telegram Unlocked</span>`;
+      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(0, 136, 204, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(0, 136, 204, 0.3);">Telegram Unlocked</span>`;
     } else if (p.rank === 1 && state.currentTier === 'free') {
-      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: var(--accent-emerald); background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(16, 185, 129, 0.3);">⭐ Free Diamond Pick</span>`;
+      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: var(--accent-emerald); background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(16, 185, 129, 0.3);">Free Diamond Pick</span>`;
     } else if (p.grade === 'GRADE_B') {
-      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #a78bfa; background: rgba(139, 92, 246, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(139, 92, 246, 0.3);">🧠 Smart Pivot</span>`;
+      socialBadge = `<span style="font-size: 10px; font-weight: 700; color: #a78bfa; background: rgba(139, 92, 246, 0.15); padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid rgba(139, 92, 246, 0.3);">Smart Pivot</span>`;
     }
 
     // Smart Market Pivot Callout
@@ -919,11 +958,11 @@ function renderPicks() {
       pivotHtml = `
         <div class="pivot-banner">
           <div class="pivot-title">
-            <span class="pivot-tag">🧠 LISA SMART MARKET PIVOT</span>
-            <span class="pivot-hazard">⚠️ ${p.pivot.hazard_reason}</span>
+            <span class="pivot-tag">LISA Smart Market Pivot</span>
+            <span class="pivot-hazard">${cleanText(p.pivot.hazard_reason)}</span>
           </div>
           <div class="pivot-body">
-            ${p.pivot.pivot_rationale}
+            ${cleanText(p.pivot.pivot_rationale)}
           </div>
         </div>
       `;
@@ -944,7 +983,6 @@ function renderPicks() {
           <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
             <div class="match-title">${p.home_team} vs ${p.away_team}</div>
             <div class="kickoff-countdown-badge ${cd.status}" data-commence="${p.commence_time || ''}">
-              <span class="countdown-icon">${cd.icon}</span>
               <span class="countdown-text tabular-nums">${cd.text}</span>
             </div>
           </div>
@@ -958,9 +996,6 @@ function renderPicks() {
           <div class="pick-selection">
             <div>
               <div class="pick-name">${p.outcome_name}</div>
-              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                Nominated Top Market Selection
-              </div>
             </div>
             <div class="prob-val tabular-nums">${probPct}%</div>
           </div>
@@ -994,30 +1029,11 @@ function renderPicks() {
           </div>
 
           <div class="kelly-rec-box">
-            <span style="font-size: 14px;">🧮</span>
             <div class="kelly-rec-text">
               Recommended Stake: <strong style="color: var(--text-primary);">${p.recommended_units} Units</strong> (${p.recommended_stake_pct}% Bankroll)
             </div>
           </div>
 
-          <div class="yield-options-box" style="margin-top: 12px; padding: 10px 12px; background: rgba(255,255,255,0.03); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between;">
-              <span>Execution Yield Options:</span>
-              <span style="color: var(--accent-cyan); font-weight: 600;">Flexible Strategy</span>
-            </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
-                <div style="color: var(--accent-emerald); font-weight: 700;">🛡️ Safe Base (Floor)</div>
-                <div style="color: #fff; margin-top: 2px;">${p.outcome_name} @ <strong>${p.best_odds ? p.best_odds.toFixed(2) : '-'}</strong></div>
-                <div style="color: var(--text-muted); font-size: 10px;">${probPct}% Prob · Low Variance</div>
-              </div>
-              <div style="background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.25); border-radius: 4px; padding: 6px 8px; font-size: 11px;">
-                <div style="color: var(--accent-gold); font-weight: 700;">⚡ Alpha Booster</div>
-                <div style="color: #fff; margin-top: 2px;">${p.outcome_name} -1.5 AH @ <strong>${p.best_odds ? (p.best_odds * 1.48).toFixed(2) : '1.85'}</strong></div>
-                <div style="color: var(--text-muted); font-size: 10px;">High Cash Yield · +85% Payout</div>
-              </div>
-            </div>
-          </div>
         </div>
 
         ${renderBetSlipBox(p)}
@@ -1110,7 +1126,6 @@ function renderTier3Alpha() {
         <td style="font-weight: 600; color: #ffffff;">${m.match}</td>
         <td>
           <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_time || ''}">
-            <span class="countdown-icon">${cd.icon}</span>
             <span class="countdown-text tabular-nums">${cd.text}</span>
           </div>
         </td>
@@ -1143,7 +1158,7 @@ function renderTier3Alpha() {
           </div>
         </div>
         <div style="margin-top: 6px; font-size: 12px; color: var(--accent-emerald); font-weight: 700;">
-          ⚡ Arbitrage Edge: ${s.arb_ev}
+          Arbitrage Edge: ${s.arb_ev}
         </div>
       </div>
     `).join('');
@@ -1154,7 +1169,7 @@ function renderTier3Alpha() {
   if (parlaysList && alpha.smart_parlays) {
     parlaysList.innerHTML = alpha.smart_parlays.map(p => `
       <div class="parlay-item">
-        <div class="parlay-title">${p.title}</div>
+        <div class="parlay-title">${cleanText(p.title)}</div>
         <ul class="parlay-legs">
           ${p.legs.map(leg => `<li>${leg}</li>`).join('')}
         </ul>
@@ -1183,17 +1198,14 @@ function renderBacktest() {
       return `
         <tr ${rowStyle}>
           <td>
-            <div style="font-weight: 700; color: #ffffff;">${row.badge} ${row.name}</div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${row.description}</div>
+            <div style="font-weight: 700; color: #ffffff;">${cleanText(row.name)}</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${cleanText(row.description)}</div>
           </td>
-          <td class="tabular-nums" style="font-weight: 600;">${row.avg_odds ? row.avg_odds.toFixed(2) : '-'}</td>
           <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">${(row.win_rate * 100).toFixed(1)}%</td>
-          <td class="tabular-nums">$${row.total_wagered.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-          <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 700;">+$${row.net_profit.toFixed(2)}</td>
-          <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">+${row.roi_pct.toFixed(1)}%</td>
+          <td class="tabular-nums" style="color: ${row.roi_pct >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)'}; font-weight: 700;">${row.roi_pct >= 0 ? '+' : ''}${row.roi_pct.toFixed(1)}%</td>
+          <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 700;">${row.net_profit >= 0 ? '+' : '-'}$${Math.abs(row.net_profit).toFixed(2)}</td>
           <td class="tabular-nums" style="color: var(--accent-rose); font-weight: 600;">-${row.max_drawdown_pct.toFixed(2)}%</td>
-          <td class="tabular-nums" style="color: var(--accent-cyan);">${row.sharpe_ratio ? row.sharpe_ratio.toFixed(2) : '-'}</td>
-          <td><span class="pill-league" style="font-size: 11px;">${row.best_for}</span></td>
+          <td><span class="pill-league" style="font-size: 11px;">${cleanText(row.best_for)}</span></td>
         </tr>
       `;
     }).join('');
@@ -1206,7 +1218,7 @@ function renderBacktest() {
   const rawRecords = stratData.records || b.records || [];
 
   const descEl = document.getElementById('bkt-strat-desc');
-  if (descEl && s.description) descEl.textContent = s.description;
+  if (descEl && s.description) descEl.textContent = cleanText(s.description);
 
   const winRateEl = document.getElementById('bkt-win-rate');
   if (winRateEl && s.win_rate !== undefined) winRateEl.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
@@ -1214,24 +1226,6 @@ function renderBacktest() {
   const ciEl = document.getElementById('bkt-ci');
   if (ciEl && s.wilson_ci_lower !== undefined && s.wilson_ci_upper !== undefined) {
     ciEl.textContent = `95% CI: [${(s.wilson_ci_lower * 100).toFixed(1)}%, ${(s.wilson_ci_upper * 100).toFixed(1)}%]`;
-  }
-
-  const eceEl = document.getElementById('bkt-ece');
-  if (eceEl) {
-    if (s.ece !== undefined) {
-      eceEl.textContent = `${(s.ece * 100).toFixed(2)}%`;
-    } else if (s.avg_odds !== undefined) {
-      eceEl.textContent = `${s.avg_odds.toFixed(2)} Avg`;
-    }
-  }
-
-  const subEceEl = document.getElementById('bkt-sub-ece');
-  if (subEceEl) {
-    if (s.reliability !== undefined) {
-      subEceEl.textContent = `Murphy Rel: ${s.reliability.toFixed(4)}`;
-    } else {
-      subEceEl.textContent = `${s.risk_level || 'Controlled'} Risk`;
-    }
   }
 
   const capSavedEl = document.getElementById('bkt-capital-saved');
@@ -1251,17 +1245,8 @@ function renderBacktest() {
   const mddDollarsEl = document.getElementById('bkt-mdd-dollars');
   if (mddDollarsEl && s.max_drawdown_dollars !== undefined) mddDollarsEl.textContent = `-$${s.max_drawdown_dollars.toFixed(2)} Peak Drop`;
 
-  const sharpeEl = document.getElementById('bkt-sharpe');
-  if (sharpeEl && s.sharpe_ratio !== undefined) sharpeEl.textContent = s.sharpe_ratio.toFixed(2);
-
-  const sortinoEl = document.getElementById('bkt-sortino');
-  if (sortinoEl && s.sortino_ratio !== undefined) {
-    const pfStr = s.profit_factor !== undefined ? ` · PF: ${s.profit_factor.toFixed(2)}` : '';
-    sortinoEl.textContent = `Sortino: ${s.sortino_ratio.toFixed(2)}${pfStr}`;
-  }
-
   const roiEl = document.getElementById('bkt-roi');
-  if (roiEl && s.roi_pct !== undefined) roiEl.textContent = `+${s.roi_pct.toFixed(2)}%`;
+  if (roiEl && s.roi_pct !== undefined) roiEl.textContent = `${s.roi_pct >= 0 ? '+' : ''}${s.roi_pct.toFixed(2)}%`;
 
   const profitEl = document.getElementById('bkt-profit');
   if (profitEl && s.net_profit !== undefined) {
@@ -1280,26 +1265,29 @@ function renderBacktest() {
     return matchSport && matchGrade;
   });
 
+  const ledgerCountEl = document.getElementById('bkt-ledger-count');
+  if (ledgerCountEl) ledgerCountEl.textContent = records.length;
+
   tbody.innerHTML = records.map(r => {
     let gradeBadge = '';
     if (r.grade === 'GRADE_A') {
-      gradeBadge = `<span class="pill-grade pill-grade-a">💎 Grade A</span>`;
+      gradeBadge = `<span class="pill-grade pill-grade-a">Grade A</span>`;
     } else if (r.grade === 'GRADE_B') {
-      gradeBadge = `<span class="pill-grade pill-grade-b">🧠 Smart Pivot</span>`;
+      gradeBadge = `<span class="pill-grade pill-grade-b">Smart Pivot</span>`;
     } else {
-      gradeBadge = `<span class="pill-grade pill-grade-c">🛡️ Pass Advisory</span>`;
+      gradeBadge = `<span class="pill-grade pill-grade-c">Pass Advisory</span>`;
     }
 
     let resultBadge = '';
     let pnlDisplay = '';
     if (r.result === 'WIN') {
-      resultBadge = `<span style="color: var(--accent-emerald); font-weight: 700;">✓ WON</span>`;
+      resultBadge = `<span style="color: var(--accent-emerald); font-weight: 700;">WON</span>`;
       pnlDisplay = `<span style="color: var(--accent-emerald); font-weight: 700;">+$${r.pnl.toFixed(2)}</span>`;
     } else if (r.result === 'LOSS') {
-      resultBadge = `<span style="color: var(--accent-rose); font-weight: 700;">✗ LOST</span>`;
+      resultBadge = `<span style="color: var(--accent-rose); font-weight: 700;">LOST</span>`;
       pnlDisplay = `<span style="color: var(--accent-rose); font-weight: 700;">-$${Math.abs(r.pnl).toFixed(2)}</span>`;
     } else {
-      resultBadge = `<span style="color: var(--accent-amber); font-weight: 700;">🛡️ TRAP AVOIDED</span>`;
+      resultBadge = `<span style="color: var(--accent-amber); font-weight: 700;">TRAP AVOIDED</span>`;
       pnlDisplay = `<span style="color: var(--accent-amber); font-weight: 700;">+$${r.capital_saved.toFixed(2)} Saved</span>`;
     }
 
@@ -1315,7 +1303,7 @@ function renderBacktest() {
       <tr>
         <td>
           <strong style="color: #fff;">${r.home_team} vs ${r.away_team}</strong>
-          ${r.hazard_warning ? `<div style="font-size: 11px; color: var(--accent-amber); margin-top: 2px;">⚠️ ${r.hazard_warning}</div>` : ''}
+          ${r.hazard_warning ? `<div style="font-size: 11px; color: var(--accent-amber); margin-top: 2px;">${r.hazard_warning}</div>` : ''}
         </td>
         <td><span class="pill-league">${sportLabel}</span></td>
         <td>${gradeBadge} <div style="font-size: 12px; color: #fff; margin-top: 3px;">${r.outcome_name}</div></td>
@@ -1327,6 +1315,209 @@ function renderBacktest() {
         <td class="tabular-nums">${pnlDisplay}</td>
       </tr>
     `;
+  }).join('');
+}
+
+const TIER_RANKS = { free: 0, tier1: 1, tier2: 2, tier3: 3 };
+
+function currentTierRank() {
+  return TIER_RANKS[state.currentTier || 'free'] ?? 0;
+}
+
+function renderTicker() {
+  const track = document.getElementById('ticker-track');
+  const wrap = document.getElementById('market-ticker');
+  if (!track) return;
+  const matches = (state.forecast && state.forecast.matches) || [];
+  if (!matches.length) {
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  if (wrap) wrap.style.display = '';
+
+  const items = matches.slice(0, 14).map((m) => {
+    const probs = [m.model.p_home, m.model.p_draw, m.model.p_away];
+    const topProb = m.market && m.market.p_top != null ? m.market.p_top : Math.max(...probs);
+    let steam = '';
+    if (m.movement) {
+      const dir = m.movement.direction;
+      const cls = dir === 'steam_in' ? 'steam' : dir === 'drift_out' ? 'drift' : 'flat';
+      const label = dir === 'steam_in' ? 'Steam' : dir === 'drift_out' ? 'Drift' : 'Flat';
+      steam = `<span class="tk-steam ${cls}">${label}</span>`;
+    }
+    return `<span class="ticker-item"><span class="tk-home">${m.home}</span><span class="tk-hyphen">vs</span><span class="tk-home">${m.away}</span><span class="tk-prob">${(topProb * 100).toFixed(0)}%</span>${steam}</span>`;
+  }).join('');
+
+  track.innerHTML = items + items;
+}
+
+function renderForecastBoard() {
+  const board = document.getElementById('forecast-board');
+  if (!board) return;
+  const badge = document.getElementById('forecast-count-badge');
+  if (badge) badge.textContent = state.forecast && state.forecast.count ? ` (${state.forecast.count})` : '';
+
+  if (!state.forecast || !state.forecast.matches || !state.forecast.matches.length) {
+    board.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align:center; padding:48px; color: var(--text-secondary);">
+        No forecast board yet.
+        <div style="font-size:12px; color: var(--text-muted); margin-top:8px;">
+          Run <code>python -m lisa export-forecast</code> to generate
+          <code>web/data/forecast.json</code> and <code>web/data/tiers.json</code>.
+        </div>
+      </div>`;
+    return;
+  }
+
+  const all = state.forecast.matches.slice();
+  const topPick = all.find((m) => m.is_top_pick || m.match_id === state.forecast.top_pick) || null;
+  const rows = all.filter((m) => m !== topPick);
+  rows.sort((a, b) => {
+    if (a.marquee !== b.marquee) return a.marquee ? -1 : 1;
+    return (a.commence_at || '').localeCompare(b.commence_at || '');
+  });
+
+  const koLabel = (m) => `KO ${formatKo(m.commence_at)}`;
+
+  const heroHtml = topPick ? (() => {
+    const opts = [
+      { label: topPick.home, p: topPick.model.p_home },
+      { label: 'Draw', p: topPick.model.p_draw },
+      { label: topPick.away, p: topPick.model.p_away },
+    ].sort((a, b) => b.p - a.p);
+    return `
+      <div class="fc-hero">
+        <div>
+          <div class="fc-hero-label">Pick of the Day</div>
+          <div class="fc-hero-teams">${topPick.home} <span class="vs">vs</span> ${topPick.away}</div>
+          <div class="fc-hero-meta">${String(topPick.league || '').replace(/_/g, ' ')} &middot; ${koLabel(topPick)}</div>
+        </div>
+        <div class="fc-hero-lean">
+          <div class="lean-lbl">Model lean</div>
+          <div class="lean-val">${opts[0].label}</div>
+          <div class="fc-hero-meta">${(opts[0].p * 100).toFixed(0)}% confidence${topPick.market ? ` &middot; market ${(topPick.market.p_top * 100).toFixed(0)}%` : ''}</div>
+        </div>
+      </div>`;
+  })() : '';
+
+  const unlockStrip = `
+    <div class="fc-unlock-strip">
+      <div class="unlock-text">
+        <b>${state.forecast.count}</b> fixtures forecast today, free to browse.
+        Full micro markets, top pick and steam radar unlock on Tier 1 and Tier 2.
+      </div>
+      <div class="unlock-actions">
+        <button type="button" class="btn-upgrade-card" onclick="window.openAuthModal ? window.openAuthModal('signup','tier1') : window.setTier('tier1')">Unlock Tier 1</button>
+        <button type="button" class="btn-upgrade-glow" onclick="window.openAuthModal ? window.openAuthModal('signup','tier2') : window.setTier('tier2')">Go Tier 2</button>
+      </div>
+    </div>`;
+
+  const cards = rows.map((m) => {
+    const tags = [];
+    if (m.marquee) tags.push(`<span class="fc-tag popular">Popular</span>`);
+    if (m.movement) {
+      const dir = m.movement.direction;
+      const title = `closing/opening ratio ${m.movement.ratio}`;
+      if (dir === 'steam_in') tags.push(`<span class="fc-tag steam" title="${title}">Steam in</span>`);
+      else if (dir === 'drift_out') tags.push(`<span class="fc-tag drift" title="${title}">Drift out</span>`);
+      else tags.push(`<span class="fc-tag flat" title="${title}">Flat</span>`);
+    }
+    tags.push(`<span class="fc-tag league">${String(m.league || '').replace(/_/g, ' ')}</span>`);
+
+    const ph = (m.model.p_home * 100), pd = (m.model.p_draw * 100), pa = (m.model.p_away * 100);
+    const marketLine = m.market
+      ? `Consensus <b>${m.market.top_outcome}</b> at <b>${(m.market.p_top * 100).toFixed(0)}%</b> from ${m.market.n_books} books`
+      : 'No full-book consensus, model only';
+
+    const u = m.uncertainty || { level: 'low', reasons: [] };
+    const uLabel = u.level === 'high' ? 'High uncertainty' : u.level === 'medium' ? 'Medium uncertainty' : 'Low uncertainty';
+
+    const micro = m.micro || {};
+    const scoreTxt = (micro.most_likely_scores || []).slice(0, 3)
+      .map((s) => `${s.home_goals}-${s.away_goals} ${(s.p * 100).toFixed(0)}%`).join('  ·  ') || '-';
+
+    return `
+      <article class="fc-card">
+        <div class="fc-topline">
+          <div class="fc-tags">${tags.join('')}</div>
+          <span class="fc-ko">${koLabel(m)}</span>
+        </div>
+        <div>
+          <div class="fc-teams">${m.home}<span class="vs">vs</span>${m.away}</div>
+          <div class="fc-market-line">${marketLine}</div>
+        </div>
+        <div class="fc-prob-bar">
+          <div class="fc-prob-part" style="width:${ph}%; background:var(--brand-500);" title="Home ${ph.toFixed(1)}%"></div>
+          <div class="fc-prob-part" style="width:${pd}%; background:var(--text-muted);" title="Draw ${pd.toFixed(1)}%"></div>
+          <div class="fc-prob-part" style="width:${pa}%; background:var(--accent-gold);" title="Away ${pa.toFixed(1)}%"></div>
+        </div>
+        <div class="fc-prob-legend">
+          <span>H ${ph.toFixed(0)}%</span><span>D ${pd.toFixed(0)}%</span><span>A ${pa.toFixed(0)}%</span>
+        </div>
+        <div class="fc-uncertainty ${u.level}">
+          <span class="u-badge">${uLabel}</span>
+          <span class="u-reasons">${u.reasons.length ? u.reasons.map((r) => r.label).join('  ·  ') : 'Books and model aligned, clean signal.'}</span>
+        </div>
+        <details class="fc-details">
+          <summary>Goals and scorelines</summary>
+          <div class="fc-micro">
+            <span class="fc-micro-chip"><span class="chip-lbl">BTTS</span>${micro.p_btts != null ? (micro.p_btts * 100).toFixed(0) + '%' : 'n/a'}</span>
+            <span class="fc-micro-chip"><span class="chip-lbl">Over 2.5</span>${micro.p_over_2_5 != null ? (micro.p_over_2_5 * 100).toFixed(0) + '%' : 'n/a'}</span>
+            <span class="fc-micro-chip"><span class="chip-lbl">xG</span>${micro.expected_goals_home ?? '-'}-${micro.expected_goals_away ?? '-'}</span>
+            <span class="fc-micro-chip score">Most likely ${scoreTxt}</span>
+          </div>
+        </details>
+      </article>`;
+  }).join('');
+
+  board.innerHTML = heroHtml + unlockStrip + cards;
+}
+
+function renderTierMatrix() {
+  const tbody = document.getElementById('tier-matrix-body');
+  if (!tbody) return;
+  if (!state.tierCatalog || !state.tierCatalog.features || !state.tierCatalog.features.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">
+      Run <code>python -m lisa export-forecast</code> to populate this comparison.</td></tr>`;
+    return;
+  }
+
+  const order = ['free', 'tier1', 'tier2', 'tier3'];
+  const CAT = {
+    bulletin: '#89f7fe', micro_pack: '#7dd3fc', top_pick: '#fbbf24', traps: '#fbbf24',
+    booking_codes: '#94a3b8', diamond_picks: '#f472b6', ah_ou_picks: '#2dd4bf',
+    steam_radar: '#38bdf8', parlay: '#a78bfa', clv_stats: '#34d399',
+    api_feed: '#fbbf24', portfolio: '#a78bfa', arbitrage_stream: '#38bdf8', early_bird: '#fbbf24'
+  };
+
+  tbody.innerHTML = state.tierCatalog.features.map((f) => {
+    const grantRank = TIER_RANKS[f.grant] ?? 5;
+    const cells = order.map((t) => {
+      const on = TIER_RANKS[t] >= grantRank;
+      return `<td class="matrix-cell">${on ? `<span class="matrix-provided">Yes</span>` : `<span class="matrix-denied">-</span>`}</td>`;
+    }).join('');
+
+    const entries = Object.entries(f.reveal_minutes || {});
+    let reveal = '-';
+    if (entries.length) {
+      entries.sort((a, b) => b[1] - a[1]);
+      const best = entries[0];
+      reveal = best[1] > 0 ? `${best[1]}m pre-KO${grantRank >= 2 ? ' by ' + best[0].toUpperCase() : ''}` : 'Instant';
+    }
+
+    return `
+      <tr onclick="window.openAuthModal ? window.openAuthModal('signup','${f.grant}') : window.setTier('${f.grant}')">
+        <td class="matrix-feature-cell">
+          <div class="matrix-feature-name">
+            <span class="matrix-feature-dot" style="background:${CAT[f.key] || '#64748b'};"></span>
+            ${f.label}
+          </div>
+          <div class="matrix-feature-blurb">${cleanText(f.blurb)}</div>
+          ${f.upgrade_hint ? `<div class="matrix-feature-hint">Upgrade: ${cleanText(f.upgrade_hint)}</div>` : ''}
+        </td>
+        ${cells}
+        <td class="matrix-reveal">${reveal}</td>
+      </tr>`;
   }).join('');
 }
 
@@ -1373,7 +1564,7 @@ function getOrCreateWebUserId() {
 function onVerificationSuccess() {
   const statusText = document.getElementById('telegram-status-text');
   if (statusText) {
-    statusText.textContent = '✔ Verified! Unblurring picks...';
+    statusText.textContent = 'Verified. Unblurring picks...';
     statusText.style.color = '#10b981';
   }
   state.isTelegramUnlocked = true;
@@ -1405,7 +1596,7 @@ const visualizerScenarios = {
     evDelta: "+2.9% Edge over bookie",
     kellyStake: "2.4% of bankroll",
     verdictType: "diamond",
-    verdictBadge: "💎 HIGH-CONFIDENCE PICK",
+    verdictBadge: "HIGH-CONFIDENCE PICK",
     verdictDesc: "Strong advantage found. Bookmakers set generous odds compared to Oklahoma City's actual chance of winning."
   },
   laliga: {
@@ -1419,7 +1610,7 @@ const visualizerScenarios = {
     evDelta: "+5.6% Edge over bookie",
     kellyStake: "3.1% of bankroll",
     verdictType: "pivot",
-    verdictBadge: "💡 SMART SAFETY PICK",
+    verdictBadge: "SMART SAFETY PICK",
     verdictDesc: "Instead of a risky straight bet, LISA recommends Double Chance to give you an 84.5% safety margin."
   },
   trap: {
@@ -1433,7 +1624,7 @@ const visualizerScenarios = {
     evDelta: "-13.2% Bad Value (Negative Return)",
     kellyStake: "0.0% (Do Not Bet)",
     verdictType: "trap",
-    verdictBadge: "⚠️ TRAP GAME: DO NOT BET",
+    verdictBadge: "TRAP GAME: DO NOT BET",
     verdictDesc: "Bookmakers have overpriced Arsenal due to public hype. The risk far outweighs the reward. LISA advises passing."
   }
 };
@@ -1630,7 +1821,7 @@ function setupEventListeners() {
 
       // STRICT PRODUCTION REJECTION: Do NOT unlock without verified backend proof!
       if (statusText) {
-        statusText.textContent = '❌ Not verified! Tap START in @XpredictPremiumBot first.';
+        statusText.textContent = 'Not verified. Tap START in @XpredictPremiumBot first.';
         statusText.style.color = '#ef4444';
       }
       const statusBox = document.getElementById('telegram-verify-status');
@@ -1647,8 +1838,7 @@ export function showToast(message, type = 'info') {
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = `lisa-toast ${type}`;
-  const icon = type === 'success' ? '✅' : type === 'error' ? '⚠️' : 'ℹ️';
-  toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+  toast.innerHTML = `<span>${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
@@ -1742,7 +1932,7 @@ function setupAuthUI() {
       const input = document.getElementById(targetId);
       if (input) {
         input.type = input.type === 'password' ? 'text' : 'password';
-        btn.textContent = input.type === 'password' ? '👁️' : '🙈';
+        btn.textContent = input.type === 'password' ? 'Show' : 'Hide';
       }
     });
   });
@@ -1997,7 +2187,7 @@ window.selectBookmakerForPick = function(matchId, bookId) {
   if (tag) tag.textContent = `${book.name}:`;
   const val = document.getElementById(`pill-code-val-${matchId}`);
   if (val) {
-    val.textContent = isDirectLinkOnly ? '🔗 Direct Slip (No code needed)' : code;
+    val.textContent = isDirectLinkOnly ? 'Direct slip, no code needed' : code;
     val.classList.toggle('link-mode', isDirectLinkOnly);
   }
 
@@ -2008,7 +2198,6 @@ window.selectBookmakerForPick = function(matchId, bookId) {
     copyBtn.onclick = isDirectLinkOnly ? () => window.open(link, '_blank', 'noopener,noreferrer') : () => window.copyBookingCode(matchId);
     copyBtn.title = isDirectLinkOnly ? `Open selection on ${book.name}` : `Copy ${book.name} code to clipboard`;
     copyBtn.innerHTML = `
-      <span class="copy-icon">${isDirectLinkOnly ? '↗' : '📋'}</span>
       <span class="copy-label">${isDirectLinkOnly ? 'Open' : 'Copy'}</span>
     `;
   }
@@ -2023,7 +2212,7 @@ window.selectBookmakerForPick = function(matchId, bookId) {
   // Update helper
   const helper = document.getElementById(`helper-${matchId}`);
   if (helper) {
-    helper.innerHTML = `<span>💡 ${book.tip}</span>`;
+    helper.innerHTML = `<span>${book.tip}</span>`;
   }
 };
 
@@ -2036,7 +2225,7 @@ window.copyBookingCode = function(matchId) {
 
   if (book.hasBookingCode === false) {
     window.open(link, '_blank', 'noopener,noreferrer');
-    showToast(`↗ Opening selection on ${book.name}...`, 'info');
+    showToast(`Opening selection on ${book.name}...`, 'info');
     return;
   }
 
@@ -2047,7 +2236,7 @@ window.copyBookingCode = function(matchId) {
   if (btn) {
     const origHtml = btn.innerHTML;
     btn.classList.add('copied');
-    btn.innerHTML = `<span class="copy-icon">✓</span><span class="copy-label">Copied!</span>`;
+    btn.innerHTML = `<span class="copy-label">Copied!</span>`;
     setTimeout(() => {
       btn.classList.remove('copied');
       btn.innerHTML = origHtml;
@@ -2060,7 +2249,7 @@ window.copyBookingCode = function(matchId) {
     setTimeout(() => pill.classList.remove('pulse-highlight'), 600);
   }
 
-  showToast(`✓ Copied ${book.name} code: ${code}`, 'success');
+  showToast(`Copied ${book.name} code: ${code}`, 'success');
 };
 
 window.selectAccuBookmaker = function(bookId) {
@@ -2074,7 +2263,7 @@ window.copyAccumulatorCode = function() {
 
   if (currentBook.hasBookingCode === false) {
     window.open(currentBook.url, '_blank', 'noopener,noreferrer');
-    showToast(`↗ Opening 5-Game Parlay selections on ${currentBook.name}...`, 'info');
+    showToast(`Opening 5-Game Parlay selections on ${currentBook.name}...`, 'info');
     return;
   }
 
@@ -2096,14 +2285,14 @@ window.copyAccumulatorCode = function() {
   if (btn) {
     const origHtml = btn.innerHTML;
     btn.classList.add('copied');
-    btn.innerHTML = `<span>✓</span> 5-Game Slip Copied!`;
+    btn.innerHTML = `5-Game Slip Copied!`;
     setTimeout(() => {
       btn.classList.remove('copied');
       btn.innerHTML = origHtml;
     }, 2500);
   }
 
-  showToast(`✓ Copied 5-Game Slip Code for ${currentBook.name}: ${accuCode}`, 'success');
+  showToast(`Copied 5-Game Slip Code for ${currentBook.name}: ${accuCode}`, 'success');
 };
 
 // Immediate or DOM-ready bootstrap (prevents event listener race condition)
