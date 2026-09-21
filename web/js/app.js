@@ -12,7 +12,7 @@ let state = {
   activeGradeFilter: 'all',
   activeCategoryFilter: 'all',
   activeSportFilter: 'all',
-  activeTab: 'picks',
+  activeTab: 'overview',
   currentTier: localStorage.getItem('lisa_tier') || 'free',
   isTelegramUnlocked: localStorage.getItem('lisa_telegram_unlocked') === 'true',
 };
@@ -120,11 +120,8 @@ function renderTierControls() {
       : 'Displaying Match #1 completely free. Matches #2 & #3 unlock via Telegram. Matches #4–#12 locked.';
     if (ctaBox) {
       ctaBox.innerHTML = `
-        <button class="btn-upgrade-glow" onclick="window.setTier('tier2')">
+        <button class="btn-upgrade-glow" onclick="window.switchTab('overview')">
           ⚡ Upgrade to Tier 2 ($49/mo)
-        </button>
-        <button class="btn-secondary" style="font-size: 11px; padding: 6px 12px; margin-left: 8px; border-color: rgba(239,68,68,0.4); color: #f87171;" onclick="window.relockTelegram()" title="Re-lock Matches #2 & #3 to test the join Telegram flow">
-          🔒 Re-Lock Matches #2 & #3 (Test Flow)
         </button>
       `;
     }
@@ -141,26 +138,26 @@ function renderTierControls() {
       `;
     }
   } else if (state.currentTier === 'tier2') {
-    badgeEl.textContent = 'TIER 2 PRO ($49/MO)';
+    badgeEl.textContent = 'TIER 2 ALL-ACCESS ($49/MO)';
     badgeEl.style.color = 'var(--accent-cyan)';
     badgeEl.style.borderColor = 'rgba(6, 182, 212, 0.4)';
-    textEl.innerHTML = 'All 12 daily consensus picks unlocked with 1-click execution slips and Fractional Kelly sizing.';
+    textEl.innerHTML = 'All 12 daily match predictions unlocked with smart safety picks and recommended bet sizes.';
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" style="background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); color: #07090e;" onclick="window.setTier('tier3')">
-          👑 Explore Tier 3 VIP Alpha
+          👑 Explore Tier 3 VIP Syndicate
         </button>
       `;
     }
   } else if (state.currentTier === 'tier3') {
-    badgeEl.textContent = 'TIER 3 VIP ALPHA ($249/MO)';
+    badgeEl.textContent = 'TIER 3 VIP SYNDICATE ($149/MO)';
     badgeEl.style.color = 'var(--accent-gold)';
     badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.5)';
-    textEl.innerHTML = 'Full Syndicate Access: 12 consensus picks, Double-Poisson micro-bet matrices, and Early Steam Radar active.';
+    textEl.innerHTML = 'Full VIP Access: All 12 predictions, early line movement alerts, and deep match analysis.';
     if (ctaBox) {
       ctaBox.innerHTML = `
         <span style="font-size: 12px; font-weight: 700; color: var(--accent-gold); padding: 6px 14px; background: rgba(245, 158, 11, 0.15); border-radius: var(--radius-pill); border: 1px solid rgba(245, 158, 11, 0.3);">
-          ✔ Active Institutional Seat
+          ✔ Active VIP Member
         </span>
       `;
     }
@@ -842,9 +839,10 @@ function renderBacktest() {
 }
 
 function switchTab(viewName) {
-  const tabs = document.querySelectorAll('.tab-btn');
+  const tabs = document.querySelectorAll('.tab-btn, .header-nav-link');
   tabs.forEach(t => {
-    if (t.getAttribute('data-view') === `view-${viewName}`) {
+    const target = t.getAttribute('data-view') || '';
+    if (target === `view-${viewName}` || target === viewName) {
       t.classList.add('active');
     } else {
       t.classList.remove('active');
@@ -861,10 +859,13 @@ function switchTab(viewName) {
   });
 
   state.activeTab = viewName;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+
   if (viewName === 'calibration' && state.data && state.data.calibration) {
     setTimeout(renderCalibration, 50);
   }
 }
+window.switchTab = switchTab;
 
 let verifyPollingTimer = null;
 
@@ -897,15 +898,96 @@ window.relockTelegram = function() {
   state.isTelegramUnlocked = false;
   localStorage.setItem('lisa_tier', 'free');
   localStorage.removeItem('lisa_telegram_unlocked');
-  // Generate fresh user token for testing
-  const newUid = 'usr_' + Math.random().toString(36).substring(2, 9);
-  localStorage.setItem('lisa_web_user_id', newUid);
-  renderTierControls();
-  renderPicks();
-  const statusText = document.getElementById('telegram-status-text');
-  if (statusText) {
-    statusText.textContent = 'Waiting for Telegram /start...';
-    statusText.style.color = 'var(--accent-gold)';
+};
+
+// Interactive Model Inference Scenarios
+const visualizerScenarios = {
+  nba: {
+    matchName: "Oklahoma City Thunder vs Washington Wizards",
+    league: "NBA · Game Winner (Moneyline)",
+    quotes: "Bet365 1.17 · Pinnacle 1.16 · DraftKings 1.15",
+    overround: "4.8% hidden bookie margin",
+    shinZ: "Strong backing on the favorite",
+    probTrue: "88.7%",
+    fairPrice: "1.13 or better",
+    evDelta: "+2.9% Edge over bookie",
+    kellyStake: "2.4% of bankroll",
+    verdictType: "diamond",
+    verdictBadge: "💎 HIGH-CONFIDENCE PICK",
+    verdictDesc: "Strong advantage found. Bookmakers set generous odds compared to Oklahoma City's actual chance of winning."
+  },
+  laliga: {
+    matchName: "FC Barcelona vs Getafe CF",
+    league: "La Liga · Smart Safety Pick (Barcelona or Draw)",
+    quotes: "Bet365 1.24 · Pinnacle 1.25 · DraftKings 1.26",
+    overround: "5.2% hidden bookie margin",
+    shinZ: "High-probability safety option",
+    probTrue: "84.5%",
+    fairPrice: "1.18 or better",
+    evDelta: "+5.6% Edge over bookie",
+    kellyStake: "3.1% of bankroll",
+    verdictType: "pivot",
+    verdictBadge: "💡 SMART SAFETY PICK",
+    verdictDesc: "Instead of a risky straight bet, LISA recommends Double Chance to give you an 84.5% safety margin."
+  },
+  trap: {
+    matchName: "Arsenal FC vs Chelsea FC",
+    league: "Premier League · Trap Game (Do Not Bet)",
+    quotes: "Bet365 1.40 · Pinnacle 1.44 · DraftKings 1.42",
+    overround: "6.5% high fee · Coin-flip trap",
+    shinZ: "Dangerous public hype detected",
+    probTrue: "61.2%",
+    fairPrice: "1.63 or better",
+    evDelta: "-13.2% Bad Value (Negative Return)",
+    kellyStake: "0.0% (Do Not Bet)",
+    verdictType: "trap",
+    verdictBadge: "⚠️ TRAP GAME: DO NOT BET",
+    verdictDesc: "Bookmakers have overpriced Arsenal due to public hype. The risk far outweighs the reward. LISA advises passing."
+  }
+};
+
+window.switchVisualizerScenario = function(id) {
+  const s = visualizerScenarios[id];
+  if (!s) return;
+
+  document.querySelectorAll('.visualizer-scenario-btn').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-scenario') === id);
+  });
+
+  const mName = document.getElementById('vis-match-name');
+  const mLeague = document.getElementById('vis-league');
+  const mQuotes = document.getElementById('vis-quotes');
+  const mOverround = document.getElementById('vis-overround');
+  const mShinZ = document.getElementById('vis-shin-z');
+  const mProbTrue = document.getElementById('vis-prob-true');
+  const mFairPrice = document.getElementById('vis-fair-price');
+  const mEvDelta = document.getElementById('vis-ev-delta');
+  const mKellyStake = document.getElementById('vis-kelly-stake');
+  const mVerdictBar = document.getElementById('vis-verdict-bar');
+  const mVerdictBadge = document.getElementById('vis-verdict-badge');
+  const mVerdictDesc = document.getElementById('vis-verdict-desc');
+
+  if (mName) mName.textContent = s.matchName;
+  if (mLeague) mLeague.textContent = s.league;
+  if (mQuotes) mQuotes.textContent = s.quotes;
+  if (mOverround) mOverround.textContent = s.overround;
+  if (mShinZ) mShinZ.textContent = s.shinZ;
+  if (mProbTrue) mProbTrue.textContent = s.probTrue;
+  if (mFairPrice) mFairPrice.textContent = s.fairPrice;
+  if (mEvDelta) mEvDelta.textContent = s.evDelta;
+  if (mKellyStake) mKellyStake.textContent = s.kellyStake;
+  if (mVerdictBadge) mVerdictBadge.textContent = s.verdictBadge;
+  if (mVerdictDesc) mVerdictDesc.textContent = s.verdictDesc;
+
+  if (mVerdictBar) {
+    mVerdictBar.className = s.verdictType === 'trap' ? 'pipeline-verdict-bar trap' : 'pipeline-verdict-bar';
+    if (s.verdictType === 'trap') {
+      mVerdictBadge.style.color = '#f87171';
+    } else if (s.verdictType === 'pivot') {
+      mVerdictBadge.style.color = '#f59e0b';
+    } else {
+      mVerdictBadge.style.color = '#06b6d4';
+    }
   }
 };
 
@@ -1018,17 +1100,6 @@ function setupEventListeners() {
     });
   });
 
-  // Tier switcher pills
-  document.querySelectorAll('.tier-pill-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tier = btn.getAttribute('data-tier');
-      if (tier === 'free' && state.currentTier === 'free') {
-        window.relockTelegram();
-        return;
-      }
-      window.setTier(tier);
-    });
-  });
 
   // Telegram modal close
   const closeBtn = document.getElementById('modal-close-btn');
@@ -1079,45 +1150,320 @@ function setupEventListeners() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  setupEventListeners();
-  initCalculator();
-  loadData().then(async () => {
-    const uid = getOrCreateWebUserId();
+export function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `lisa-toast ${type}`;
+  const icon = type === 'success' ? '✅' : type === 'error' ? '⚠️' : 'ℹ️';
+  toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(10px) scale(0.95)';
+    setTimeout(() => toast.remove(), 250);
+  }, 4000);
+}
 
-    // Production Server Verification Check (Backend is the Single Source of Truth)
+function setupAuthUI() {
+  const modal = document.getElementById('auth-modal');
+  const closeBtn = document.getElementById('auth-modal-close');
+  const btnSignin = document.getElementById('btn-header-signin');
+  const btnSignup = document.getElementById('btn-header-signup');
+  const tabSignin = document.getElementById('tab-btn-signin');
+  const tabSignup = document.getElementById('tab-btn-signup');
+  const formSignin = document.getElementById('form-signin');
+  const formSignup = document.getElementById('form-signup');
+  const errorBox = document.getElementById('auth-error-box');
+  const userPill = document.getElementById('user-profile-pill');
+  const dropdown = document.getElementById('user-dropdown-menu');
+  const btnLogout = document.getElementById('btn-header-logout');
+
+  function openAuthModal(tab = 'signin', defaultTier = 'free') {
+    const m = document.getElementById('auth-modal');
+    if (!m) return;
+    const eb = document.getElementById('auth-error-box');
+    if (eb) {
+      eb.textContent = '';
+      eb.classList.remove('show');
+    }
+    m.classList.add('show');
+    switchAuthTab(tab);
+    if (defaultTier && tab === 'signup') {
+      const chip = document.querySelector(`.auth-tier-chip[data-tier="${defaultTier}"]`);
+      if (chip) chip.click();
+    }
+  }
+
+  function closeAuthModal() {
+    const m = document.getElementById('auth-modal');
+    if (m) m.classList.remove('show');
+  }
+
+  function switchAuthTab(tab) {
+    const tIn = document.getElementById('tab-btn-signin');
+    const tUp = document.getElementById('tab-btn-signup');
+    const fIn = document.getElementById('form-signin');
+    const fUp = document.getElementById('form-signup');
+    const sub = document.getElementById('auth-modal-subtitle');
+
+    if (tab === 'signin') {
+      tIn?.classList.add('active');
+      tUp?.classList.remove('active');
+      if (fIn) fIn.style.display = 'block';
+      if (fUp) fUp.style.display = 'none';
+      if (sub) sub.textContent = 'Sign in to access your saved tier and mathematical feeds';
+    } else {
+      tUp?.classList.add('active');
+      tIn?.classList.remove('active');
+      if (fUp) fUp.style.display = 'block';
+      if (fIn) fIn.style.display = 'none';
+      if (sub) sub.textContent = 'Create an account to track performance and unlock predictive alpha';
+    }
+  }
+
+  // Globally expose for immediate inline onclick safety
+  window.openAuthModal = openAuthModal;
+  window.closeAuthModal = closeAuthModal;
+  window.switchAuthTab = switchAuthTab;
+
+  btnSignin?.addEventListener('click', (e) => {
+    e.preventDefault();
+    openAuthModal('signin');
+  });
+  btnSignup?.addEventListener('click', (e) => {
+    e.preventDefault();
+    openAuthModal('signup');
+  });
+  closeBtn?.addEventListener('click', closeAuthModal);
+  tabSignin?.addEventListener('click', () => switchAuthTab('signin'));
+  tabSignup?.addEventListener('click', () => switchAuthTab('signup'));
+
+  modal?.addEventListener('click', (e) => {
+    if (e.target === modal) closeAuthModal();
+  });
+
+  // Toggle password visibility
+  document.querySelectorAll('.auth-toggle-pwd').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.getAttribute('data-target');
+      const input = document.getElementById(targetId);
+      if (input) {
+        input.type = input.type === 'password' ? 'text' : 'password';
+        btn.textContent = input.type === 'password' ? '👁️' : '🙈';
+      }
+    });
+  });
+
+  // Tier chip selection in signup
+  const tierChips = document.querySelectorAll('.auth-tier-chip');
+  let selectedSignupTier = 'free';
+  tierChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      tierChips.forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      selectedSignupTier = chip.getAttribute('data-tier') || 'free';
+    });
+  });
+
+  // Signin form submit
+  formSignin?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('signin-email')?.value.trim();
+    const password = document.getElementById('signin-password')?.value;
+    const submitBtn = document.getElementById('btn-submit-signin');
+    if (errorBox) errorBox.classList.remove('show');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span>Verifying...</span>';
+    }
+
     try {
-      const resp = await fetch(`/api/verify-status?user_id=${uid}`);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.verified) {
-          state.isTelegramUnlocked = true;
-          localStorage.setItem('lisa_telegram_unlocked', 'true');
-        } else {
+      const user = await auth.signin(email, password);
+      closeAuthModal();
+      showToast(`Welcome back, ${user.display_name || user.email}!`, 'success');
+    } catch (err) {
+      if (errorBox) {
+        errorBox.textContent = err.message || 'Failed to sign in. Check email and password.';
+        errorBox.classList.add('show');
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span>Sign In to Terminal</span>';
+      }
+    }
+  });
+
+  // Signup form submit
+  formSignup?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('signup-name')?.value.trim();
+    const email = document.getElementById('signup-email')?.value.trim();
+    const password = document.getElementById('signup-password')?.value;
+    const submitBtn = document.getElementById('btn-submit-signup');
+    if (errorBox) errorBox.classList.remove('show');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span>Creating Account...</span>';
+    }
+
+    try {
+      const user = await auth.signup(email, password, name, selectedSignupTier);
+      closeAuthModal();
+      showToast(`Account created successfully! Welcome to LISA.`, 'success');
+    } catch (err) {
+      if (errorBox) {
+        errorBox.textContent = err.message || 'Failed to create account.';
+        errorBox.classList.add('show');
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span>Create Free Account</span>';
+      }
+    }
+  });
+
+  // User profile dropdown toggle
+  userPill?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown?.classList.toggle('show');
+    userPill.classList.toggle('active');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#auth-logged-in')) {
+      dropdown?.classList.remove('show');
+      userPill?.classList.remove('active');
+    }
+  });
+
+  // Sign out button
+  btnLogout?.addEventListener('click', async () => {
+    dropdown?.classList.remove('show');
+    userPill?.classList.remove('active');
+    await auth.signout();
+    showToast('Signed out of terminal.', 'info');
+  });
+
+  // Global switchUserTier
+  window.switchUserTier = async (tier) => {
+    dropdown?.classList.remove('show');
+    userPill?.classList.remove('active');
+    if (auth.isAuthenticated()) {
+      await auth.updateTier(tier);
+    }
+    window.setTier(tier);
+    showToast(`Switched active tier to ${tier.toUpperCase()}`, 'success');
+  };
+
+  // Listen for auth state changes
+  auth.onAuthStateChanged((user) => {
+    const loggedOutEl = document.getElementById('auth-logged-out');
+    const loggedInEl = document.getElementById('auth-logged-in');
+    const avatarInit = document.getElementById('user-avatar-initial');
+    const profileName = document.getElementById('user-profile-name');
+    const profileTierTag = document.getElementById('user-profile-tier-tag');
+    const dropName = document.getElementById('dropdown-display-name');
+    const dropEmail = document.getElementById('dropdown-email');
+    const dropTier = document.getElementById('dropdown-tier-label');
+
+    if (user) {
+      if (loggedOutEl) loggedOutEl.style.display = 'none';
+      if (loggedInEl) loggedInEl.style.display = 'block';
+
+      const displayName = user.display_name || user.email.split('@')[0];
+      if (profileName) profileName.textContent = displayName;
+      if (avatarInit) avatarInit.textContent = displayName.charAt(0).toUpperCase();
+      if (dropName) dropName.textContent = displayName;
+      if (dropEmail) dropEmail.textContent = user.email;
+
+      const tierKey = user.tier || 'free';
+      const tierLabels = { free: 'Free Tier', tier1: 'Tier 1 Pro', tier2: 'Tier 2 Syndicate', tier3: 'Tier 3 VIP' };
+      if (dropTier) dropTier.textContent = tierLabels[tierKey] || tierKey.toUpperCase();
+
+      if (profileTierTag) {
+        profileTierTag.textContent = tierKey.toUpperCase();
+        profileTierTag.className = `user-tier-tag tier-tag-${tierKey}`;
+      }
+
+      // If user has higher tier than current, elevate view tier
+      if (user.tier && user.tier !== 'free') {
+        state.currentTier = user.tier;
+        renderTierControls();
+        renderPicks();
+      }
+      if (user.telegram_verified) {
+        state.isTelegramUnlocked = true;
+        localStorage.setItem('lisa_telegram_unlocked', 'true');
+        renderPicks();
+      }
+    } else {
+      if (loggedOutEl) loggedOutEl.style.display = 'flex';
+      if (loggedInEl) loggedInEl.style.display = 'none';
+    }
+  });
+}
+
+function initApp() {
+  setupEventListeners();
+  setupAuthUI();
+  initCalculator();
+
+  // Synchronous route & modal resolution
+  const hash = window.location.hash.replace('#', '');
+  if (hash && document.getElementById(`view-${hash}`)) {
+    switchTab(hash);
+  } else {
+    switchTab('overview');
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('auth') === 'signin' || hash === 'signin') {
+    window.openAuthModal('signin');
+  } else if (params.get('auth') === 'signup' || hash === 'signup') {
+    window.openAuthModal('signup');
+  } else if (params.get('unlock') === 'modal' || hash === 'telegram') {
+    window.openTelegramModal();
+  }
+
+  // Background session rehydration and telemetry loading
+  auth.init().then(() => {
+    loadData().then(async () => {
+      const uid = getOrCreateWebUserId();
+
+      // Production Server Verification Check (Backend is the Single Source of Truth)
+      try {
+        const resp = await fetch(`/api/verify-status?user_id=${uid}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.verified) {
+            state.isTelegramUnlocked = true;
+            localStorage.setItem('lisa_telegram_unlocked', 'true');
+          } else if (!auth.isTelegramVerified()) {
+            state.isTelegramUnlocked = false;
+            localStorage.removeItem('lisa_telegram_unlocked');
+          }
+        }
+      } catch (e) {
+        if (!auth.isTelegramVerified()) {
           state.isTelegramUnlocked = false;
           localStorage.removeItem('lisa_telegram_unlocked');
         }
       }
-    } catch (e) {
-      state.isTelegramUnlocked = false;
-      localStorage.removeItem('lisa_telegram_unlocked');
-    }
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('relock') || params.has('lock') || params.get('unlocked') === 'false') {
-      window.relockTelegram();
-    }
-
-    renderTierControls();
-    renderPicks();
-
-    const hash = window.location.hash.replace('#', '');
-    if (hash && hash !== 'telegram') {
-      switchTab(hash);
-    }
-    if (params.get('unlock') === 'modal' || hash === 'telegram') {
-      setTimeout(window.openTelegramModal, 150);
-    }
+      renderTierControls();
+      renderPicks();
+    });
   });
-});
+}
+
+// Immediate or DOM-ready bootstrap (prevents event listener race condition)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
+
 

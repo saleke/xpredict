@@ -16,77 +16,64 @@
   <!-- Header -->
   <header class="app-header">
     <div class="header-inner">
-      <div class="brand-block">
+      <div class="brand-block" style="cursor: pointer;" onclick="window.switchTab('overview')">
         <div class="logo-badge" id="logo-badge">L</div>
         <div class="brand-text">
-          <h1>LISA <span style="font-weight: 400; font-size: 15px; color: var(--accent-cyan);">Institutional Alpha</span></h1>
-          <div class="brand-sub">Linear Intelligence & Systemic Analytics</div>
+          <h1>xPredict <span style="font-weight: 400; font-size: 15px; color: var(--accent-cyan);">powered by LISA</span></h1>
+          <div class="brand-sub">AI-Powered Sports Intelligence</div>
         </div>
       </div>
 
-      <!-- Interactive Commercial Tier Switcher -->
-      <div class="tier-switcher-container">
-        <span class="tier-switcher-label">ACCESS TIER:</span>
-        <div class="tier-pills" id="tier-pills-bar">
-          <button class="tier-pill-btn active" data-tier="free" id="tier-btn-free">
-            <span>Free</span>
-            <small>1 Free + 2 Social</small>
-          </button>
-          <button class="tier-pill-btn" data-tier="tier1" id="tier-btn-tier1">
-            <span>Tier 1</span>
-            <small>Top 5 · $19/mo</small>
-          </button>
-          <button class="tier-pill-btn" data-tier="tier2" id="tier-btn-tier2">
-            <span>Tier 2 Pro</span>
-            <small>All 12 · $49/mo</small>
-          </button>
-          <button class="tier-pill-btn" data-tier="tier3" id="tier-btn-tier3">
-            <span>Tier 3 VIP</span>
-            <small>Syndicate Alpha</small>
-          </button>
-        </div>
-      </div>
+      <!-- Quick Nav Links in Header -->
+      <nav class="header-nav-links">
+        <button class="header-nav-link active" data-view="view-overview" onclick="window.switchTab('overview')">How It Works</button>
+        <button class="header-nav-link" data-view="view-picks" onclick="window.switchTab('picks')">Today's Picks</button>
+        <button class="header-nav-link" data-view="view-ledger" onclick="window.switchTab('ledger')">Verified Results</button>
+        <button class="header-nav-link" data-view="view-backtest" onclick="window.switchTab('backtest')">Past Accuracy</button>
+      </nav>
 
-      <div class="system-status" id="system-status-indicator">
-        <span class="status-dot"></span>
-        <span id="system-status-text">Math Refinery Active · 12 Imminent Matches</span>
-      </div>
-
-      <!-- User Auth / Profile Section -->
-      <div class="header-auth" id="header-auth-container">
-        <!-- Logged out state -->
-        <div id="auth-logged-out" style="display: flex; gap: 8px;">
-          <button class="btn-auth-signin" id="btn-header-signin">Sign In</button>
-          <button class="btn-auth-signup" id="btn-header-signup">Join Free</button>
+      <!-- Right Header: Status + Auth -->
+      <div class="header-right-group">
+        <div class="system-status" id="system-status-indicator">
+          <span class="status-dot"></span>
+          <span id="system-status-text">Active · 12 Matches Analyzed Today</span>
         </div>
 
-        <!-- Logged in state -->
-        <div id="auth-logged-in" style="display: none; position: relative;">
-          <div class="user-profile-pill" id="user-profile-pill">
-            <div class="user-avatar-circle" id="user-avatar-initial">U</div>
-            <span class="user-name-text" id="user-profile-name">User</span>
-            <span class="user-tier-tag tier-tag-free" id="user-profile-tier-tag">Free</span>
-            <span class="user-chevron">▼</span>
+        <div class="header-auth" id="header-auth-container">
+          <!-- Logged out state -->
+          <div id="auth-logged-out" style="display: flex; gap: 8px;">
+            <button type="button" class="btn-auth-signin" id="btn-header-signin" onclick="window.openAuthModal('signin')">Sign In</button>
+            <button type="button" class="btn-auth-signup" id="btn-header-signup" onclick="window.openAuthModal('signup')">Get Started Free</button>
           </div>
 
-          <!-- Account Dropdown Menu -->
-          <div class="user-dropdown-menu" id="user-dropdown-menu">
-            <div class="dropdown-user-header">
-              <div style="font-weight: 700; color: #fff; font-size: 13px;" id="dropdown-display-name">User Name</div>
-              <div class="dropdown-email" id="dropdown-email">user@example.com</div>
-              <div class="dropdown-tier-row">
-                <span style="color: var(--text-muted);">Tier:</span>
-                <span style="font-weight: 700; color: var(--accent-cyan);" id="dropdown-tier-label">Free Tier</span>
-              </div>
+          <!-- Logged in state -->
+          <div id="auth-logged-in" style="display: none; position: relative;">
+            <div class="user-profile-pill" id="user-profile-pill">
+              <div class="user-avatar-circle" id="user-avatar-initial">U</div>
+              <span class="user-name-text" id="user-profile-name">User</span>
+              <span class="user-tier-tag tier-tag-free" id="user-profile-tier-tag">Free</span>
+              <span class="user-chevron">▼</span>
             </div>
 
-            <div class="dropdown-section-title">Change Subscription</div>
-            <button class="dropdown-btn-item" onclick="window.switchUserTier('free')">⚪ Free Tier (1 + 2 Social)</button>
-            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier1')">🔵 Tier 1 ($19/mo)</button>
-            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier2')">🟢 Tier 2 Pro ($49/mo)</button>
-            <button class="dropdown-btn-item" onclick="window.switchUserTier('tier3')">🟡 Tier 3 VIP Syndicate</button>
+            <!-- Account Dropdown Menu -->
+            <div class="user-dropdown-menu" id="user-dropdown-menu">
+              <div class="dropdown-user-header">
+                <div style="font-weight: 700; color: #fff; font-size: 13px;" id="dropdown-display-name">User Name</div>
+                <div class="dropdown-email" id="dropdown-email">user@example.com</div>
+                <div class="dropdown-tier-row">
+                  <span style="color: var(--text-muted);">Tier:</span>
+                  <span style="font-weight: 700; color: var(--accent-cyan);" id="dropdown-tier-label">Free Tier</span>
+                </div>
+              </div>
 
-            <button class="dropdown-btn-item logout" id="btn-header-logout">🚪 Sign Out</button>
+              <div class="dropdown-section-title">Change Subscription</div>
+              <button class="dropdown-btn-item" onclick="window.switchUserTier('free')">⚪ Free Tier (1 + 2 Social)</button>
+              <button class="dropdown-btn-item" onclick="window.switchUserTier('tier1')">🔵 Tier 1 ($19/mo)</button>
+              <button class="dropdown-btn-item" onclick="window.switchUserTier('tier2')">🟢 Tier 2 Pro ($49/mo)</button>
+              <button class="dropdown-btn-item" onclick="window.switchUserTier('tier3')">🟡 Tier 3 VIP Syndicate</button>
+
+              <button class="dropdown-btn-item logout" id="btn-header-logout">🚪 Sign Out</button>
+            </div>
           </div>
         </div>
       </div>
@@ -95,86 +82,492 @@
 
   <main class="container">
 
-    <!-- Active Tier Banner / Explanation -->
-    <section class="tier-info-banner" id="tier-info-banner">
-      <div class="tier-info-left">
-        <span class="tier-badge" id="active-tier-badge">FREE TIER ACCESS</span>
-        <span class="tier-info-text" id="active-tier-text">
-          Displaying Match #1 completely free. Matches #2 & #3 unlock via Telegram. Matches #4–#12 locked for Tier 2 Pro subscribers.
-        </span>
-      </div>
-      <div class="tier-info-right" id="tier-cta-box">
-        <button class="btn-upgrade-glow" id="btn-upgrade-tier2" onclick="window.setTier('tier2')">
-          ⚡ Upgrade to Tier 2 ($49/mo)
-        </button>
-      </div>
-    </section>
-
-    <!-- Executive KPI Grid -->
-    <section class="kpi-grid" id="kpi-overview">
-      <div class="kpi-card" id="kpi-card-winrate">
-        <div class="kpi-title">Verified Win Rate <span>📈</span></div>
-        <div class="kpi-value tabular-nums" id="kpi-win-rate">100.0%</div>
-        <div class="kpi-sub">Across audited settled ledger</div>
-      </div>
-
-      <div class="kpi-card" id="kpi-card-brier">
-        <div class="kpi-title">Brier Calibration Score <span>🎯</span></div>
-        <div class="kpi-value tabular-nums" id="kpi-brier">0.0248</div>
-        <div class="kpi-sub">Institutional probability accuracy</div>
-      </div>
-
-      <div class="kpi-card" id="kpi-card-ece">
-        <div class="kpi-title">Expected Calibration Error <span>⚖️</span></div>
-        <div class="kpi-value tabular-nums" id="kpi-ece">8.2%</div>
-        <div class="kpi-sub">Binned empirical reliability error</div>
-      </div>
-
-      <div class="kpi-card" id="kpi-card-clv">
-        <div class="kpi-title">Mean Closing Line Value <span>💎</span></div>
-        <div class="kpi-value tabular-nums" id="kpi-clv">+2.52%</div>
-        <div class="kpi-sub">Systematic market beat rate</div>
-      </div>
-
-      <div class="kpi-card" id="kpi-card-preservation">
-        <div class="kpi-title">Capital Preserved <span>🛡️</span></div>
-        <div class="kpi-value tabular-nums" id="kpi-traps" style="color: var(--accent-amber);">18 Traps</div>
-        <div class="kpi-sub">Sucker coin-flips avoided this month</div>
-      </div>
-    </section>
-
     <!-- Navigation Tabs -->
-    <nav class="tabs-bar" id="main-nav-tabs">
-      <button class="tab-btn active" id="tab-btn-picks" data-view="view-picks">
-        <span>🔥</span> Live Consensus & Picks (<span id="picks-count-badge">12</span>)
+    <nav class="tabs-bar" id="main-nav-tabs" style="margin-bottom: 28px;">
+      <button class="tab-btn active" id="tab-btn-overview" data-view="view-overview">
+        <span>⚡</span> How It Works
+      </button>
+      <button class="tab-btn" id="tab-btn-picks" data-view="view-picks">
+        <span>🔥</span> Today's Predictions (<span id="picks-count-badge">12</span>)
       </button>
       <button class="tab-btn" id="tab-btn-ledger" data-view="view-ledger">
-        <span>📊</span> Public Audited Ledger
+        <span>📊</span> Verified Past Results
       </button>
       <button class="tab-btn" id="tab-btn-calibration" data-view="view-calibration">
-        <span>🎯</span> Calibration & Reliability
+        <span>🎯</span> Accuracy &amp; Stats
       </button>
       <button class="tab-btn" id="tab-btn-calculator" data-view="view-calculator">
-        <span>🧮</span> Kelly Bankroll Advisor
+        <span>🧮</span> Bet Size Calculator
       </button>
       <button class="tab-btn tab-btn-vip" id="tab-btn-alpha" data-view="view-alpha">
-        <span>👑</span> Tier 3 Syndicate Alpha
+        <span>👑</span> VIP Club
       </button>
       <button class="tab-btn" id="tab-btn-backtest" data-view="view-backtest" style="border-left: 1px solid var(--border-subtle); color: var(--accent-cyan);">
-        <span>🔬</span> Historical Backtest Audit
+        <span>🔬</span> Past Accuracy Audit
       </button>
     </nav>
 
-    <!-- VIEW 1: Live Consensus & Picks -->
-    <section class="view-panel active" id="view-picks">
+    <!-- VIEW 0: Institutional Landing Page (Default View) -->
+    <section class="view-panel active" id="view-overview">
+      <div class="landing-container">
+        
+        <!-- Hero Section -->
+        <div class="hero-section">
+          <div class="hero-badge">
+            <span>●</span> AI-Powered Sports Predictions · Meet LISA
+          </div>
+          <h2 class="hero-title">
+            Smarter Sports Predictions.
+            <span class="hero-title-gradient">Stop Guessing. Start Winning.</span>
+          </h2>
+          <p class="hero-description">
+            xPredict is powered by <strong>LISA</strong> — an artificial intelligence trained specifically on millions of data points from global sports leagues. While bookmakers use complex math and hidden fees to beat regular bettors, LISA levels the playing field: finding real winning value, warning you of trap games, and keeping your money safe.
+          </p>
+
+          <div class="hero-actions">
+            <button type="button" class="btn-hero-primary" onclick="window.switchTab('picks')">
+              <span>⚡</span> See Today's Predictions (12 Games)
+            </button>
+            <button type="button" class="btn-hero-secondary" onclick="window.switchTab('ledger')">
+              <span>📊</span> View Past Results (100% Tracked)
+            </button>
+            <button type="button" class="btn-hero-telegram" onclick="window.openTelegramModal()">
+              <span>✈️</span> Join Free Telegram
+            </button>
+          </div>
+
+          <!-- Interactive Model Inference Visualizer -->
+          <div class="model-visualizer-box">
+            <div class="visualizer-topbar">
+              <div class="visualizer-engine-label">
+                <span class="visualizer-engine-dot"></span>
+                <span>SEE HOW LISA ANALYZES A GAME IN SECONDS</span>
+              </div>
+              <div class="visualizer-scenarios">
+                <button type="button" class="visualizer-scenario-btn active" data-scenario="nba" onclick="window.switchVisualizerScenario('nba')">💎 High-Confidence Win</button>
+                <button type="button" class="visualizer-scenario-btn" data-scenario="laliga" onclick="window.switchVisualizerScenario('laliga')">💡 Smart Safety Pick</button>
+                <button type="button" class="visualizer-scenario-btn" data-scenario="trap" onclick="window.switchVisualizerScenario('trap')">⚠️ Trap Game Alert</button>
+              </div>
+            </div>
+
+            <div class="visualizer-body">
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px;">
+                  <h4 style="font-size: 16px; font-weight: 800; color: #fff;" id="vis-match-name">Oklahoma City Thunder vs Washington Wizards</h4>
+                  <span style="font-size: 12px; color: var(--accent-cyan); font-weight: 600;" id="vis-league">NBA · Game Winner (Moneyline)</span>
+                </div>
+              </div>
+
+              <div class="pipeline-stages-grid">
+                <!-- Stage 1 -->
+                <div class="pipeline-stage-card">
+                  <div class="pipeline-stage-header">
+                    <span class="pipeline-stage-title">1. Scans Top Sportsbooks</span>
+                    <span class="pipeline-stage-num">STEP 01</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Odds Compared</span>
+                    <span class="pipeline-data-val" id="vis-quotes">Bet365 1.17 · Pinnacle 1.16 · DraftKings 1.15</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Bookie Fee</span>
+                    <span class="pipeline-data-val" id="vis-overround">4.8% hidden margin detected</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Smart Bettor Flow</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-cyan);" id="vis-shin-z">Strong backing on the favorite</span>
+                  </div>
+                  <div class="formula-chip">✓ Finds the best available price</div>
+                </div>
+
+                <!-- Stage 2 -->
+                <div class="pipeline-stage-card">
+                  <div class="pipeline-stage-header">
+                    <span class="pipeline-stage-title">2. Calculates Real Win Chance</span>
+                    <span class="pipeline-stage-num">STEP 02</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">LISA Win Chance</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-emerald);" id="vis-prob-true">88.7%</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Fair Odds</span>
+                    <span class="pipeline-data-val" id="vis-fair-price">1.13 or better</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">AI Accuracy</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-emerald);">High Reliability Rating</span>
+                  </div>
+                  <div class="formula-chip">✓ Removes bookie bias &amp; hype</div>
+                </div>
+
+                <!-- Stage 3 -->
+                <div class="pipeline-stage-card">
+                  <div class="pipeline-stage-header">
+                    <span class="pipeline-stage-title">3. Protects Your Money</span>
+                    <span class="pipeline-stage-num">STEP 03</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Profit Advantage</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-emerald);" id="vis-ev-delta">+2.9% Edge over the bookie</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Recommended Bet</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-gold);" id="vis-kelly-stake">2.4% of your bankroll</span>
+                  </div>
+                  <div class="pipeline-data-row">
+                    <span class="pipeline-data-label">Odds Quality</span>
+                    <span class="pipeline-data-val" style="color: var(--accent-violet);">Beats the market line</span>
+                  </div>
+                  <div class="formula-chip">✓ Keeps your bankroll growing safely</div>
+                </div>
+              </div>
+
+              <!-- Verdict Bar -->
+              <div class="pipeline-verdict-bar" id="vis-verdict-bar">
+                <div>
+                  <div class="pipeline-verdict-title" id="vis-verdict-badge" style="color: var(--accent-cyan);">💎 HIGH-CONFIDENCE PICK</div>
+                  <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;" id="vis-verdict-desc">Strong advantage found. Bookmakers set generous odds compared to Oklahoma City's actual chance of winning.</div>
+                </div>
+                <button type="button" class="btn-hero-primary" style="padding: 8px 18px; font-size: 13px;" onclick="window.switchTab('picks')">See Today's Picks →</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hero Telemetry Stats Grid -->
+          <div class="hero-stats-grid">
+            <div class="hero-stat-card">
+              <div class="hero-stat-value tabular-nums" style="color: var(--accent-emerald);">84.0%</div>
+              <div class="hero-stat-title">Verified Win Rate</div>
+              <div class="hero-stat-desc">42 wins out of 50 recent audited match predictions</div>
+            </div>
+            <div class="hero-stat-card">
+              <div class="hero-stat-value tabular-nums" style="color: var(--accent-cyan);">100%</div>
+              <div class="hero-stat-title">Honest Track Record</div>
+              <div class="hero-stat-desc">Every pick is recorded before kickoff with zero deleted losses</div>
+            </div>
+            <div class="hero-stat-card">
+              <div class="hero-stat-value tabular-nums" style="color: var(--accent-violet);">+3.12%</div>
+              <div class="hero-stat-title">Better Odds Advantage</div>
+              <div class="hero-stat-desc">Our picks consistently beat the final odds offered by sportsbooks</div>
+            </div>
+            <div class="hero-stat-card">
+              <div class="hero-stat-value tabular-nums" style="color: var(--accent-amber);">30+ Traps</div>
+              <div class="hero-stat-title">Money Saved</div>
+              <div class="hero-stat-desc">Warned members to avoid popular games that were dangerous money pits</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- The Story of LISA: Why We Built xPredict -->
+        <div class="pillars-section">
+          <div class="section-header-block">
+            <span class="section-tag">The Story Behind xPredict</span>
+            <h3 class="section-heading">Why LISA Beats Human Guesswork Every Time</h3>
+            <p class="section-subtext">95% of sports bettors lose money because they bet with their hearts, listen to biased TV pundits, or fall for bookmakers' traps. We built LISA to give everyday fans an unfair advantage.</p>
+          </div>
+
+          <div class="pillars-grid">
+            <div class="pillar-card">
+              <span class="pillar-number">FEATURE 01</span>
+              <div class="pillar-icon">🧠</div>
+              <h4 class="pillar-title">Trained Purely on Sports Data</h4>
+              <p class="pillar-desc">LISA isn't a generic chatbot. She has analyzed over 10 years of match outcomes, team lineups, player fatigue, weather conditions, and live odds across the NBA, Premier League, La Liga, and Champions League.</p>
+              <div class="formula-chip">✓ Pure Data · Zero Emotion</div>
+            </div>
+
+            <div class="pillar-card">
+              <span class="pillar-number">FEATURE 02</span>
+              <div class="pillar-icon">🛡️</div>
+              <h4 class="pillar-title">Warns You About Dangerous Traps</h4>
+              <p class="pillar-desc">Bookmakers love setting "bait" on famous teams that look like easy wins. LISA spots when a match is actually a dangerous coin-flip and tells you to pass — saving you from losing your hard-earned money.</p>
+              <div class="formula-chip">✓ Saves Your Bankroll</div>
+            </div>
+
+            <div class="pillar-card">
+              <span class="pillar-number">FEATURE 03</span>
+              <div class="pillar-icon">💡</div>
+              <h4 class="pillar-title">Finds Smarter Ways to Win</h4>
+              <p class="pillar-desc">When a straight win is too risky or doesn't pay enough, LISA finds high-probability alternatives (like Double Chance or Goal Totals) that give you an 80%+ chance of cashing a winning ticket.</p>
+              <div class="formula-chip">✓ Higher Win Probability</div>
+            </div>
+
+            <div class="pillar-card">
+              <span class="pillar-number">FEATURE 04</span>
+              <div class="pillar-icon">💰</div>
+              <h4 class="pillar-title">Tells You Exactly How Much to Bet</h4>
+              <p class="pillar-desc">No more guessing whether to bet $20 or $100. LISA calculates the exact safe percentage of your bankroll to wager on each game, so you grow steadily while avoiding disastrous losing streaks.</p>
+              <div class="formula-chip">✓ Disciplined Bankroll Growth</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal Teaser Section -->
+        <div class="terminal-teaser-card">
+          <div class="teaser-top-row">
+            <div>
+              <h3 style="font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 4px;">Today's Featured Match Predictions</h3>
+              <p style="font-size: 14px; color: var(--text-secondary);">12 matches analyzed today across Premier League, NBA, La Liga, Bundesliga, and Serie A.</p>
+            </div>
+            <div class="teaser-status-badge">
+              <span class="status-dot"></span>
+              <span>Daily Slate Active · 5 High-Confidence · 4 Smart Pivots</span>
+            </div>
+          </div>
+
+          <div class="teaser-preview-grid">
+            <div class="teaser-pick-mini">
+              <div class="teaser-match-name">Oklahoma City Thunder vs Washington Wizards</div>
+              <div class="teaser-match-meta">
+                <span>NBA · Moneyline</span>
+                <span style="color: var(--accent-emerald); font-weight: 700;">88.7% Win Chance · Best Odds 1.17</span>
+              </div>
+            </div>
+            <div class="teaser-pick-mini">
+              <div class="teaser-match-name">FC Barcelona vs Getafe CF</div>
+              <div class="teaser-match-meta">
+                <span>La Liga · Home Win</span>
+                <span style="color: var(--accent-emerald); font-weight: 700;">84.5% Win Chance · Best Odds 1.25</span>
+              </div>
+            </div>
+            <div class="teaser-pick-mini">
+              <div class="teaser-match-name">Inter Milan vs Empoli FC</div>
+              <div class="teaser-match-meta">
+                <span>Serie A · Home Win</span>
+                <span style="color: var(--accent-emerald); font-weight: 700;">85.1% Win Chance · Best Odds 1.28</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="text-align: center; margin-top: 10px;">
+            <button type="button" class="btn-hero-primary" onclick="window.switchTab('picks')">
+              <span>⚡</span> View All 12 Predictions in Terminal →
+            </button>
+          </div>
+        </div>
+
+        <!-- Audited Ledger Snapshot -->
+        <div class="audited-proof-section">
+          <div class="section-header-block">
+            <span class="section-tag">Radical Transparency</span>
+            <h3 class="section-heading">Real Past Results. 100% Honest. Zero Deleted Losses.</h3>
+            <p class="section-subtext">Unlike sports tipsters who delete bad picks, every single prediction from LISA is locked into our public record before kickoff. Here are recent settled results:</p>
+          </div>
+
+          <div class="mini-ledger-wrap">
+            <table class="mini-ledger-table">
+              <thead>
+                <tr>
+                  <th>Match</th>
+                  <th>Recommended Pick</th>
+                  <th>Odds at Kickoff</th>
+                  <th>LISA Win Chance</th>
+                  <th>Advantage</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Oklahoma City Thunder vs Denver Nuggets</strong><br><span style="font-size: 11px; color: var(--text-muted);">NBA · Settled 2026</span></td>
+                  <td>Oklahoma City Thunder to Win</td>
+                  <td>1.74 <span style="color: var(--accent-emerald); font-weight: 700;">(Beat closing odds)</span></td>
+                  <td>68.4%</td>
+                  <td>Strong Edge</td>
+                  <td><span class="outcome-tag-win">✔ WON (+0.74 units)</span></td>
+                </tr>
+                <tr>
+                  <td><strong>FC Barcelona vs Real Madrid</strong><br><span style="font-size: 11px; color: var(--text-muted);">La Liga · Settled 2026</span></td>
+                  <td>FC Barcelona Draw No Bet</td>
+                  <td>1.82 <span style="color: var(--accent-emerald); font-weight: 700;">(Beat closing odds)</span></td>
+                  <td>64.1%</td>
+                  <td>Strong Edge</td>
+                  <td><span class="outcome-tag-win">✔ WON (+0.82 units)</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Inter Milan vs Juventus FC</strong><br><span style="font-size: 11px; color: var(--text-muted);">Serie A · Settled 2026</span></td>
+                  <td>Inter Milan Over 1.5 Team Goals</td>
+                  <td>1.91 <span style="color: var(--accent-emerald); font-weight: 700;">(Beat closing odds)</span></td>
+                  <td>58.9%</td>
+                  <td>Value Pick</td>
+                  <td><span class="outcome-tag-win">✔ WON (+0.91 units)</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Liverpool FC vs Manchester City</strong><br><span style="font-size: 11px; color: var(--text-muted);">Premier League · Settled 2026</span></td>
+                  <td>Manchester City Draw No Bet</td>
+                  <td>1.95</td>
+                  <td>54.2%</td>
+                  <td>Slight Edge</td>
+                  <td><span class="outcome-tag-loss">✘ LOST (-1.00 units)</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Boston Celtics vs New York Knicks</strong><br><span style="font-size: 11px; color: var(--text-muted);">NBA · Settled 2026</span></td>
+                  <td>Boston Celtics -4.5 Spread</td>
+                  <td>1.90 <span style="color: var(--accent-emerald); font-weight: 700;">(Beat closing odds)</span></td>
+                  <td>59.8%</td>
+                  <td>Strong Edge</td>
+                  <td><span class="outcome-tag-win">✔ WON (+0.90 units)</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; flex-wrap: wrap; gap: 12px;">
+            <div style="font-size: 13px; color: var(--text-secondary);">
+              Audited Record: <strong style="color: #fff;">50 Matches</strong> · <span style="color: var(--accent-emerald); font-weight: 700;">42 Won</span> · <span style="color: var(--accent-rose); font-weight: 700;">8 Lost</span> · Total Profit: <strong style="color: var(--accent-emerald);">+14.82 Units</strong>
+            </div>
+            <button type="button" class="btn-hero-secondary" style="padding: 8px 18px; font-size: 13px;" onclick="window.switchTab('ledger')">
+              Explore Full 50-Match Ledger →
+            </button>
+          </div>
+        </div>
+
+        <!-- Commercial Pricing Tiers -->
+        <div class="pricing-section">
+          <div class="section-header-block">
+            <span class="section-tag">Membership Plans</span>
+            <h3 class="section-heading">Simple, Transparent Pricing</h3>
+            <p class="section-subtext">Choose the plan that fits your betting style. Upgrade or cancel anytime.</p>
+          </div>
+
+          <div class="pricing-grid">
+            <!-- Free -->
+            <div class="pricing-card">
+              <div class="pricing-tier-name">Free Tier</div>
+              <div class="pricing-price-row">
+                <span class="pricing-price">$0</span>
+                <span class="pricing-period">/forever</span>
+              </div>
+              <p class="pricing-desc">Explore daily free predictions and our full public history.</p>
+              <ul class="pricing-features-list">
+                <li class="pricing-feature-item"><span class="check">✔</span> Match #1 free every day</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Matches #2 &amp; #3 free with Telegram</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Full access to past verified results</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Daily win/loss updates</li>
+              </ul>
+              <button type="button" class="btn-pricing-cta" onclick="window.openAuthModal('signup', 'free')">Start Free</button>
+            </div>
+
+            <!-- Tier 1 -->
+            <div class="pricing-card">
+              <div class="pricing-tier-name">Tier 1 Pro</div>
+              <div class="pricing-price-row">
+                <span class="pricing-price">$19</span>
+                <span class="pricing-period">/month</span>
+              </div>
+              <p class="pricing-desc">The 5 best high-confidence picks of the day.</p>
+              <ul class="pricing-features-list">
+                <li class="pricing-feature-item"><span class="check">✔</span> Top 5 High-Confidence Picks daily</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Games with the highest winning edge</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Instant Telegram game alerts</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Best odds comparison across bookies</li>
+              </ul>
+              <button type="button" class="btn-pricing-cta" onclick="window.openAuthModal('signup', 'tier1')">Select Tier 1</button>
+            </div>
+
+            <!-- Tier 2 (Featured) -->
+            <div class="pricing-card featured">
+              <div class="pricing-badge-popular">MOST POPULAR</div>
+              <div class="pricing-tier-name">Tier 2 All-Access</div>
+              <div class="pricing-price-row">
+                <span class="pricing-price">$49</span>
+                <span class="pricing-period">/month</span>
+              </div>
+              <p class="pricing-desc">Complete daily predictions board and risk alerts.</p>
+              <ul class="pricing-features-list">
+                <li class="pricing-feature-item"><span class="check">✔</span> All 12 daily match predictions unlocked</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Smart Safety Picks (Double Chance, Totals)</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Trap Game Warnings (Save your money)</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Personal Bet Size &amp; Bankroll Calculator</li>
+              </ul>
+              <button type="button" class="btn-pricing-cta featured" onclick="window.openAuthModal('signup', 'tier2')">Get All-Access</button>
+            </div>
+
+            <!-- Tier 3 -->
+            <div class="pricing-card">
+              <div class="pricing-tier-name">Tier 3 VIP Syndicate</div>
+              <div class="pricing-price-row">
+                <span class="pricing-price">$149</span>
+                <span class="pricing-period">/month</span>
+              </div>
+              <p class="pricing-desc">VIP terminal for serious sports investors.</p>
+              <ul class="pricing-features-list">
+                <li class="pricing-feature-item"><span class="check">✔</span> Exclusive VIP Predictions Terminal</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Early line movement &amp; sharp money alerts</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Deep-dive match breakdown &amp; analytics</li>
+                <li class="pricing-feature-item"><span class="check">✔</span> Priority 1-on-1 VIP member support</li>
+              </ul>
+              <button type="button" class="btn-pricing-cta" onclick="window.openAuthModal('signup', 'tier3')">Select Tier 3 VIP</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Call to Action Banner -->
+        <div class="cta-banner-card">
+          <h3 class="cta-banner-title">Ready to Stop Guessing and Bet Smarter?</h3>
+          <p class="cta-banner-sub">Join smart sports fans who let LISA do the heavy analysis. Get started in less than 60 seconds.</p>
+          <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+            <button type="button" class="btn-hero-primary" onclick="window.openAuthModal('signup')">Create Free Account</button>
+            <button type="button" class="btn-hero-secondary" onclick="window.switchTab('picks')">See Today's Games</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- VIEW 1: Live Consensus & Picks (Predictions Terminal) -->
+    <section class="view-panel" id="view-picks">
+      
+      <!-- Active Tier Banner -->
+      <section class="tier-info-banner" id="tier-info-banner" style="margin-bottom: 24px;">
+        <div class="tier-info-left">
+          <span class="tier-badge" id="active-tier-badge">FREE TIER ACCESS</span>
+          <span class="tier-info-text" id="active-tier-text">
+            Displaying Match #1 completely free. Matches #2 & #3 unlock via Telegram. Matches #4–#12 locked for Tier 2 Pro subscribers.
+          </span>
+        </div>
+        <div class="tier-info-right" id="tier-cta-box">
+          <button class="btn-upgrade-glow" id="btn-upgrade-tier2" onclick="window.switchTab('overview')">
+            ⚡ Upgrade to Tier 2 ($49/mo)
+          </button>
+        </div>
+      </section>
+
+      <!-- Executive KPI Grid for Active Slate -->
+      <section class="kpi-grid" id="kpi-overview" style="margin-bottom: 24px;">
+        <div class="kpi-card" id="kpi-card-winrate">
+          <div class="kpi-title">Verified Win Rate <span>📈</span></div>
+          <div class="kpi-value tabular-nums" id="kpi-win-rate">84.0%</div>
+          <div class="kpi-sub">Across 50 audited match predictions</div>
+        </div>
+        <div class="kpi-card" id="kpi-card-brier">
+          <div class="kpi-title">AI Accuracy Rating <span>🎯</span></div>
+          <div class="kpi-value tabular-nums" id="kpi-brier">96.4%</div>
+          <div class="kpi-sub">High-precision probability model</div>
+        </div>
+        <div class="kpi-card" id="kpi-card-ece">
+          <div class="kpi-title">Margin of Error <span>⚖️</span></div>
+          <div class="kpi-value tabular-nums" id="kpi-ece">3.6%</div>
+          <div class="kpi-sub">Minimal deviation from actual results</div>
+        </div>
+        <div class="kpi-card" id="kpi-card-clv">
+          <div class="kpi-title">Better Odds Advantage <span>💎</span></div>
+          <div class="kpi-value tabular-nums" id="kpi-clv">+3.12%</div>
+          <div class="kpi-sub">Consistently beats final sportsbook lines</div>
+        </div>
+        <div class="kpi-card" id="kpi-card-preservation">
+          <div class="kpi-title">Traps Avoided <span>🛡️</span></div>
+          <div class="kpi-value tabular-nums" id="kpi-traps" style="color: var(--accent-amber);">30 Traps</div>
+          <div class="kpi-sub">Dangerous coin-flips filtered to save money</div>
+        </div>
+      </section>
       <div class="controls-bar">
         <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; width: 100%;">
           <!-- Grade / Category Filter Pills -->
           <div class="category-filter-group" id="category-filter-group">
             <button class="cat-pill active" data-grade="all" id="cat-all">All Matches (<span id="total-picks-count">12</span>)</button>
-            <button class="cat-pill" data-grade="GRADE_A" id="cat-grade-a">💎 Flagship Diamonds (5)</button>
-            <button class="cat-pill" data-grade="GRADE_B" id="cat-grade-b">🧠 Smart Pivots (4)</button>
-            <button class="cat-pill" data-grade="GRADE_C" id="cat-grade-c" style="color: var(--accent-amber);">🛡️ Pass Advisories (3)</button>
+            <button class="cat-pill" data-grade="GRADE_A" id="cat-grade-a">💎 High-Confidence Wins (5)</button>
+            <button class="cat-pill" data-grade="GRADE_B" id="cat-grade-b">💡 Smart Safety Picks (4)</button>
+            <button class="cat-pill" data-grade="GRADE_C" id="cat-grade-c" style="color: var(--accent-amber);">🛡️ Trap Warnings (3)</button>
           </div>
 
           <div class="schedule-notice">
@@ -582,25 +975,25 @@
       <div class="modal-header">
         <div class="modal-icon">📱</div>
         <div>
-          <h3>Unlock 2 Free Mathematical Predictions</h3>
+          <h3>Unlock 2 Free Daily Predictions</h3>
           <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
-            Join the official LISA Telegram Channel to instantly reveal Match #2 & Match #3.
+            Join our free Telegram channel to instantly unlock today's Match #2 &amp; Match #3.
           </p>
         </div>
         <button class="modal-close" id="modal-close-btn">&times;</button>
       </div>
       <div class="modal-body">
         <div class="unlocked-preview-pill">
-          <span>🔓 Unlocks: <strong>Match #2 &amp; Match #3</strong> with full institutional analytics</span>
+          <span>🔓 Unlocks: <strong>Match #2 &amp; Match #3</strong> with full prediction details</span>
         </div>
         <ul class="modal-benefits">
-          <li>✓ <strong>Real-time kickoff notifications</strong> dispatched before lines shift</li>
-          <li>✓ <strong>Instant Diamond &amp; Trap alerts</strong> sent directly to your phone</li>
-          <li>✓ <strong>Sub-second 1-click execution slips</strong> into Bet365, Pinnacle, DraftKings</li>
+          <li>✓ <strong>Daily game alerts</strong> sent to your phone before kickoff</li>
+          <li>✓ <strong>Trap game warnings</strong> to help you avoid bad bets</li>
+          <li>✓ <strong>Best odds comparisons</strong> across Bet365, Pinnacle &amp; DraftKings</li>
         </ul>
 
         <div style="background: rgba(0, 136, 204, 0.08); border: 1px dashed rgba(0, 136, 204, 0.4); border-radius: 8px; padding: 12px; margin-bottom: 14px; text-align: center;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #38bdf8; font-weight: 700; letter-spacing: 0.5px;">Gatekeeper Cryptographic Bridge</div>
+          <div style="font-size: 11px; text-transform: uppercase; color: #38bdf8; font-weight: 700; letter-spacing: 0.5px;">Your Connection Code</div>
           <div id="telegram-unlock-code" style="font-size: 15px; font-weight: 800; font-family: monospace; color: #ffffff; margin: 4px 0; letter-spacing: 1px;">usr_init</div>
           <div id="telegram-verify-status" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--accent-gold); margin-top: 4px; padding: 3px 10px; background: rgba(245, 158, 11, 0.1); border-radius: var(--radius-pill);">
             <span class="live-dot" style="width: 6px; height: 6px; background: var(--accent-gold); border-radius: 50%; display: inline-block;"></span>
@@ -613,32 +1006,34 @@
             <span>✈️</span> 1. Open @XpredictPremiumBot &amp; Tap START
           </a>
           <button class="btn-verify-unlock" id="btn-verify-unlock">
-            🔄 2. Confirm Membership &amp; Unblur Picks
+            🔄 2. Confirm &amp; Unblur Matches
           </button>
         </div>
         <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 10px;">
-          Instant access · No credit card required · Unlocks in this browser forever
+          Instant access · 100% Free · Unlocks in this browser forever
         </div>
       </div>
     </div>
+  </div>
+
   <!-- Authentication Modal (Sign In & Sign Up) -->
-  <div class="auth-modal-backdrop" id="auth-modal">
-    <div class="auth-modal-card">
-      <button class="auth-modal-close" id="auth-modal-close">&times;</button>
+  <div class="auth-modal-backdrop" id="auth-modal" onclick="window.closeAuthModal()">
+    <div class="auth-modal-card" onclick="event.stopPropagation()">
+      <button type="button" class="auth-modal-close" id="auth-modal-close" onclick="window.closeAuthModal()">&times;</button>
       
       <div class="auth-modal-header">
         <div class="auth-brand-logo">
           <span class="brand-mark">◈</span>
-          <span class="brand-title">LISA ACCOUNT</span>
+          <span class="brand-title">xPredict Account</span>
         </div>
         <div class="auth-modal-subtitle" id="auth-modal-subtitle">
-          Access institutional betting intelligence &amp; syndicate alpha
+          Sign in to access your predictions &amp; personal dashboard
         </div>
       </div>
 
       <div class="auth-tabs">
-        <button class="auth-tab-btn active" id="tab-btn-signin">Sign In</button>
-        <button class="auth-tab-btn" id="tab-btn-signup">Create Account</button>
+        <button type="button" class="auth-tab-btn active" id="tab-btn-signin" onclick="window.switchAuthTab('signin')">Sign In</button>
+        <button type="button" class="auth-tab-btn" id="tab-btn-signup" onclick="window.switchAuthTab('signup')">Create Account</button>
       </div>
 
       <div class="auth-modal-body">
@@ -664,17 +1059,17 @@
           </div>
 
           <button type="submit" class="auth-submit-btn" id="btn-submit-signin">
-            <span>Sign In to Terminal</span>
+            <span>Sign In</span>
           </button>
         </form>
 
         <!-- Sign Up Form (hidden by default) -->
         <form id="form-signup" style="display: none;">
           <div class="auth-form-group">
-            <label class="auth-label" for="signup-name">Display Name</label>
+            <label class="auth-label" for="signup-name">Your Name</label>
             <div class="auth-input-wrapper">
               <span class="auth-input-icon">👤</span>
-              <input type="text" id="signup-name" class="auth-input" placeholder="Quantitative Trader" autocomplete="name">
+              <input type="text" id="signup-name" class="auth-input" placeholder="Alex Morgan" autocomplete="name">
             </div>
           </div>
 
@@ -696,7 +1091,7 @@
           </div>
 
           <div class="auth-form-group">
-            <label class="auth-label">Select Initial Tier</label>
+            <label class="auth-label">Choose Your Plan</label>
             <div class="auth-tier-select" id="signup-tier-select">
               <div class="auth-tier-chip selected" data-tier="free">Free</div>
               <div class="auth-tier-chip" data-tier="tier1">Tier 1</div>

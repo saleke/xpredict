@@ -148,6 +148,20 @@ class AuthController {
   isTelegramVerified() {
     return this._user ? Boolean(this._user.telegram_verified) : false;
   }
+
+  async updateTier(tier) {
+    try {
+      const res = await api.auth.updateTier({ tier });
+      if (res && res.user) {
+        this._user = res.user;
+        this._notifyListeners();
+        return res;
+      }
+    } catch (err) {
+      console.warn('[auth] Failed to persist tier update to backend:', err);
+    }
+    return null;
+  }
 }
 
 export const auth = new AuthController();

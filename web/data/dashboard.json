@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-09-20T23:27:08.715852+00:00",
+    "generated_at": "2026-09-21T00:19:49.401646+00:00",
     "version": "0.1.0",
     "total_sports": 9,
     "scope_leagues": [
@@ -13,7 +13,7 @@
     ]
   },
   "summary": {
-    "total_matches_evaluated": 240,
+    "total_matches_evaluated": 310,
     "diamonds_count": 29,
     "pivots_count": 21,
     "pass_advisories_count": 30,

@@ -60,6 +60,7 @@ export const api = {
     signin: (payload) => request('/api/auth/signin', { method: 'POST', body: payload }),
     signout: () => request('/api/auth/signout', { method: 'POST' }),
     me: () => request('/api/auth/me', { method: 'GET' }),
+    updateTier: (payload) => request('/api/auth/update-tier', { method: 'POST', body: payload }),
     linkTelegram: (payload) => request('/api/auth/link-telegram', { method: 'POST', body: payload }),
   },
 

@@ -29,6 +29,11 @@ from .telegram_bot import TelegramBot, registry, verify_unlock_token
 
 logger = logging.getLogger(__name__)
 
+# Production brute-force defense: track failed sign-in attempts per IP/email
+FAILED_SIGNIN_ATTEMPTS: dict[str, list[float]] = {}
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_WINDOW_SECONDS = 900  # 15 minute lockout
+
 
 class LISAProductionHandler(SimpleHTTPRequestHandler):
     """Production HTTP request handler combining REST API routing and static file serving."""
@@ -130,7 +135,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path in ("/api/status", "/api/health"):
+        if path in ("/api/status", "/api/health", "/api/telemetry"):
             self._handle_status()
             return
 
@@ -167,6 +172,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/auth/signout":
             self._handle_auth_signout()
+            return
+
+        if path in ("/api/auth/update-tier", "/api/auth/tier"):
+            self._handle_auth_update_tier()
             return
 
         if path == "/api/auth/link-telegram":
@@ -228,6 +237,17 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "Auth service unavailable"}, status=500)
             return
 
+        ip_addr = self.client_address[0] if self.client_address else "127.0.0.1"
+        now_ts = time.time()
+        attempts = [t for t in FAILED_SIGNIN_ATTEMPTS.get(ip_addr, []) if now_ts - t < LOCKOUT_WINDOW_SECONDS]
+        FAILED_SIGNIN_ATTEMPTS[ip_addr] = attempts
+        if len(attempts) >= MAX_FAILED_ATTEMPTS:
+            self._send_json({
+                "success": False,
+                "error": "Too many failed sign-in attempts. For security, please wait 15 minutes before trying again."
+            }, status=429)
+            return
+
         data = self._read_json_body()
         if not data:
             self._send_json({"success": False, "error": "JSON payload required"}, status=400)
@@ -238,10 +258,16 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         user = self.auth.authenticate_user(email=email, password=password)
         if not user:
-            self._send_json({"success": False, "error": "Invalid email or password."}, status=401)
+            attempts.append(now_ts)
+            FAILED_SIGNIN_ATTEMPTS[ip_addr] = attempts
+            remaining = MAX_FAILED_ATTEMPTS - len(attempts)
+            warn = f" ({remaining} attempts remaining before temporary lockout)" if remaining > 0 else ""
+            self._send_json({"success": False, "error": f"Invalid email or password.{warn}"}, status=401)
             return
 
-        ip_addr = self.client_address[0] if self.client_address else ""
+        # Successful login: reset failed attempts
+        FAILED_SIGNIN_ATTEMPTS.pop(ip_addr, None)
+
         ua = self.headers.get("User-Agent", "")
         sess = self.auth.create_session(user_id=user["id"], ip_address=ip_addr, user_agent=ua)
         self._send_json_with_cookie(
@@ -260,6 +286,26 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             max_age=0,
             status=200,
         )
+
+    def _handle_auth_update_tier(self):
+        user, _ = self._get_current_user_and_session()
+        if not user or not self.auth:
+            self._send_json({"success": False, "error": "Authentication required"}, status=401)
+            return
+
+        data = self._read_json_body() or {}
+        tier = str(data.get("tier", "")).strip().lower()
+        valid_tiers = ("free", "tier1", "tier2", "tier3")
+        if tier not in valid_tiers:
+            self._send_json({"success": False, "error": f"Invalid tier: {tier}. Must be one of {valid_tiers}"}, status=400)
+            return
+
+        try:
+            self.auth.update_user_tier(user["id"], tier)
+            updated = self.auth.get_user_by_id(user["id"])
+            self._send_json({"success": True, "user": updated, "tier": tier, "message": f"Tier updated to {tier.upper()}"})
+        except Exception as exc:
+            self._send_json({"success": False, "error": str(exc)}, status=500)
 
     def _handle_auth_link_telegram(self):
         user, _ = self._get_current_user_and_session()
@@ -316,6 +362,11 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 is_ver = self.storage.is_user_verified(user_id)
             if not is_ver:
                 is_ver = registry.is_verified(user_id)
+
+            if is_ver and user_id.startswith("usr_") and self.auth:
+                u = self.auth.get_user_by_id(user_id)
+                if u and not u.get("telegram_verified"):
+                    self.auth.link_telegram(user_id, telegram_id="")
 
         self._send_json({"user_id": user_id, "verified": bool(is_ver)})
 
@@ -398,7 +449,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 p["tier_level"] = "FREE"
             elif is_telegram_pick or idx in (1, 2):
                 p["tier_level"] = "TELEGRAM_UNLOCK"
-                if is_ver:
+                if is_ver or tier in ("tier1", "tier2", "tier3", "all"):
                     p["is_locked"] = False
                 else:
                     p["is_locked"] = True
@@ -410,7 +461,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                     p["deep_links"] = {}
             else:
                 p["tier_level"] = tier_level or "TIER_2"
-                if tier in ("tier2", "tier3", "all"):
+                if (tier == "tier1" and idx < 5) or tier in ("tier2", "tier3", "all"):
                     p["is_locked"] = False
                 else:
                     p["is_locked"] = True

@@ -240,3 +240,8 @@ class LiveIngestionDaemon:
 
             if max_iterations is None or iteration < max_iterations:
                 time.sleep(interval_sec)
+
+
+# Backward-compatible alias for CLI and external scripts
+LiveIngestionEngine = LiveIngestionDaemon
+
