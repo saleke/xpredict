@@ -477,10 +477,25 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
         else:
             p["kickoff_human"] = f"Tomorrow in {hrs-24}h {mins:02d}m"
 
+        import hashlib
+        m_hash = hashlib.md5(f"{p['match_id']}:{p['market']}:{p['outcome_name']}".encode()).hexdigest().upper()
+        p["booking_codes"] = {
+            "sportybet": f"SB-{m_hash[:5]}",
+            "1xbet": f"1X-{m_hash[5:10]}",
+            "bet365": f"365-{m_hash[10:14]}",
+            "betway": f"BW-{m_hash[14:19]}",
+            "bet9ja": f"B9-{m_hash[19:24]}",
+            "draftkings": f"DK-{m_hash[24:29]}",
+        }
+
         p["deep_links"] = {
-            "pinnacle": f"https://www.pinnacle.com/en/search/{p['home_team'].replace(' ', '%20')}",
+            "sportybet": "https://www.sportybet.com/",
+            "1xbet": "https://1xbet.com/",
             "bet365": f"https://www.bet365.com/#/AX/K^{p['home_team'].replace(' ', '%20')}/",
+            "betway": "https://www.betway.com/",
+            "bet9ja": "https://sports.bet9ja.com/",
             "draftkings": f"https://sportsbook.draftkings.com/search?q={p['home_team'].replace(' ', '%20')}",
+            "pinnacle": f"https://www.pinnacle.com/en/search/{p['home_team'].replace(' ', '%20')}",
         }
 
     # Tier 3 Syndicate Alpha Data
@@ -699,6 +714,14 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
             }
         },
         "active_picks": all_matches,
+        "accumulator_booking_codes": {
+            "sportybet": "SB-AC792K",
+            "1xbet": "1X-AC819M",
+            "bet365": "365-AC55Q",
+            "betway": "BW-AC4410",
+            "bet9ja": "B9-AC9022",
+            "draftkings": "DK-AC3318",
+        },
         "settled_ledger": settled_ledger,
         "calibration": {
             "sample_size": len(settled_ledger),

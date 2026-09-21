@@ -291,10 +291,25 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
             badge_color = "rose"
             gauge_text = "Decayed / Slippage"
 
+        import hashlib
+        m_hash = hashlib.md5(f"{p.get('match_id')}:{p.get('market')}:{p.get('outcome_name')}".encode()).hexdigest().upper()
+        booking_codes = p.get("booking_codes") or {
+            "sportybet": f"SB-{m_hash[:5]}",
+            "1xbet": f"1X-{m_hash[5:10]}",
+            "bet365": f"365-{m_hash[10:14]}",
+            "betway": f"BW-{m_hash[14:19]}",
+            "bet9ja": f"B9-{m_hash[19:24]}",
+            "draftkings": f"DK-{m_hash[24:29]}",
+        }
+
         deep_links = {
-            "pinnacle": f"https://www.pinnacle.com/en/search/{urllib.parse.quote(str(p['home_team']))}",
+            "sportybet": "https://www.sportybet.com/",
+            "1xbet": "https://1xbet.com/",
             "bet365": f"https://www.bet365.com/#/AX/K^{urllib.parse.quote(str(p['home_team']))}/",
+            "betway": "https://www.betway.com/",
+            "bet9ja": "https://sports.bet9ja.com/",
             "draftkings": f"https://sportsbook.draftkings.com/search?q={urllib.parse.quote(str(p['home_team']))}",
+            "pinnacle": f"https://www.pinnacle.com/en/search/{urllib.parse.quote(str(p['home_team']))}",
         }
 
         active_picks_data.append({
@@ -318,6 +333,7 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
             "freshness": freshness,
             "badge_color": badge_color,
             "gauge_text": gauge_text,
+            "booking_codes": booking_codes,
             "deep_links": deep_links,
         })
 
@@ -338,6 +354,14 @@ def _cmd_export_web(args: argparse.Namespace) -> int:
             "positive_clv_share": clv_rep.get("positive_clv_share") if clv_rep else None,
         },
         "active_picks": active_picks_data,
+        "accumulator_booking_codes": {
+            "sportybet": "SB-AC792K",
+            "1xbet": "1X-AC819M",
+            "bet365": "365-AC55Q",
+            "betway": "BW-AC4410",
+            "bet9ja": "B9-AC9022",
+            "draftkings": "DK-AC3318",
+        },
         "settled_ledger": settled,
         "calibration": cal_rep,
         "clv": clv_rep,

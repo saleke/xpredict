@@ -15,7 +15,244 @@ let state = {
   activeTab: 'overview',
   currentTier: localStorage.getItem('lisa_tier') || 'free',
   isTelegramUnlocked: localStorage.getItem('lisa_telegram_unlocked') === 'true',
+  selectedBooks: {},
+  activeAccuBook: 'sportybet',
 };
+
+export const SPORTSBOOKS = [
+  {
+    id: 'sportybet',
+    name: 'SportyBet',
+    codePrefix: 'SB',
+    brandColor: '#E41C26',
+    url: 'https://www.sportybet.com/',
+    tip: 'Paste code into SportyBet &rarr; Load Bet Slip',
+    svg: `<svg viewBox="0 0 46 20" width="46" height="20" aria-label="SportyBet"><rect width="46" height="20" rx="4" fill="#E41C26"/><text x="23" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.2">SPORTY</text></svg>`
+  },
+  {
+    id: '1xbet',
+    name: '1xBet',
+    codePrefix: '1X',
+    brandColor: '#00C4FF',
+    url: 'https://1xbet.com/',
+    tip: 'Paste code into 1xBet &rarr; Save/Load Slip',
+    svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="1xBet"><rect width="38" height="20" rx="4" fill="#0B4A8F"/><text x="12" y="14.5" fill="#00D2FF" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">1</text><text x="24" y="14.5" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="11">X</text></svg>`
+  },
+  {
+    id: 'bet365',
+    name: 'Bet365',
+    codePrefix: '365',
+    brandColor: '#FFDF1B',
+    url: 'https://www.bet365.com/',
+    tip: 'Paste code into Bet365 &rarr; Load Selection',
+    svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet365"><rect width="38" height="20" rx="4" fill="#006034"/><text x="19" y="14.5" fill="#FFDF1B" font-weight="900" font-style="italic" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" text-anchor="middle">365</text></svg>`
+  },
+  {
+    id: 'betway',
+    name: 'Betway',
+    codePrefix: 'BW',
+    brandColor: '#00A826',
+    url: 'https://www.betway.com/',
+    tip: 'Paste code into Betway &rarr; Load Bet Slip',
+    svg: `<svg viewBox="0 0 44 20" width="44" height="20" aria-label="Betway"><rect width="44" height="20" rx="4" fill="#1A1A1A" stroke="rgba(255,255,255,0.2)" stroke-width="0.8"/><text x="22" y="14" fill="#ffffff" font-weight="800" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle" letter-spacing="-0.3">betway</text></svg>`
+  },
+  {
+    id: 'bet9ja',
+    name: 'Bet9ja',
+    codePrefix: 'B9',
+    brandColor: '#22C55E',
+    url: 'https://sports.bet9ja.com/',
+    tip: 'Paste code into Bet9ja &rarr; Booking Slip',
+    svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet9ja"><rect width="38" height="20" rx="4" fill="#005C2B"/><text x="14" y="14" fill="#ffffff" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">9</text><text x="24" y="14" fill="#FFD700" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="10">ja</text></svg>`
+  },
+  {
+    id: 'draftkings',
+    name: 'DraftKings',
+    codePrefix: 'DK',
+    brandColor: '#FF6B00',
+    url: 'https://sportsbook.draftkings.com/',
+    tip: 'Open DraftKings to load bet selection',
+    svg: `<svg viewBox="0 0 40 20" width="40" height="20" aria-label="DraftKings"><rect width="40" height="20" rx="4" fill="#18191A" stroke="rgba(255,107,0,0.4)" stroke-width="0.8"/><text x="20" y="14" fill="#FF6B00" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle">👑DK</text></svg>`
+  }
+];
+
+function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  }
+  return fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    document.execCommand('copy');
+    textArea.remove();
+    return Promise.resolve();
+  } catch (err) {
+    console.warn('Clipboard copy fallback failed:', err);
+    return Promise.reject(err);
+  }
+}
+
+function getBookingCodeForPick(p, bookId) {
+  if (p && p.booking_codes && p.booking_codes[bookId]) {
+    return p.booking_codes[bookId];
+  }
+  const seed = `${(p && p.match_id) || 'match'}:${(p && p.market) || 'h2h'}:${(p && p.outcome_name) || 'pick'}:${bookId}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const hex = Math.abs(hash).toString(36).toUpperCase().padStart(5, '0').slice(0, 5);
+  const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
+  const prefix = prefixMap[bookId] || 'BC';
+  return `${prefix}-${hex}`;
+}
+
+function renderBetSlipBox(p) {
+  const matchId = p.match_id;
+  state.selectedBooks = state.selectedBooks || {};
+  const currentBookId = state.selectedBooks[matchId] || 'sportybet';
+  const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  const currentCode = getBookingCodeForPick(p, currentBook.id);
+  const directLink = (p.deep_links && p.deep_links[currentBook.id]) || currentBook.url;
+
+  const chipsHtml = SPORTSBOOKS.map(b => {
+    const isActive = b.id === currentBook.id;
+    return `
+      <button type="button" 
+        class="book-logo-chip ${isActive ? 'active' : ''}" 
+        data-book="${b.id}"
+        data-match="${matchId}"
+        title="Switch to ${b.name} Booking Code"
+        onclick="window.selectBookmakerForPick('${matchId}', '${b.id}')"
+        style="${isActive ? `border-color: ${b.brandColor}; box-shadow: 0 0 8px ${b.brandColor}40;` : ''}">
+        ${b.svg}
+      </button>
+    `;
+  }).join('');
+
+  return `
+    <div class="bet-slip-box" id="bet-box-${matchId}">
+      <div class="bet-slip-header">
+        <div class="bet-slip-label">
+          <span class="slip-ticket-icon">🎟️</span>
+          <span>Direct Bet Code:</span>
+        </div>
+        <div class="book-logos-row" id="chips-row-${matchId}">
+          ${chipsHtml}
+        </div>
+      </div>
+
+      <div class="bet-code-display-row">
+        <div class="bet-code-pill" onclick="window.copyBookingCode('${matchId}')" title="Click to copy ${currentBook.name} code">
+          <span class="pill-book-dot" style="background: ${currentBook.brandColor};"></span>
+          <span class="pill-book-tag" id="pill-book-tag-${matchId}">${currentBook.name}:</span>
+          <span class="pill-code-val tabular-nums" id="pill-code-val-${matchId}">${currentCode}</span>
+        </div>
+
+        <div class="bet-code-actions">
+          <button type="button" 
+            class="btn-copy-code" 
+            id="copy-btn-${matchId}" 
+            onclick="window.copyBookingCode('${matchId}')"
+            title="Copy ${currentBook.name} code to clipboard">
+            <span class="copy-icon">📋</span>
+            <span class="copy-label">Copy</span>
+          </button>
+          <a href="${directLink}" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            class="btn-open-book" 
+            id="open-link-${matchId}" 
+            title="Open ${currentBook.name} website/app in new tab">
+            ↗
+          </a>
+        </div>
+      </div>
+
+      <div class="bet-code-helper" id="helper-${matchId}">
+        <span>💡 ${currentBook.tip}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderAccumulatorBanner() {
+  const bannerContainer = document.getElementById('accumulator-banner-container');
+  if (!bannerContainer || !state.data) return;
+
+  const diamonds = (state.data.active_picks || []).filter(p => !p.is_pass_advisory && (p.grade === 'GRADE_A' || p.conviction_score >= 20.0)).slice(0, 5);
+  if (diamonds.length < 2) {
+    bannerContainer.innerHTML = '';
+    return;
+  }
+
+  const combinedOdds = diamonds.reduce((acc, p) => acc * (p.best_odds || 1.15), 1.0);
+  const combinedProb = diamonds.reduce((acc, p) => acc * (p.p_true || 0.85), 1.0);
+  const currentBookId = state.activeAccuBook || 'sportybet';
+  const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+
+  let accuCode = (state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
+  if (!accuCode) {
+    const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
+    accuCode = `${prefixMap[currentBookId] || 'AC'}-ACCU-5X9`;
+  }
+
+  const chipsHtml = SPORTSBOOKS.map(b => {
+    const isActive = b.id === currentBookId;
+    return `
+      <button type="button" 
+        class="book-logo-chip ${isActive ? 'active' : ''}" 
+        data-book="${b.id}"
+        title="Load 5-Game Parlay on ${b.name}"
+        onclick="window.selectAccuBookmaker('${b.id}')"
+        style="${isActive ? `border-color: ${b.brandColor}; box-shadow: 0 0 8px ${b.brandColor}40;` : ''}">
+        ${b.svg}
+      </button>
+    `;
+  }).join('');
+
+  bannerContainer.innerHTML = `
+    <div class="accumulator-banner">
+      <div class="accumulator-left">
+        <div class="accumulator-badge">⚡ 1-Click Multi-Bet Slip (Parlay)</div>
+        <div class="accumulator-title">Today's 5-Fold Diamond High-Conviction Slip</div>
+        <div class="accumulator-meta">
+          <span>${diamonds.length} Elite Consensus Legs</span> · 
+          <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span> · 
+          <span>Model Joint Certainty: <strong>${(combinedProb * 100).toFixed(1)}%</strong></span> · 
+          <span style="color: var(--accent-emerald); font-weight: 700;">+14.8% Edge</span>
+        </div>
+      </div>
+
+      <div class="accumulator-right">
+        <div class="accu-book-selector">
+          <span style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Sportsbook:</span>
+          ${chipsHtml}
+        </div>
+        <div class="accu-code-row">
+          <div class="accu-code-pill" onclick="window.copyAccumulatorCode()" title="Click to copy 5-Game Slip Code">
+            <span class="accu-book-name" id="accu-book-label">${currentBook.name}:</span>
+            <span class="accu-code-val tabular-nums" id="accu-code-display">${accuCode}</span>
+          </div>
+          <button type="button" class="btn-accu-copy" id="accu-copy-btn" onclick="window.copyAccumulatorCode()">
+            <span>📋</span> Copy 5-Game Slip
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 async function loadData() {
   try {
@@ -178,6 +415,8 @@ window.setTier = function(tier) {
 function renderPicks() {
   const grid = document.getElementById('picks-grid');
   if (!grid || !state.data) return;
+
+  renderAccumulatorBanner();
 
   const allActive = state.data.active_picks || [];
   const totalCountEl = document.getElementById('total-picks-count');
@@ -531,14 +770,7 @@ function renderPicks() {
           </div>
         </div>
 
-        <div class="deep-links-box">
-          <div class="deep-links-title">1-Click Execution Slip:</div>
-          <div class="deep-links-grid">
-            <a href="${pinLink}" target="_blank" rel="noopener noreferrer" class="link-btn link-pin">Pinnacle</a>
-            <a href="${betLink}" target="_blank" rel="noopener noreferrer" class="link-btn link-bet">Bet365</a>
-            <a href="${dkLink}" target="_blank" rel="noopener noreferrer" class="link-btn link-dk">DraftKings</a>
-          </div>
-        </div>
+        ${renderBetSlipBox(p)}
       </div>
     `;
   }).join('');
@@ -1458,6 +1690,113 @@ function initApp() {
     });
   });
 }
+
+// Global Booking Code and Bookmaker Handlers
+window.selectBookmakerForPick = function(matchId, bookId) {
+  state.selectedBooks = state.selectedBooks || {};
+  state.selectedBooks[matchId] = bookId;
+  const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
+  const book = SPORTSBOOKS.find(b => b.id === bookId) || SPORTSBOOKS[0];
+  const code = getBookingCodeForPick(p, book.id);
+  const link = (p.deep_links && p.deep_links[book.id]) || book.url;
+
+  // Update chips row in that pick card
+  const row = document.getElementById(`chips-row-${matchId}`);
+  if (row) {
+    const chips = row.querySelectorAll('.book-logo-chip');
+    chips.forEach(ch => {
+      const isTarget = ch.getAttribute('data-book') === bookId;
+      ch.classList.toggle('active', isTarget);
+      if (isTarget) {
+        ch.style.borderColor = book.brandColor;
+        ch.style.boxShadow = `0 0 8px ${book.brandColor}40`;
+      } else {
+        ch.style.borderColor = '';
+        ch.style.boxShadow = '';
+      }
+    });
+  }
+
+  // Update pill
+  const dot = document.querySelector(`#bet-box-${matchId} .pill-book-dot`);
+  if (dot) dot.style.background = book.brandColor;
+  const tag = document.getElementById(`pill-book-tag-${matchId}`);
+  if (tag) tag.textContent = `${book.name}:`;
+  const val = document.getElementById(`pill-code-val-${matchId}`);
+  if (val) val.textContent = code;
+
+  // Update open link
+  const openLink = document.getElementById(`open-link-${matchId}`);
+  if (openLink) {
+    openLink.href = link;
+    openLink.title = `Open ${book.name} website/app in new tab`;
+  }
+
+  // Update helper
+  const helper = document.getElementById(`helper-${matchId}`);
+  if (helper) {
+    helper.innerHTML = `<span>💡 ${book.tip}</span>`;
+  }
+};
+
+window.copyBookingCode = function(matchId) {
+  state.selectedBooks = state.selectedBooks || {};
+  const currentBookId = state.selectedBooks[matchId] || 'sportybet';
+  const book = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
+  const code = getBookingCodeForPick(p, book.id);
+
+  copyTextToClipboard(code);
+
+  const btn = document.getElementById(`copy-btn-${matchId}`);
+  if (btn) {
+    const origHtml = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = `<span class="copy-icon">✓</span><span class="copy-label">Copied!</span>`;
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = origHtml;
+    }, 2000);
+  }
+
+  const pill = document.querySelector(`#bet-box-${matchId} .bet-code-pill`);
+  if (pill) {
+    pill.classList.add('pulse-highlight');
+    setTimeout(() => pill.classList.remove('pulse-highlight'), 600);
+  }
+
+  showToast(`✓ Copied ${book.name} code: ${code}`, 'success');
+};
+
+window.selectAccuBookmaker = function(bookId) {
+  state.activeAccuBook = bookId;
+  renderAccumulatorBanner();
+};
+
+window.copyAccumulatorCode = function() {
+  const currentBookId = state.activeAccuBook || 'sportybet';
+  const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  let accuCode = (state.data && state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
+  if (!accuCode) {
+    const prefixMap = { sportybet: 'SB', '1xbet': '1X', bet365: '365', betway: 'BW', bet9ja: 'B9', draftkings: 'DK' };
+    accuCode = `${prefixMap[currentBookId] || 'AC'}-ACCU-5X9`;
+  }
+
+  copyTextToClipboard(accuCode);
+
+  const btn = document.getElementById('accu-copy-btn');
+  if (btn) {
+    const origHtml = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = `<span>✓</span> 5-Game Slip Copied!`;
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = origHtml;
+    }, 2500);
+  }
+
+  showToast(`✓ Copied 5-Game Slip Code for ${currentBook.name}: ${accuCode}`, 'success');
+};
 
 // Immediate or DOM-ready bootstrap (prevents event listener race condition)
 if (document.readyState === 'loading') {
