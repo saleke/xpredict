@@ -429,7 +429,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         import time
         from .telegram_bot import TelegramBot
 
-        bot_inst = TelegramBot(token=settings.telegram_token, channel_chat_id=settings.telegram_chat_id)
+        bot_inst = TelegramBot(
+            token=settings.telegram_token,
+            channel_chat_id=settings.telegram_chat_id,
+            tier2_channel_chat_id=settings.tier2_telegram_chat_id,
+            storage=storage,
+        )
         def _bot_loop():
             print(f"[telegram-bot] Background polling daemon started for @{settings.telegram_bot_username or 'bot'}")
             while True:
@@ -650,10 +655,14 @@ def _cmd_start(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"[start] Warning: failed to seed backtest audit: {exc}")
 
-    # Start Telegram bot daemon if configured and not disabled
     bot_inst = None
     if not getattr(args, "no_bot", False) and settings.telegram_token:
-        bot_inst = TelegramBot(token=settings.telegram_token, channel_chat_id=settings.telegram_chat_id)
+        bot_inst = TelegramBot(
+            token=settings.telegram_token,
+            channel_chat_id=settings.telegram_chat_id,
+            tier2_channel_chat_id=settings.tier2_telegram_chat_id,
+            storage=storage,
+        )
         def _bot_loop():
             print(f"[telegram-bot] Production Gatekeeper daemon running for @{settings.telegram_bot_username or 'bot'}")
             while True:
@@ -792,6 +801,8 @@ def main(argv: list[str] | None = None) -> int:
     tg.add_argument("--token", default="", help="Telegram Bot API token")
     tg.add_argument("--chat-id", default="", help="Target chat or channel ID")
     tg.add_argument("--mock", action="store_true", help="run in local simulation/mock mode without network calls")
+    tg.add_argument("--interactive", "-i", action="store_true", help="run interactive terminal console for testing bot & admin commands")
+    tg.add_argument("--user-id", default="", help="simulate updates as this Telegram user ID")
     tg.add_argument("--poll-once", action="store_true", help="poll updates once and exit")
 
     ing = sub.add_parser("live-ingest", help="run real-time odds ingestion and automated alert dispatch")
@@ -850,17 +861,39 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_telegram_bot(args: argparse.Namespace) -> int:
     import time
-    from .telegram_bot import TelegramBot
+    from .telegram_bot import TelegramBot, TelegramUpdate
     settings = cfg.load_settings()
     token = args.token or settings.telegram_token
     chat_id = args.chat_id or settings.telegram_chat_id
     mock = args.mock or not bool(token)
+    storage = _make_storage(settings)
 
-    bot = TelegramBot(token=token, channel_chat_id=chat_id, mock=mock)
-    if mock:
-        print("[telegram-bot] Running in MOCK/SIMULATION mode (no network token required).")
+    bot = TelegramBot(
+        token=token,
+        channel_chat_id=chat_id,
+        tier2_channel_chat_id=settings.tier2_telegram_chat_id,
+        mock=mock,
+        storage=storage,
+    )
+
+    if not mock and token:
+        try:
+            import urllib.request
+            req = urllib.request.Request(f"https://api.telegram.org/bot{token}/getMe")
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                me = json.loads(resp.read().decode("utf-8"))
+                if me.get("ok"):
+                    bot_user = me.get("result", {}).get("username", "")
+                    print(f"[telegram-bot] Authenticated successfully with Telegram API as @{bot_user}.")
+                    print(f"[telegram-bot] Admin whitelist: {sorted(list(bot.admin_telegram_ids))}")
+        except Exception as exc:
+            print(f"[telegram-bot] Warning: Live Telegram connection failed ({exc}).")
+            print("[telegram-bot] Running in MOCK/SIMULATION mode so admin & user commands can be tested.")
+            bot.mock = True
+            mock = True
     else:
-        print(f"[telegram-bot] Connected to Telegram API with channel {chat_id}.")
+        print("[telegram-bot] Running in MOCK/SIMULATION mode (no network token required).")
+        print(f"[telegram-bot] Admin whitelist: {sorted(list(bot.admin_telegram_ids))}")
 
     if args.poll_once:
         updates = bot.poll_updates()
@@ -868,6 +901,37 @@ def _cmd_telegram_bot(args: argparse.Namespace) -> int:
         for u in updates:
             reply = bot.process_one_update(u)
             print(f"[{u.username} -> {u.text}]: {reply[:60]}...")
+        return 0
+
+    if getattr(args, "interactive", False):
+        active_user_id = str(args.user_id or (list(bot.admin_telegram_ids)[0] if bot.admin_telegram_ids else "8720543490"))
+        is_admin_user = bot.is_admin(active_user_id)
+        role = "ADMIN" if is_admin_user else "USER"
+        print(f"\n[telegram-bot] Interactive Console active. Acting as {role} (ID: {active_user_id}).")
+        print("Type any command (e.g. /admin, /picks, /bankroll, /settle, /sys_pause) or 'exit' to quit.\n")
+        seq = 100
+        while True:
+            try:
+                line = input(f"lisa-bot ({active_user_id})> ").strip()
+                if not line:
+                    continue
+                if line.lower() in ("exit", "quit", "q"):
+                    break
+                seq += 1
+                upd = TelegramUpdate(
+                    update_id=seq,
+                    message_id=seq,
+                    chat_id=active_user_id,
+                    user_id=active_user_id,
+                    username="Admin" if is_admin_user else "Trader",
+                    text=line,
+                )
+                resp = bot.process_one_update(upd)
+                clean_resp = resp.replace("<b>", "").replace("</b>", "").replace("<code>", "`").replace("</code>", "`").replace("<i>", "").replace("</i>", "")
+                print(f"\n{clean_resp}\n")
+            except (KeyboardInterrupt, EOFError):
+                break
+        print("\n[telegram-bot] Console closed.")
         return 0
 
     print("[telegram-bot] Starting Telegram polling loop (Ctrl+C to stop)...")

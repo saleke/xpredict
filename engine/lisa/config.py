@@ -132,8 +132,15 @@ class Settings:
     metrics_path: str = "data/metrics.jsonl"
 
 
-def _load_dotenv(filepath: str = ".env") -> None:
+_DOTENV_LOADED = False
+
+
+def _load_dotenv(filepath: str = ".env", force: bool = False) -> None:
     """Zero-dependency .env loader that populates os.environ if key not already set."""
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED and not force:
+        return
+    _DOTENV_LOADED = True
     try:
         from pathlib import Path
         for candidate in (

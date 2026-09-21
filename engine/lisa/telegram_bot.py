@@ -740,6 +740,10 @@ class TelegramBot:
             raw_admins = os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",")
         self.admin_telegram_ids: set[str] = {str(a).strip() for a in raw_admins if str(a).strip()}
 
+        if self.channel_chat_id.lower().lstrip("@") == self.bot_username.lower().lstrip("@"):
+            if self.admin_telegram_ids:
+                self.channel_chat_id = sorted(list(self.admin_telegram_ids))[0]
+
         if storage is not None:
             self.storage = storage
         else:
