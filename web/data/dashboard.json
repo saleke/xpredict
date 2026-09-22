@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generated_at": "2026-09-21T08:37:43.436842+00:00",
+    "generated_at": "2026-09-22T21:55:02.337722+00:00",
     "version": "0.1.0",
     "total_sports": 9,
     "scope_leagues": [
@@ -13,11 +13,11 @@
     ]
   },
   "summary": {
-    "total_matches_evaluated": 1349,
-    "diamonds_count": 113,
+    "total_matches_evaluated": 1624,
+    "diamonds_count": 128,
     "pivots_count": 21,
     "pass_advisories_count": 30,
-    "traps_avoided_month": 87,
+    "traps_avoided_month": 98,
     "settled_picks_count": 50,
     "win_rate": 0.84,
     "brier_score": 0.1305471424157283,

@@ -1201,7 +1201,7 @@ class TelegramBot:
                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"Confirmed: You are an active member of <b>{channel}</b>.\n"
                         f"Your web session (<code>{web_user_id}</code>) is permanently verified!\n\n"
-                        f"Matches #2 & #3 are now unblurred on your screen at "
+                        f"Match #2 is now unblurred on your screen at "
                         f"<b>http://localhost:8080/#picks</b>.",
                         reply_markup,
                     )
