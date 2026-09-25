@@ -30,8 +30,8 @@ export function renderReliabilityChart(canvasTarget, calibrationData) {
 
   // Subtle background glow for plot area
   const bgGrad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
-  bgGrad.addColorStop(0, 'rgba(56, 189, 248, 0.03)');
-  bgGrad.addColorStop(1, 'rgba(5, 7, 12, 0.4)');
+  bgGrad.addColorStop(0, 'rgba(204, 255, 0, 0.04)');
+  bgGrad.addColorStop(1, 'rgba(7, 10, 8, 0.6)');
   ctx.fillStyle = bgGrad;
   ctx.fillRect(pad.left, pad.top, plotW, plotH);
 
@@ -112,8 +112,8 @@ export function renderReliabilityChart(canvasTarget, calibrationData) {
     // Area under the curve
     if (coords.length > 1) {
       const areaGrad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
-      areaGrad.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
-      areaGrad.addColorStop(1, 'rgba(56, 189, 248, 0.00)');
+      areaGrad.addColorStop(0, 'rgba(204, 255, 0, 0.22)');
+      areaGrad.addColorStop(1, 'rgba(204, 255, 0, 0.00)');
 
       ctx.beginPath();
       ctx.moveTo(coords[0].x, pad.top + plotH);
@@ -125,7 +125,7 @@ export function renderReliabilityChart(canvasTarget, calibrationData) {
     }
 
     // Connect line
-    ctx.strokeStyle = '#38BDF8';
+    ctx.strokeStyle = '#ccff00';
     ctx.lineWidth = 3;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -140,13 +140,13 @@ export function renderReliabilityChart(canvasTarget, calibrationData) {
     // Data points
     coords.forEach(pt => {
       // Glow ring
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.3)';
+      ctx.fillStyle = 'rgba(204, 255, 0, 0.35)';
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 10, 0, Math.PI * 2);
       ctx.fill();
 
       // Outer border
-      ctx.fillStyle = '#05070C';
+      ctx.fillStyle = '#070a08';
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
       ctx.fill();

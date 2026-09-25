@@ -136,8 +136,8 @@ export function renderGrowthSimulation(canvasTarget, initialBankroll = 10000, pr
 
   // Draw Kelly Compounding line
   const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
-  grad.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
-  grad.addColorStop(1, 'rgba(56, 189, 248, 0.00)');
+  grad.addColorStop(0, 'rgba(204, 255, 0, 0.22)');
+  grad.addColorStop(1, 'rgba(204, 255, 0, 0.00)');
 
   ctx.beginPath();
   ctx.moveTo(pad.left, pad.top + (1 - (kellyGrowth[0] - minVal) / (maxVal - minVal)) * plotH);
@@ -152,7 +152,7 @@ export function renderGrowthSimulation(canvasTarget, initialBankroll = 10000, pr
   ctx.fillStyle = grad;
   ctx.fill();
 
-  ctx.strokeStyle = '#38BDF8';
+  ctx.strokeStyle = '#ccff00';
   ctx.lineWidth = 2.5;
   ctx.beginPath();
   kellyGrowth.forEach((v, idx) => {
@@ -166,7 +166,7 @@ export function renderGrowthSimulation(canvasTarget, initialBankroll = 10000, pr
   // Legend at bottom
   ctx.font = '600 10px Inter, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#38BDF8';
+  ctx.fillStyle = '#ccff00';
   ctx.fillText('● Fractional Kelly Compounding', pad.left, h - 8);
 
   ctx.fillStyle = '#9AA8BC';

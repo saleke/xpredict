@@ -29,30 +29,30 @@ The layout communicates hierarchy through **grouping and whitespace** (cards, se
 - **`--border-strong`** (`rgba(148,163,184,0.22)`): controls, active states, table thead bottom.
 - **`--border-brand`** (`rgba(56,189,248,0.45)`): active accent stroke.
 
-### Brand (Cyan)
-- **`--brand-300`** `#7DD3FC` (bright text on dark, links hover)
-- **`--brand-400`** `#38BDF8` (primary text accent, active underline)
-- **`--brand-500`** `#0EA5E9` (primary CTA fill, active stroke, glow source)
-- **`--brand-ink`** `#062033` (text on brand-filled buttons)
+### Brand (Electric Neon Lime)
+- **`--brand-300`** `#d9ff33` (bright text on dark, links hover)
+- **`--brand-400`** `#ccff00` (primary text accent, active underline, electric lime)
+- **`--brand-500`** `#b8e600` (primary CTA fill, active stroke, glow source)
+- **`--brand-ink`** `#070a08` (text on brand-filled buttons)
 
 ### Semantic
 - **`--pos`** `#34D399` — win, positive EV, low uncertainty, high confidence, "LOW".
 - **`--pos-soft`** `rgba(52,211,153,0.12)` — soft fill behind `--pos` text.
-- **`--warn`** `#FBBF24` — medium uncertainty, parlay, VIP/Tier 3 reference, marquee "PICK OF THE DAY".
-- **`--warn-soft`** `rgba(251,191,36,0.12)`.
+- **`--warn`** `#f97316` — warm amber, medium uncertainty, parlay, VIP/Tier 3 reference, marquee "PICK OF THE DAY".
+- **`--warn-soft`** `rgba(249,115,22,0.12)`.
 - **`--neg`** `#FB7185` — loss, negative EV, high uncertainty, "do not stake".
 - **`--neg-soft`** `rgba(251,113,133,0.12)`.
 - **`--violet`** `#A78BFA` — derived/analytic surfaces (pivots, smart-parlays, portfolio), draw in the H/D/A bar.
-- **`--info`** `#38BDF8` alias of brand-400 (used for neutral-informative chips).
+- **`--info`** `#ccff00` alias of brand-400 (used for neutral-informative chips).
 
 ### Text scale
 - **`--text-1`** `#EEF2F8` — primary
 - **`--text-2`** `#9AA8BC` — secondary
 - **`--text-3`** `#5C6B82` — muted (timestamps, captions)
-- **`--text-inverse`** `#05070C`
+- **`--text-inverse`** `#070a08`
 
 ### Tier identity (one accent per tier — kept consistent everywhere: pricing, matrix, pills, user tag)
-- free `slate` (`#9AA8BC`), tier1 `emerald`, tier2 `cyan`, tier3 `gold`.
+- free `slate` (`#9AA8BC`), tier1 `emerald`, tier2 `neon-lime`, tier3 `gold`.
 
 ---
 
@@ -188,7 +188,7 @@ No gratuitous inner glows. The one allowed accent glow: the "live" status dot an
 
 ## 9. Agent Prompt Guide
 
-- Primary colors: `--brand-400 #38BDF8` cyan actions; `--pos #34D399` gain/low; `--warn #FBBF24` medium/vip; `--neg #FB7185` loss/high. Canvas `#05070C`, cards `#0E141F`, hair borders `rgba(148,163,184,0.12)`.
+- Primary colors: `--brand-400 #ccff00` neon lime actions; `--pos #34D399` gain/low; `--warn #f97316` medium/vip; `--neg #FB7185` loss/high. Canvas `#070a08`, cards `#0c130f` / `#111a14`, hair borders `rgba(255,255,255,0.08)`.
 - Key type rules: Inter UI + JetBrains Mono for every number (tabular); 11px caps micro-labels; view titles 24/800; cards 13.5px body.
 - Core component rules: 14px-radius cards on tone surfaces, 1px hair borders, no glass; pill chips for tags; brand-filled primary buttons 40px; result/uncertainty chips always icon+word.
 - Page structure: header (brand/nav/auth) → optional ticker → `main.container` → `.view-head` per panel → KPI/card grids → tables in `.table-card`. Max 2 accent colors per card.

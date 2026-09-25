@@ -8,7 +8,7 @@
   <meta name="description"
     content="Institutional sports intelligence and quantitative prediction platform powered by LISA. Features multi-market consensus, sharp steam tracking, smart pivots, fractional Kelly staking, and audited closing line value (CLV).">
   <link rel="icon"
-    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070D'/%3E%3Cpath d='M16 7l2.2 6.9L25 16l-6.8 2.1L16 25l-2.2-6.9L7 16l6.8-2.1z' fill='%2338BDF8'/%3E%3Cpath d='M24 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1zM8 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1z' fill='%2338BDF8'/%3E%3C/svg%3E">
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070a08'/%3E%3Cpath d='M16 7l2.2 6.9L25 16l-6.8 2.1L16 25l-2.2-6.9L7 16l6.8-2.1z' fill='%23ccff00'/%3E%3Cpath d='M24 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1zM8 4a1 1 0 0 0-1 1 1 1 0 0 0 1 1 1 1 0 0 0 1-1 1 1 0 0 0-1-1z' fill='%23ccff00'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -29,322 +29,179 @@
     </div>
   </div>
 
-  <!-- Unified Application Header (Institutional Two-Tier Masthead) -->
+  <!-- Unified Application Header Matching Design Reference -->
   <header class="app-header" id="app-header">
-
-    <!-- Level 1: Top Masthead (Brand, Telemetry & Authentication) -->
-    <div class="header-top-bar">
-      <div class="header-container">
-
-        <!-- Left: Brand Block & Real-Time Engine Telemetry -->
-        <div class="header-brand-cluster">
-          <div class="brand-block" role="button" tabindex="0" onclick="window.switchTab('overview')">
-            <div class="logo-mark" id="logo-badge">
-              <span class="logo-glyph">X</span>
-            </div>
-            <div class="brand-text">
-              <div class="brand-title">
-                xPredict <span class="brand-badge-powered">LISA AI</span>
-              </div>
-              <div class="brand-sub">QUANTITATIVE SPORTS TERMINAL</div>
-            </div>
+    <div class="header-container">
+      <!-- Left: Logo & Brand -->
+      <div class="header-brand-cluster">
+        <div class="brand-block" role="button" tabindex="0" onclick="window.switchTab('overview')">
+          <div class="logo-mark" id="logo-badge">
+            <img src="assets/logo_icon.png" alt="Xpredict Logo" class="brand-logo-img" style="height: 22px; width: auto; object-fit: contain;">
           </div>
-
-          <div class="header-v-sep"></div>
-
-          <!-- Engine Status Telemetry -->
-          <div class="system-status-chip" id="system-status-indicator"
-            title="LISA multi-sportsbook consensus engine running">
-            <span class="live-pulse-dot"></span>
-            <span class="status-chip-text" id="system-status-text">Pipeline Active</span>
-          </div>
+          <span class="brand-title-text">Xpredict</span>
         </div>
+      </div>
 
-        <!-- Right: Utility Links & Auth Cluster -->
-        <div class="header-action-cluster">
-          <button type="button" class="btn-header-telegram" onclick="window.openTelegramModal()">
-            <svg class="header-action-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
-              <path
-                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
-            </svg>
-            <span>Free Telegram Alerts</span>
-          </button>
+      <!-- Center: Main Navigation Links -->
+      <nav class="header-nav-menu" id="header-nav-menu" aria-label="Main Navigation">
+        <button class="nav-rail-item active" id="tab-btn-overview" data-view="view-overview" onclick="window.switchTab('overview')">
+          <span>HOME</span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-picks" data-view="view-picks" onclick="window.switchTab('picks')">
+          <span>PICKS</span>
+          <span class="nav-counter" id="picks-count-badge" style="display:none;">0</span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-forecast" data-view="view-forecast" onclick="window.switchTab('forecast')">
+          <span>ANALYTICS</span>
+          <span class="nav-counter" id="forecast-count-badge" style="display:none;"></span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-ledger" data-view="view-ledger" onclick="window.switchTab('ledger')">
+          <span>LEADERBOARD</span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-alpha" data-view="view-alpha" onclick="window.switchTab('alpha')">
+          <span>NEWS</span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-calibration" data-view="view-calibration" onclick="window.switchTab('calibration')">
+          <span>HOW IT WORKS</span>
+        </button>
+      </nav>
 
-          <div class="header-v-sep"></div>
+      <!-- Right: Action Buttons & Auth -->
+      <div class="header-action-cluster">
+        <!-- Search Button -->
+        <button type="button" class="btn-search-icon" id="btn-header-search" aria-label="Search" onclick="window.switchTab('picks')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
+          </svg>
+        </button>
 
-          <!-- Auth Cluster -->
-          <div class="header-auth" id="header-auth-container">
-            <!-- Logged out state -->
-            <div id="auth-logged-out" class="auth-guest-row">
-              <button type="button" class="btn-ghost-signin" id="btn-header-signin"
-                onclick="window.openAuthModal('signin')">
-                <svg class="auth-btn-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round">
-                  <path d="M10 2h3a1 1 0 011 1v10a1 1 0 01-1 1h-3M7 11l3-3-3-3M10 8H2" />
-                </svg>
-                <span>Sign In</span>
-              </button>
-              <button type="button" class="btn-primary-signup" id="btn-header-signup"
-                onclick="window.openAuthModal('signup')">
-                <span>Get Started</span>
-                <span class="btn-arrow">→</span>
-              </button>
+        <!-- Auth Cluster -->
+        <div class="header-auth" id="header-auth-container">
+          <!-- Logged out state -->
+          <div id="auth-logged-out" class="auth-guest-row">
+            <button type="button" class="btn-login-outline" id="btn-header-signin" onclick="window.openAuthModal('signin')">
+              LOG IN
+            </button>
+            <button type="button" class="btn-signup-lime" id="btn-header-signup" onclick="window.openAuthModal('signup')">
+              SIGN UP
+            </button>
+          </div>
+
+          <!-- Logged in state -->
+          <div id="auth-logged-in" class="auth-user-row" style="display: none;">
+            <div class="user-profile-pill" id="user-profile-pill" tabindex="0">
+              <div class="user-avatar-circle" id="user-avatar-initial">U</div>
+              <div class="user-pill-meta">
+                <span class="user-name-text" id="user-profile-name">Trader</span>
+                <span class="user-tier-tag tier-tag-free" id="user-profile-tier-tag">FREE</span>
+              </div>
+              <span class="user-chevron">▾</span>
             </div>
 
-            <!-- Logged in state -->
-            <div id="auth-logged-in" class="auth-user-row" style="display: none;">
-              <div class="user-profile-pill" id="user-profile-pill" tabindex="0">
-                <div class="user-avatar-circle" id="user-avatar-initial">U</div>
-                <div class="user-pill-meta">
-                  <span class="user-name-text" id="user-profile-name">Trader</span>
-                  <span class="user-tier-tag tier-tag-free" id="user-profile-tier-tag">FREE</span>
+            <!-- User Account Dropdown -->
+            <div class="user-dropdown-menu" id="user-dropdown-menu">
+              <div class="dropdown-user-header">
+                <div class="dropdown-avatar-wrap">
+                  <div class="dropdown-avatar-large" id="dropdown-avatar-large">U</div>
+                  <span class="dropdown-online-dot" title="Session Authenticated"></span>
                 </div>
-                <span class="user-chevron">▾</span>
+                <div class="dropdown-user-info">
+                  <div class="dropdown-display-name" id="dropdown-display-name">User Account</div>
+                  <div class="dropdown-email font-mono" id="dropdown-email">user@domain.com</div>
+                </div>
               </div>
 
-              <!-- User Account Dropdown -->
-              <div class="user-dropdown-menu" id="user-dropdown-menu">
-                <div class="dropdown-user-header">
-                  <div class="dropdown-avatar-wrap">
-                    <div class="dropdown-avatar-large" id="dropdown-avatar-large">U</div>
-                    <span class="dropdown-online-dot" title="Session Authenticated"></span>
+              <div class="dropdown-tier-card" id="dropdown-tier-card">
+                <div class="dropdown-tier-top">
+                  <div class="dropdown-tier-sub-group">
+                    <span class="dropdown-tier-sub">Current Plan</span>
+                    <span class="dropdown-tier-status-pill">ACTIVE</span>
                   </div>
-                  <div class="dropdown-user-info">
-                    <div class="dropdown-display-name" id="dropdown-display-name">User Account</div>
-                    <div class="dropdown-email font-mono" id="dropdown-email">user@domain.com</div>
+                  <span class="dropdown-tier-val" id="dropdown-tier-label">Free Tier</span>
+                </div>
+                <div class="dropdown-tier-perk" id="dropdown-tier-perk">1 Daily Selection · Delayed Latency</div>
+              </div>
+
+              <div class="dropdown-section-title">
+                <span>Switch / Upgrade Tier</span>
+                <span class="dropdown-title-hint">INSTANT ACCESS</span>
+              </div>
+              <div class="dropdown-tier-options">
+                <button type="button" class="dropdown-tier-choice" data-tier="free" onclick="window.switchUserTier('free')">
+                  <div class="dtc-info">
+                    <span class="dtc-dot dot-free"></span>
+                    <div>
+                      <div class="dtc-title">Free Community</div>
+                      <div class="dtc-sub">Public match board · Match #1 free</div>
+                    </div>
                   </div>
-                </div>
-
-                <div class="dropdown-tier-card" id="dropdown-tier-card">
-                  <div class="dropdown-tier-top">
-                    <div class="dropdown-tier-sub-group">
-                      <span class="dropdown-tier-sub">Current Plan</span>
-                      <span class="dropdown-tier-status-pill">ACTIVE</span>
-                    </div>
-                    <span class="dropdown-tier-val" id="dropdown-tier-label">Free Tier</span>
+                  <div class="dtc-badge-wrap">
+                    <span class="dtc-price font-mono">$0</span>
+                    <span class="dtc-active-pill">CURRENT</span>
                   </div>
-                  <div class="dropdown-tier-perk" id="dropdown-tier-perk">1 Daily Selection · Delayed Latency</div>
-                </div>
-
-                <div class="dropdown-section-title">
-                  <span>Switch / Upgrade Tier</span>
-                  <span class="dropdown-title-hint">INSTANT ACCESS</span>
-                </div>
-                <div class="dropdown-tier-options">
-                  <button type="button" class="dropdown-tier-choice" data-tier="free"
-                    onclick="window.switchUserTier('free')">
-                    <div class="dtc-info">
-                      <span class="dtc-dot dot-free"></span>
-                      <div>
-                        <div class="dtc-title">Free Community</div>
-                        <div class="dtc-sub">Public match board · Match #1 free</div>
-                      </div>
-                    </div>
-                    <div class="dtc-badge-wrap">
-                      <span class="dtc-price font-mono">$0</span>
-                      <span class="dtc-active-pill">CURRENT</span>
-                    </div>
-                  </button>
-                  <button type="button" class="dropdown-tier-choice" data-tier="tier1"
-                    onclick="window.switchUserTier('tier1')">
-                    <div class="dtc-info">
-                      <span class="dtc-dot dot-tier1"></span>
-                      <div>
-                        <div class="dtc-title">Tier 1 Sharp</div>
-                        <div class="dtc-sub">Picks #1-5 · Realtime Telegram alerts</div>
-                      </div>
-                    </div>
-                    <div class="dtc-badge-wrap">
-                      <span class="dtc-price font-mono">$19/mo</span>
-                      <span class="dtc-active-pill">CURRENT</span>
-                    </div>
-                  </button>
-                  <button type="button" class="dropdown-tier-choice featured" data-tier="tier2"
-                    onclick="window.switchUserTier('tier2')">
-                    <div class="dtc-info">
-                      <span class="dtc-dot dot-tier2"></span>
-                      <div>
-                        <div class="dtc-title">Tier 2 Pro <span class="dtc-pop">POPULAR</span></div>
-                        <div class="dtc-sub">All 15 games · Steam Radar &amp; Models</div>
-                      </div>
-                    </div>
-                    <div class="dtc-badge-wrap">
-                      <span class="dtc-price font-mono">$49/mo</span>
-                      <span class="dtc-active-pill">CURRENT</span>
-                    </div>
-                  </button>
-                  <button type="button" class="dropdown-tier-choice" data-tier="tier3"
-                    onclick="window.switchUserTier('tier3')">
-                    <div class="dtc-info">
-                      <span class="dtc-dot dot-tier3"></span>
-                      <div>
-                        <div class="dtc-title">Tier 3 VIP Syndicate</div>
-                        <div class="dtc-sub">Direct API &amp; Webhooks · Desk feed</div>
-                      </div>
-                    </div>
-                    <div class="dtc-badge-wrap">
-                      <span class="dtc-price font-mono">$149/mo</span>
-                      <span class="dtc-active-pill">CURRENT</span>
-                    </div>
-                  </button>
-                </div>
-
-                <div class="dropdown-divider"></div>
-
-                <button type="button" class="dropdown-btn-item" onclick="window.openAccountSettingsModal()">
-                  <svg class="dropdown-action-icon" viewBox="0 0 16 16" width="14" height="14" fill="none"
-                    stroke="currentColor" stroke-width="1.8">
-                    <path
-                      d="M6.5 1.5h3l.5 2.1a5 5 0 011.8 1l2-1 2.1 2.1-1 2a5 5 0 011 1.8l2.1.5v3l-2.1.5a5 5 0 01-1 1.8l1 2-2.1 2.1-2-1a5 5 0 01-1.8 1l-.5 2.1h-3l-.5-2.1a5 5 0 01-1.8-1l-2 1-2.1-2.1 1-2a5 5 0 01-1-1.8l-2.1-.5v-3l2.1-.5a5 5 0 011-1.8l-1-2 2.1-2.1 2 1a5 5 0 011.8-1l.5-2.1z" />
-                    <circle cx="8" cy="8" r="2.5" />
-                  </svg>
-                  <span>Account &amp; API Key Settings</span>
-                  <span class="dropdown-btn-arrow">→</span>
                 </button>
-
-                <button type="button" class="dropdown-btn-item logout" id="btn-header-logout">
-                  <svg class="dropdown-action-icon" viewBox="0 0 16 16" width="14" height="14" fill="none"
-                    stroke="currentColor" stroke-width="1.8">
-                    <path d="M6 14H3a1 1 0 01-1-1V3a1 1 0 011-1h3M11 11l3-3-3-3M14 8H6" />
-                  </svg>
-                  <span>Sign Out of Terminal</span>
+                <button type="button" class="dropdown-tier-choice" data-tier="tier1" onclick="window.switchUserTier('tier1')">
+                  <div class="dtc-info">
+                    <span class="dtc-dot dot-tier1"></span>
+                    <div>
+                      <div class="dtc-title">Tier 1 Sharp</div>
+                      <div class="dtc-sub">Picks #1-5 · Realtime Telegram alerts</div>
+                    </div>
+                  </div>
+                  <div class="dtc-badge-wrap">
+                    <span class="dtc-price font-mono">$19/mo</span>
+                    <span class="dtc-active-pill">CURRENT</span>
+                  </div>
+                </button>
+                <button type="button" class="dropdown-tier-choice featured" data-tier="tier2" onclick="window.switchUserTier('tier2')">
+                  <div class="dtc-info">
+                    <span class="dtc-dot dot-tier2"></span>
+                    <div>
+                      <div class="dtc-title">Tier 2 Pro <span class="dtc-pop">POPULAR</span></div>
+                      <div class="dtc-sub">All 15 games · Steam Radar &amp; Models</div>
+                    </div>
+                  </div>
+                  <div class="dtc-badge-wrap">
+                    <span class="dtc-price font-mono">$49/mo</span>
+                    <span class="dtc-active-pill">CURRENT</span>
+                  </div>
+                </button>
+                <button type="button" class="dropdown-tier-choice" data-tier="tier3" onclick="window.switchUserTier('tier3')">
+                  <div class="dtc-info">
+                    <span class="dtc-dot dot-tier3"></span>
+                    <div>
+                      <div class="dtc-title">Tier 3 VIP Syndicate</div>
+                      <div class="dtc-sub">Direct API &amp; Webhooks · Desk feed</div>
+                    </div>
+                  </div>
+                  <div class="dtc-badge-wrap">
+                    <span class="dtc-price font-mono">$149/mo</span>
+                    <span class="dtc-active-pill">CURRENT</span>
+                  </div>
                 </button>
               </div>
+
+              <div class="dropdown-divider"></div>
+
+              <button type="button" class="dropdown-btn-item" onclick="window.openAccountSettingsModal()">
+                <span>Account &amp; API Key Settings</span>
+                <span class="dropdown-btn-arrow">→</span>
+              </button>
+
+              <button type="button" class="dropdown-btn-item logout" id="btn-header-logout">
+                <span>Sign Out of Terminal</span>
+              </button>
             </div>
           </div>
         </div>
-
       </div>
     </div>
 
-    <!-- Level 2: Dedicated Navigation Deck -->
-    <div class="header-nav-bar">
-      <div class="header-container nav-deck-container">
-        <nav class="nav-rail" id="main-nav-tabs" aria-label="Main Navigation">
-          <!-- Trading Intelligence Views -->
-          <div class="nav-rail-group">
-            <button class="nav-rail-item active" id="tab-btn-overview" data-view="view-overview"
-              onclick="window.switchTab('overview')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <rect x="2" y="2" width="5" height="5" rx="1" />
-                <rect x="9" y="2" width="5" height="5" rx="1" />
-                <rect x="2" y="9" width="5" height="5" rx="1" />
-                <rect x="9" y="9" width="5" height="5" rx="1" />
-              </svg>
-              <span class="nav-label">Overview</span>
-            </button>
-            <button class="nav-rail-item" id="tab-btn-picks" data-view="view-picks" onclick="window.switchTab('picks')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <circle cx="8" cy="8" r="6" />
-                <circle cx="8" cy="8" r="2" />
-              </svg>
-              <span class="nav-label">Predictions</span>
-              <span class="nav-counter" id="picks-count-badge">0</span>
-            </button>
-            <button class="nav-rail-item" id="tab-btn-forecast" data-view="view-forecast"
-              onclick="window.switchTab('forecast')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <line x1="2" y1="13" x2="14" y2="13" />
-                <line x1="4" y1="9" x2="4" y2="13" />
-                <line x1="8" y1="5" x2="8" y2="13" />
-                <line x1="12" y1="7" x2="12" y2="13" />
-              </svg>
-              <span class="nav-label">Forecasts</span>
-              <span class="nav-counter" id="forecast-count-badge"></span>
-            </button>
-            <button class="nav-rail-item" id="tab-btn-ledger" data-view="view-ledger"
-              onclick="window.switchTab('ledger')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z" />
-                <path d="M5 6h6M5 9h4" />
-              </svg>
-              <span class="nav-label">Audited Ledger</span>
-            </button>
-          </div>
-
-          <div class="nav-rail-sep"></div>
-
-          <!-- Quantitative Desk & Alpha Views -->
-          <div class="nav-rail-group">
-            <button class="nav-rail-item" id="tab-btn-calibration" data-view="view-calibration"
-              onclick="window.switchTab('calibration')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <path d="M2 13a6 6 0 0112 0" />
-                <line x1="8" y1="8" x2="11" y2="5" />
-              </svg>
-              <span class="nav-label">Accuracy &amp; Stats</span>
-            </button>
-            <button class="nav-rail-item" id="tab-btn-calculator" data-view="view-calculator"
-              onclick="window.switchTab('calculator')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <rect x="3" y="2" width="10" height="12" rx="1.5" />
-                <line x1="5" y1="5" x2="11" y2="5" />
-                <circle cx="5.5" cy="8.5" r=".7" />
-                <circle cx="8" cy="8.5" r=".7" />
-                <circle cx="10.5" cy="8.5" r=".7" />
-                <circle cx="5.5" cy="11.5" r=".7" />
-                <circle cx="8" cy="11.5" r=".7" />
-                <circle cx="10.5" cy="11.5" r=".7" />
-              </svg>
-              <span class="nav-label">Kelly Sizer</span>
-            </button>
-            <button class="nav-rail-item nav-item-vip" id="tab-btn-alpha" data-view="view-alpha"
-              onclick="window.switchTab('alpha')">
-              <span class="nav-vip-spark">★</span>
-              <span class="nav-label">VIP Alpha</span>
-            </button>
-            <button class="nav-rail-item nav-item-audit" id="tab-btn-backtest" data-view="view-backtest"
-              onclick="window.switchTab('backtest')">
-              <svg class="nav-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
-                stroke-width="1.8">
-                <circle cx="8" cy="8" r="6" />
-                <polyline points="8 4 8 8 11 10" />
-              </svg>
-              <span class="nav-label">Backtest Audit</span>
-            </button>
-          </div>
-        </nav>
-
-        <!-- Live Consensus Dropdown Trigger Button -->
-        <button type="button" class="btn-ticker-trigger" id="btn-ticker-trigger"
-          onclick="window.toggleTickerDropdown(event)" title="View Live Market Consensus Feed" aria-expanded="false"
-          aria-controls="market-ticker">
-          <span class="ticker-pulse"></span>
-          <span class="btn-ticker-trigger-text">Live Consensus</span>
-          <svg class="ticker-trigger-arrow" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
-            stroke-width="2.2">
-            <polyline points="3 6 8 11 13 6" />
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- Live Market Ticker Tape (Drops on click, collapses on scroll past or view change) -->
-    <div class="market-ticker" id="market-ticker" aria-expanded="false">
-      <div class="ticker-label">
-        <span class="ticker-pulse"></span>
-        <span>LIVE CONSENSUS</span>
-      </div>
-      <div class="ticker-track-wrap">
-        <div class="ticker-track" id="ticker-track"></div>
-      </div>
-      <div class="ticker-actions">
-        <button type="button" class="ticker-toggle-btn" id="ticker-toggle-btn" onclick="window.closeTickerDropdown()"
-          title="Close Live Feed" aria-label="Close Live Feed">
-          <svg class="ticker-toggle-icon" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor"
-            stroke-width="2.2">
-            <line x1="3" y1="3" x2="13" y2="13" />
-            <line x1="13" y1="3" x2="3" y2="13" />
-          </svg>
-          <span class="ticker-toggle-text">Close</span>
-        </button>
-      </div>
+    <!-- Hidden Market Ticker to preserve API handlers -->
+    <div class="market-ticker" id="market-ticker" style="display:none;" aria-expanded="false">
+      <div class="ticker-track" id="ticker-track"></div>
+      <button type="button" id="btn-ticker-trigger" style="display:none;"></button>
     </div>
   </header>
 
@@ -355,79 +212,339 @@
     <section class="view-panel active" id="view-overview">
       <div class="landing-wrap">
 
-        <!-- Hero Section -->
-        <div class="hero-section">
-          <div class="hero-kicker">
-            <span class="hero-kicker-dot"></span>
-            <span>INSTITUTIONAL QUANTITATIVE SPORTS VALUATION</span>
-          </div>
-
-          <h1 class="hero-heading">
-            Mathematically Disciplined Sports Predictions.
-            <span class="hero-heading-glow">Zero Emotion. Pure Alpha.</span>
-          </h1>
-
-          <div class="hero-thesis-pod">
-            <div class="thesis-header-bar">
-              <span class="thesis-kicker">
-                <span class="thesis-dot"></span>
-                <span>CORE ENGINE THESIS · FAIR MARKET RECONSTRUCTION</span>
-              </span>
-              <span class="thesis-badge font-mono">100% DETERMINISTIC</span>
-            </div>
-            <p class="hero-subtext">
-              While recreational bettors rely on media hype and bookmakers extract <strong>5% to 8% hidden vigorish
-                margins</strong>,
-              <strong>LISA</strong> reconstructs unbiased fair probability distributions across global sportsbooks,
-              <strong>detecting pricing inefficiencies</strong>, <strong>suppressing sucker traps</strong>, and
-              <strong>allocating mathematically optimal bankroll stakes</strong>.
-            </p>
-            <div class="thesis-highlights-row">
-              <div class="thesis-tag"><span class="thesis-check">✓</span> Vig-Free Fair Probabilities</div>
-              <div class="thesis-tag"><span class="thesis-check">✓</span> Negative-EV Trap Suppression</div>
-              <div class="thesis-tag"><span class="thesis-check">✓</span> Fractional Kelly Compounding</div>
+        <!-- Target Hero Section Matching media_1790204360706.jpg -->
+        <div class="target-hero-section">
+          <!-- Left: Hero Content -->
+          <div class="hero-left-col">
+            <div class="hero-kicker-tag">AI-POWERED PREDICTIONS. REAL-TIME ODDS.</div>
+            <h1 class="hero-main-title">
+              <span class="title-line-1">PREDICT</span>
+              <span class="title-line-2">THE PLAY</span>
+            </h1>
+            <p class="hero-tagline-text">Smarter picks. Bigger wins.</p>
+            <div class="hero-cta-wrap">
+              <button type="button" class="btn-hero-predict-lime" onclick="window.switchTab('picks')">
+                <span>MAKE YOUR PREDICTION</span>
+                <span class="btn-arrow-icon">→</span>
+              </button>
             </div>
           </div>
 
-          <div class="hero-actions-row">
-            <button type="button" class="btn-cta-primary" onclick="window.switchTab('picks')">
-              <span>View Today's Consensus Slate</span>
-              <span class="btn-arrow">→</span>
-            </button>
-            <button type="button" class="btn-cta-secondary" onclick="window.switchTab('ledger')">
-              Audited Ledger (100% Tracked)
-            </button>
-            <button type="button" class="btn-cta-telegram" onclick="window.openTelegramModal()">
-              <span>Join Free Telegram Alerts</span>
+          <!-- Right: Hero Visual Showcase Matching Reference Image -->
+          <div class="hero-right-col">
+            <div class="hero-athletes-display">
+              <img src="assets/hero_scene_perfect.png" alt="Xpredict Athletes" class="hero-athletes-img">
+              <a href="#view-picks" onclick="window.switchTab('picks')" class="hero-live-odds-hitbox" title="View Live Odds"></a>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 Feature Pills Bar Matching Reference -->
+        <div class="target-features-bar">
+          <div class="feature-bar-item">
+            <div class="feature-bar-icon">
+              <!-- Brain Icon -->
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-2.04z"/>
+                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-2.04z"/>
+              </svg>
+            </div>
+            <div class="feature-bar-text">
+              <div class="feature-bar-title">AI INSIGHTS</div>
+              <div class="feature-bar-sub">Machine learning powered by real data.</div>
+            </div>
+          </div>
+
+          <div class="feature-bar-item">
+            <div class="feature-bar-icon">
+              <!-- Lightning Bolt Icon -->
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+              </svg>
+            </div>
+            <div class="feature-bar-text">
+              <div class="feature-bar-title">REAL-TIME</div>
+              <div class="feature-bar-sub">Live odds and match updates as they happen.</div>
+            </div>
+          </div>
+
+          <div class="feature-bar-item">
+            <div class="feature-bar-icon">
+              <!-- Shield Checkmark Icon -->
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <polyline points="9 12 11 14 15 10"/>
+              </svg>
+            </div>
+            <div class="feature-bar-text">
+              <div class="feature-bar-title">SMART PICKS</div>
+              <div class="feature-bar-sub">Data-driven predictions, proven to win.</div>
+            </div>
+          </div>
+
+          <div class="feature-bar-item">
+            <div class="feature-bar-icon">
+              <!-- Community Icon -->
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+            </div>
+            <div class="feature-bar-text">
+              <div class="feature-bar-title">COMPETITION</div>
+              <div class="feature-bar-sub">Join a community of winners and climb the leaderboard.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Matchups & Leaderboard Row -->
+        <div class="target-matchups-row">
+          <!-- Matchup Card 1 -->
+          <div class="match-card-target card-border-lime" id="target-m1-card">
+            <div class="mct-header">
+              <div class="mct-league-time">
+                <span class="mct-badge-league text-lime" id="target-m1-league">NFL</span>
+                <span class="mct-time-text" id="target-m1-time">Today 2:30 PM</span>
+              </div>
+              <a href="#view-forecast" class="mct-link-analysis" id="target-m1-analysis" onclick="window.switchTab('forecast')">VIEW ANALYSIS →</a>
+            </div>
+
+            <div class="mct-teams-vs-row">
+              <div class="mct-team-col left">
+                <div class="mct-team-name" id="target-m1-home-name">BALTIMORE<br>RAVENS</div>
+                <div class="mct-team-record font-mono" id="target-m1-home-record">6-4</div>
+              </div>
+              <div class="mct-helmets-vs" id="target-m1-visual">
+                <img src="assets/ravens_trans.png" alt="Ravens" class="mct-helmet-img">
+                <span class="mct-vs-label">VS</span>
+                <img src="assets/chiefs_trans.png" alt="Chiefs" class="mct-helmet-img">
+              </div>
+              <div class="mct-team-col right">
+                <div class="mct-team-name" id="target-m1-away-name">KANSAS CITY<br>CHIEFS</div>
+                <div class="mct-team-record font-mono" id="target-m1-away-record">8-2</div>
+              </div>
+            </div>
+
+            <div class="mct-prob-box">
+              <div class="mct-prob-title">WIN PROBABILITY</div>
+              <div class="mct-prob-bar-row">
+                <span class="mct-prob-val val-left font-mono text-lime" id="target-m1-prob-home">63%</span>
+                <div class="mct-prob-track">
+                  <div class="mct-prob-fill-left" id="target-m1-fill-home" style="width: 63%;"></div>
+                  <div class="mct-prob-fill-right" id="target-m1-fill-away" style="width: 37%;"></div>
+                </div>
+                <span class="mct-prob-val val-right font-mono" id="target-m1-prob-away">37%</span>
+              </div>
+            </div>
+
+            <button type="button" class="btn-mct-predict-now" id="target-m1-btn-predict" onclick="window.switchTab('picks')">
+              PREDICT NOW
             </button>
           </div>
 
-          <!-- Executive Telemetry KPI Grid -->
-          <div class="hero-kpi-grid">
-            <div class="hero-kpi-card">
-              <div class="kpi-val font-mono text-pos" id="hero-kpi-winrate">&mdash;</div>
-              <div class="kpi-label">Verified Historical Win Rate</div>
-              <div class="kpi-caption" id="hero-kpi-winrate-caption">42 wins out of 50 recent audited predictions</div>
+          <!-- Matchup Card 2 -->
+          <div class="match-card-target card-border-amber" id="target-m2-card">
+            <div class="mct-header">
+              <div class="mct-league-time">
+                <span class="mct-badge-league text-lime" id="target-m2-league">NBA</span>
+                <span class="mct-time-text" id="target-m2-time">Today 7:00 PM</span>
+              </div>
+              <a href="#view-forecast" class="mct-link-analysis" id="target-m2-analysis" onclick="window.switchTab('forecast')">VIEW ANALYSIS →</a>
             </div>
 
-            <div class="hero-kpi-card">
-              <div class="kpi-val font-mono text-brand" id="hero-kpi-record">&mdash;</div>
-              <div class="kpi-label">Transparent Public Record</div>
-              <div class="kpi-caption" id="hero-kpi-record-caption">Every signal timestamped before kickoff</div>
+            <div class="mct-teams-vs-row">
+              <div class="mct-team-col left">
+                <div class="mct-team-name" id="target-m2-home-name">DENVER<br>NUGGETS</div>
+                <div class="mct-team-record font-mono" id="target-m2-home-record">5-3</div>
+              </div>
+              <div class="mct-helmets-vs" id="target-m2-visual">
+                <img src="assets/nuggets_trans.png" alt="Nuggets" class="mct-helmet-img">
+                <span class="mct-vs-label">VS</span>
+                <img src="assets/lakers_trans.png" alt="Lakers" class="mct-helmet-img">
+              </div>
+              <div class="mct-team-col right">
+                <div class="mct-team-name" id="target-m2-away-name">LOS ANGELES<br>LAKERS</div>
+                <div class="mct-team-record font-mono" id="target-m2-away-record">6-2</div>
+              </div>
             </div>
 
-            <div class="hero-kpi-card">
-              <div class="kpi-val font-mono text-violet" id="hero-kpi-clv">&mdash;</div>
-              <div class="kpi-label">Average Odds Advantage</div>
-              <div class="kpi-caption" id="hero-kpi-clv-caption">Consistently beats final closing sportsbook odds</div>
+            <div class="mct-prob-box">
+              <div class="mct-prob-title">WIN PROBABILITY</div>
+              <div class="mct-prob-bar-row">
+                <span class="mct-prob-val val-left font-mono text-lime" id="target-m2-prob-home">58%</span>
+                <div class="mct-prob-track">
+                  <div class="mct-prob-fill-left" id="target-m2-fill-home" style="width: 58%;"></div>
+                  <div class="mct-prob-fill-right" id="target-m2-fill-away" style="width: 42%;"></div>
+                </div>
+                <span class="mct-prob-val val-right font-mono" id="target-m2-prob-away">42%</span>
+              </div>
             </div>
 
-            <div class="hero-kpi-card">
-              <div class="kpi-val font-mono text-warn" id="hero-kpi-traps">ACTIVE</div>
-              <div class="kpi-label">Negative-EV Trap Filter</div>
-              <div class="kpi-caption" id="hero-kpi-traps-caption">Bookmaker sucker lines automatically flagged and
-                passed</div>
+            <button type="button" class="btn-mct-predict-now" id="target-m2-btn-predict" onclick="window.switchTab('picks')">
+              PREDICT NOW
+            </button>
+          </div>
+
+          <!-- Top Players Leaderboard Card -->
+          <div class="match-card-target leaderboard-target-card">
+            <div class="mct-header">
+              <span class="lb-target-title">TOP PLAYERS</span>
+              <a href="#view-ledger" class="mct-link-analysis" onclick="window.switchTab('ledger')">VIEW ALL →</a>
             </div>
+
+            <div class="lb-table-wrap">
+              <table class="lb-target-table">
+                <thead>
+                  <tr>
+                    <th class="th-rank">#</th>
+                    <th class="th-player">PLAYER</th>
+                    <th class="th-picks">PICKS</th>
+                    <th class="th-winrate">WIN RATE</th>
+                  </tr>
+                </thead>
+                <tbody id="target-leaderboard-tbody">
+                  <tr>
+                    <td><span class="lb-rank-badge badge-first">1</span></td>
+                    <td class="td-player-cell">
+                      <div class="player-avatar-mini">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                      </div>
+                      <span class="player-name-text">PlayMaker</span>
+                    </td>
+                    <td class="font-mono td-picks">4,532</td>
+                    <td class="font-mono text-lime td-winrate">92%</td>
+                  </tr>
+                  <tr>
+                    <td><span class="lb-rank-badge badge-second">2</span></td>
+                    <td class="td-player-cell">
+                      <div class="player-avatar-mini">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                      </div>
+                      <span class="player-name-text">DropShot</span>
+                    </td>
+                    <td class="font-mono td-picks">4,215</td>
+                    <td class="font-mono text-lime td-winrate">89%</td>
+                  </tr>
+                  <tr>
+                    <td><span class="lb-rank-badge badge-third">3</span></td>
+                    <td class="td-player-cell">
+                      <div class="player-avatar-mini">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                      </div>
+                      <span class="player-name-text">StatKing</span>
+                    </td>
+                    <td class="font-mono td-picks">3,865</td>
+                    <td class="font-mono text-lime td-winrate">86%</td>
+                  </tr>
+                  <tr>
+                    <td><span class="lb-rank-badge">4</span></td>
+                    <td class="td-player-cell">
+                      <div class="player-avatar-mini">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                      </div>
+                      <span class="player-name-text">GoalGetter</span>
+                    </td>
+                    <td class="font-mono td-picks">3,720</td>
+                    <td class="font-mono text-lime td-winrate">82%</td>
+                  </tr>
+                  <tr>
+                    <td><span class="lb-rank-badge">5</span></td>
+                    <td class="td-player-cell">
+                      <div class="player-avatar-mini">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+                      </div>
+                      <span class="player-name-text">AcePicks</span>
+                    </td>
+                    <td class="font-mono td-picks">3,412</td>
+                    <td class="font-mono text-lime td-winrate">78%</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Section Grid -->
+        <!-- Bottom Row Matching Reference Image -->
+        <div class="target-bottom-row">
+          <!-- Col 1: AI & Competition Unified Card -->
+          <div class="target-bottom-ai-card">
+            <!-- Part 1: AI That Knows Sports -->
+            <div class="bottom-ai-intro">
+              <h2 class="bottom-ai-heading">
+                <span class="text-white">AI THAT</span><br>
+                <span class="text-lime">KNOWS SPORTS</span>
+              </h2>
+              <p class="bottom-ai-desc">
+                Advanced machine learning analyzes stats,<br>
+                trends, and real-time data to give you the<br>
+                edge, every time.
+              </p>
+            </div>
+
+            <!-- Part 2: Stats (92.7% & 1.2M+) -->
+            <div class="bottom-ai-stats">
+              <div class="ai-stat-item">
+                <div class="ai-stat-icon">
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+                    <polyline points="16 7 22 7 22 13"></polyline>
+                    <line x1="2" y1="20" x2="22" y2="20"></line>
+                  </svg>
+                </div>
+                <div class="ai-stat-meta">
+                  <div class="ai-stat-val font-mono" id="target-model-acc-val">92.7%</div>
+                  <div class="ai-stat-lbl">MODEL ACCURACY</div>
+                </div>
+              </div>
+
+              <div class="ai-stat-item">
+                <div class="ai-stat-icon">
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#ccff00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                  </svg>
+                </div>
+                <div class="ai-stat-meta">
+                  <div class="ai-stat-val font-mono" id="target-predictions-count-val">1.2M+</div>
+                  <div class="ai-stat-lbl">PREDICTIONS MADE</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Part 3: Center Phone Mockup -->
+            <div class="bottom-phone-wrap">
+              <img src="assets/phone_clean_trans.png" alt="Xpredict Mobile App" class="phone-mockup-img">
+            </div>
+
+            <!-- Part 4: Built for Competition -->
+            <div class="bottom-comp-intro">
+              <h3 class="comp-heading">
+                <span class="text-white">BUILT FOR</span><br>
+                <span class="text-lime">COMPETITION</span>
+              </h3>
+              <p class="comp-desc">
+                Join thousands of players making smarter<br>
+                picks and climbing the leaderboard.
+              </p>
+            </div>
+          </div>
+
+          <!-- Col 2: Solid Lime Banner Button Under Top Players -->
+          <div class="target-bottom-cta-col">
+            <a href="#view-picks" class="banner-think-predict-win" onclick="window.switchTab('picks')">
+              <div class="banner-tpw-left">
+                <span class="banner-tpw-trophy">
+                  <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+                    <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94A5.01 5.01 0 0 0 11 15.9V19H7v2h10v-2h-4v-3.1a5.01 5.01 0 0 0 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/>
+                  </svg>
+                </span>
+                <span class="banner-tpw-text">THINK. PREDICT. WIN.</span>
+              </div>
+              <span class="banner-tpw-arrow">→</span>
+            </a>
           </div>
         </div>
 
@@ -693,11 +810,11 @@
             </div>
             <div class="teaser-status-badge">
               <span class="live-pulse-dot"></span>
-              <span>12 Predictions Analyzed Today</span>
+              <span id="teaser-predictions-count">12 Predictions Analyzed Today</span>
             </div>
           </div>
 
-          <div class="teaser-grid">
+          <div class="teaser-grid" id="teaser-items-grid">
             <div class="teaser-item">
               <div class="teaser-item-header">
                 <span class="teaser-sport-tag">NBA</span>
@@ -764,7 +881,7 @@
 
           <div class="teaser-actions">
             <button type="button" class="btn-cta-primary" onclick="window.switchTab('picks')">
-              Access All 12 Match Predictions in Terminal →
+              Access All <span id="teaser-btn-count">12</span> Match Predictions in Terminal →
             </button>
           </div>
         </div>
@@ -1962,7 +2079,7 @@
     <div class="modal-backdrop" id="checkout-modal" style="display: none;" onclick="window.closeCheckoutModal()">
       <div class="modal-card checkout-card" onclick="event.stopPropagation()">
         <div class="modal-header">
-          <div class="modal-header-icon" style="background: linear-gradient(135deg, var(--brand-500), #0369A1);"><svg
+          <div class="modal-header-icon" style="background: linear-gradient(135deg, #ccff00, #10b981); color: #070a08;"><svg
               viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
@@ -2028,7 +2145,7 @@
       onclick="window.closeAccountSettingsModal()">
       <div class="modal-card account-card" onclick="event.stopPropagation()">
         <div class="modal-header">
-          <div class="modal-header-icon" style="background: linear-gradient(135deg, #3B82F6, #8B5CF6);"><svg
+          <div class="modal-header-icon" style="background: linear-gradient(135deg, #ccff00, #10b981); color: #070a08;"><svg
               viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3"></circle>
