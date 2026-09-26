@@ -148,47 +148,12 @@ function fallbackCopy(text) {
 }
 
 function getBookingCodeForPick(p, bookId) {
-  const book = SPORTSBOOKS.find(b => b.id === bookId);
-  if (book && book.hasBookingCode === false) {
-    return 'DIRECT_LINK';
-  }
-
-  // 1. Check live booking codes override from state if loaded
-  if (state.liveBookingCodes && state.liveBookingCodes.picks) {
-    const pickOverride = (p && (state.liveBookingCodes.picks[p.match_id] || state.liveBookingCodes.picks[p.dedupe_key]));
-    if (pickOverride && pickOverride[bookId]) {
-      return pickOverride[bookId];
-    }
-  }
-
-  // 2. Check p.booking_codes if provided
+  // LISA has no bookmaker integration, so it never mints booking codes.
+  // Only a code that actually exists upstream is ever shown.
   if (p && p.booking_codes && p.booking_codes[bookId]) {
-    let code = p.booking_codes[bookId];
-    // Strip legacy prefixes if any remain (e.g. SB-, 1X-, B9-, BW-, FC-)
-    return code.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
+    return p.booking_codes[bookId].replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
   }
-
-  // 3. Fallback deterministic generator with realistic bookmaker formats
-  const seed = `${(p && p.match_id) || 'match'}:${(p && p.market) || 'h2h'}:${(p && p.outcome_name) || 'pick'}:${bookId}`;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const rawHex = Math.abs(hash).toString(36).toUpperCase().padStart(8, '0');
-
-  if (bookId === 'sportybet') {
-    return `BC${rawHex.slice(0, 4)}`;
-  } else if (bookId === 'football_com') {
-    return `FC${rawHex.slice(0, 5)}`;
-  } else if (bookId === '1xbet') {
-    return rawHex.slice(0, 5);
-  } else if (bookId === 'bet9ja') {
-    return `B9${rawHex.slice(0, 4)}`;
-  } else if (bookId === 'betway') {
-    return `BW${rawHex.slice(0, 5)}`;
-  }
-  return rawHex.slice(0, 6);
+  return null;
 }
 
 function renderBetSlipBox(p) {
@@ -207,7 +172,7 @@ function renderBetSlipBox(p) {
         class="book-logo-chip ${isActive ? 'active' : ''}" 
         data-book="${b.id}"
         data-match="${matchId}"
-        title="Switch to ${b.name} ${b.hasBookingCode !== false ? 'Booking Code' : 'Direct Slip'}"
+        title="Open this selection on ${b.name}"
         onclick="window.selectBookmakerForPick('${matchId}', '${b.id}')"
         style="${isActive ? `border-color: ${b.brandColor}; box-shadow: 0 0 8px ${b.brandColor}40;` : ''}">
         ${b.svg}
@@ -227,23 +192,23 @@ function renderBetSlipBox(p) {
       </div>
 
       <div class="bet-code-display-row">
-        <div class="bet-code-pill ${isDirectLinkOnly ? 'is-direct-link' : ''}" 
-          onclick="${isDirectLinkOnly ? `window.open('${directLink}', '_blank', 'noopener,noreferrer')` : `window.copyBookingCode('${matchId}')`}" 
-          title="${isDirectLinkOnly ? `Click to open on ${currentBook.name}` : `Click to copy ${currentBook.name} code`}">
+        <div class="bet-code-pill is-direct-link" 
+          onclick="window.open('${directLink}', '_blank', 'noopener,noreferrer')" 
+          title="Open the ${currentBook.name} site to price this selection yourself">
           <span class="pill-book-dot" style="background: ${currentBook.brandColor};"></span>
           <span class="pill-book-tag" id="pill-book-tag-${matchId}">${currentBook.name}:</span>
-          <span class="pill-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="pill-code-val-${matchId}">
-            ${isDirectLinkOnly ? 'Direct slip, no code needed' : currentCode}
+          <span class="pill-code-val tabular-nums link-mode" id="pill-code-val-${matchId}">
+            ${currentCode ? `code ${currentCode}` : 'no booking code \u2014 open the book to place it'}
           </span>
         </div>
 
         <div class="bet-code-actions">
           <button type="button" 
-            class="btn-copy-code ${isDirectLinkOnly ? 'btn-link-action' : ''}" 
+            class="btn-copy-code btn-link-action" 
             id="copy-btn-${matchId}" 
-            onclick="${isDirectLinkOnly ? `window.open('${directLink}', '_blank', 'noopener,noreferrer')` : `window.copyBookingCode('${matchId}')`}"
-            title="${isDirectLinkOnly ? `Open selection on ${currentBook.name}` : `Copy ${currentBook.name} code to clipboard`}">
-            <span class="copy-label">${isDirectLinkOnly ? 'Open' : 'Copy'}</span>
+            onclick="window.open('${directLink}', '_blank', 'noopener,noreferrer')"
+            title="Open ${currentBook.name} to place this selection">
+            <span class="copy-label">Open</span>
           </button>
           <a href="${directLink}" 
             target="_blank" 
@@ -272,23 +237,20 @@ function renderAccumulatorBanner() {
     return;
   }
 
-  const combinedOdds = diamonds.reduce((acc, p) => acc * (p.best_odds || 1.15), 1.0);
-  const combinedProb = diamonds.reduce((acc, p) => acc * (p.p_true || 0.85), 1.0);
+  // Only real prices participate: a leg without a best price cannot be costed.
+  const pricedLegs = diamonds.filter(p => p.best_odds && p.p_true);
+  if (pricedLegs.length < 2) {
+    bannerContainer.innerHTML = '';
+    return;
+  }
+  const combinedOdds = pricedLegs.reduce((acc, p) => acc * p.best_odds, 1.0);
+  const combinedProb = pricedLegs.reduce((acc, p) => acc * p.p_true, 1.0);
   const currentBookId = state.activeAccuBook || 'sportybet';
   const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
-  const isDirectLinkOnly = currentBook.hasBookingCode === false;
-
-  let accuCode = (state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
-  if (!accuCode) {
-    if (currentBookId === 'sportybet') accuCode = 'BC792K';
-    else if (currentBookId === 'football_com') accuCode = 'FC82910';
-    else if (currentBookId === '1xbet') accuCode = 'W49TG';
-    else if (currentBookId === 'bet9ja') accuCode = 'B941K2';
-    else if (currentBookId === 'betway') accuCode = 'BW44108';
-    else accuCode = 'ACCU5X';
-  } else {
-    accuCode = accuCode.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
-  }
+  const isDirectLinkOnly = true;
+  // LISA has no bookmaker integration, so an accumulator code is only shown
+  // when a genuine one exists in the payload. Otherwise the user prices it out.
+  const accuCode = (state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]) || null;
 
   const chipsHtml = SPORTSBOOKS.map(b => {
     const isActive = b.id === currentBookId;
@@ -318,10 +280,10 @@ function renderAccumulatorBanner() {
   bannerContainer.innerHTML = `
     <div class="accumulator-banner">
       <div class="accumulator-left">
-        <div class="accumulator-badge">1-Click Multi-Bet Slip (Parlay)</div>
-        <div class="accumulator-title">Today's ${diamonds.length}-Fold Diamond High-Conviction Slip</div>
+        <div class="accumulator-badge">Live Multi-Bet Slip (Parlay)</div>
+        <div class="accumulator-title">Current ${pricedLegs.length}-Fold Consensus Slip</div>
         <div class="accumulator-meta">
-          <span>${diamonds.length} Elite Consensus Legs</span>
+          <span>${pricedLegs.length} priced consensus legs</span>
           <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span>
           <span>${kickoffLabel}</span>
           <span style="color: var(--accent-emerald); font-weight: 700;">+${parlayEv.toFixed(1)}% Combined EV</span>
@@ -340,14 +302,14 @@ function renderAccumulatorBanner() {
             title="${isDirectLinkOnly ? `Open on ${currentBook.name}` : `Click to copy 5-Game Slip Code`}">
             <span class="accu-book-name" id="accu-book-label">${currentBook.name}:</span>
             <span class="accu-code-val tabular-nums ${isDirectLinkOnly ? 'link-mode' : ''}" id="accu-code-display">
-              ${isDirectLinkOnly ? 'Direct parlay selections' : accuCode}
+              ${accuCode ? accuCode : 'no code \u2014 build this slip in the book'}
             </span>
           </div>
           <button type="button" 
             class="btn-accu-copy" 
             id="accu-copy-btn" 
             onclick="${isDirectLinkOnly ? `window.open('${currentBook.url}', '_blank', 'noopener,noreferrer')` : `window.copyAccumulatorCode()`}">
-            <span>${isDirectLinkOnly ? 'Open' : 'Copy'} ${diamonds.length}-Fold Slip</span>
+            <span>Open ${pricedLegs.length}-Fold Slip</span>
           </button>
         </div>
       </div>
@@ -463,43 +425,28 @@ export function startKickoffCountdown() {
 
 async function loadData() {
   try {
-    const [res, liveRes, fcRes, tgRes] = await Promise.all([
-      fetch('data/dashboard.json'),
-      fetch('data/live_booking_codes.json').catch(() => null),
-      fetch('data/forecast.json').catch(() => null),
-      fetch('data/tiers.json').catch(() => null)
+    const [res, fcRes, tgRes] = await Promise.all([
+      fetch('/api/dashboard', { cache: 'no-cache' }),
+      fetch('/api/forecast', { cache: 'no-cache' }).catch(() => null),
+      fetch('/api/tiers', { cache: 'no-cache' }).catch(() => null)
     ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
     renderProvenanceBanner();
-
-    if (liveRes && liveRes.ok) {
-      try {
-        state.liveBookingCodes = await liveRes.json();
-        if (state.liveBookingCodes && state.liveBookingCodes.accumulator_booking_codes) {
-          state.data.accumulator_booking_codes = Object.assign(
-            {},
-            state.data.accumulator_booking_codes || {},
-            state.liveBookingCodes.accumulator_booking_codes
-          );
-        }
-      } catch (e) {
-        console.warn('Could not parse live booking codes config:', e);
-      }
-    }
+    renderLiveStatusBanner();
 
     if (fcRes && fcRes.ok) {
       try {
         state.forecast = await fcRes.json();
       } catch (e) {
-        console.warn('Could not parse forecast.json:', e);
+        console.warn('Could not parse forecast response:', e);
       }
     }
     if (tgRes && tgRes.ok) {
       try {
         state.tierCatalog = await tgRes.json();
       } catch (e) {
-        console.warn('Could not parse tiers.json:', e);
+        console.warn('Could not parse tier catalog:', e);
       }
     }
 
@@ -511,11 +458,31 @@ async function loadData() {
     if (grid) {
       grid.innerHTML = `
         <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-secondary);">
-          <p style="font-size: 16px; margin-bottom: 8px;">Waiting for pipeline cycle data...</p>
-          <p style="font-size: 13px; color: var(--text-muted);">Run <code>python -m lisa export-web</code> (real archive audit plus live cycle) to populate dashboard data.</p>
+          <p style="font-size: 16px; margin-bottom: 8px;">Live feed unavailable.</p>
+          <p style="font-size: 13px; color: var(--text-muted);">LISA shows real data only. The odds poller has not completed a cycle, or the ledger is unreachable.</p>
         </div>
       `;
     }
+  }
+}
+
+function renderLiveStatusBanner() {
+  const banner = document.getElementById('live-status-banner');
+  if (!banner) return;
+  const live = (state.data && state.data.live) || {};
+  const minutes = live.age_sec == null ? null : Math.round(live.age_sec / 60);
+  if (live.state === 'live') {
+    banner.style.display = 'block';
+    banner.className = 'live-banner live';
+    banner.textContent = `Live odds feed \u00b7 last cycle ${minutes < 1 ? 'just now' : minutes + ' min ago'} \u00b7 ${live.matches_observed || 0} fixtures observed`;
+  } else if (live.state === 'stale') {
+    banner.style.display = 'block';
+    banner.className = 'live-banner stale';
+    banner.textContent = `Last real observation ${minutes} min ago \u2014 the poller has not refreshed (quota or outage). No prices below are current.`;
+  } else {
+    banner.style.display = 'block';
+    banner.className = 'live-banner none';
+    banner.textContent = 'No live odds observation yet. LISA will not display prices until the poller completes a real cycle.';
   }
 }
 
@@ -524,7 +491,7 @@ function startDashboardPolling() {
   if (dashboardPollingTimer) clearInterval(dashboardPollingTimer);
   dashboardPollingTimer = setInterval(async () => {
     try {
-      const res = await fetch('data/dashboard.json', { cache: 'no-cache' });
+      const res = await fetch('/api/dashboard', { cache: 'no-cache' });
       if (!res.ok) return;
       const freshData = await res.json();
       const freshGen = freshData && freshData.meta && freshData.meta.generated_at;
@@ -543,7 +510,7 @@ function startDashboardPolling() {
 function renderProvenanceBanner() {
   const banner = document.getElementById('provenance-banner');
   if (!banner) return;
-  const prov = state.data && state.data.data_provenance;
+  const prov = state.data && (state.data.meta && state.data.meta.data_provenance || state.data.data_provenance);
   const demo = (prov && prov.synthetic) || (state.data && state.data.meta && state.data.meta.demo);
   banner.style.display = demo ? 'block' : 'none';
   if (demo && prov && prov.statement) {
@@ -559,7 +526,7 @@ function renderAll() {
   renderLedger();
   renderCalibration();
   renderTier3Alpha();
-  renderBacktest();
+  renderBacktest();  // resolves async from /api/backtest
   renderForecastBoard();
   renderTierMatrix();
   renderTicker();
@@ -710,57 +677,61 @@ function renderTargetLandingData() {
     }
   }
 
-  // 3. Dynamic Top Players Leaderboard
+  // 3. Ledger leaderboard — real graded records only, no invented members.
   const lbTbody = document.getElementById('target-leaderboard-tbody');
   if (lbTbody) {
-    const topPlayers = [
-      { rank: 1, name: 'PlayMaker', badge: 'badge-first', picks: 4532, winRate: '92.4%' },
-      { rank: 2, name: 'DropShot', badge: 'badge-second', picks: 4215, winRate: '89.1%' },
-      { rank: 3, name: 'StatKing', badge: 'badge-third', picks: 3865, winRate: '86.8%' },
-      { rank: 4, name: 'GoalGetter', badge: '', picks: 3720, winRate: '83.2%' },
-      { rank: 5, name: 'AcePicks', badge: '', picks: 3412, winRate: '79.5%' }
-    ];
-
-    if (settled && settled.length >= 10) {
-      const actualWon = settled.filter(r => r.result === 'WIN').length;
-      const actualRate = (actualWon / settled.length) * 100;
-      topPlayers[0].winRate = `${Math.max(92, Math.round(actualRate + 8))}%`;
-      topPlayers[1].winRate = `${Math.max(89, Math.round(actualRate + 5))}%`;
-      topPlayers[2].winRate = `${Math.round(actualRate + 2)}%`;
-      topPlayers[3].winRate = `${Math.round(actualRate)}%`;
-      topPlayers[4].winRate = `${Math.max(75, Math.round(actualRate - 4))}%`;
+    if (settled && settled.length) {
+      const graded = settled.filter(r => r.result === 'WIN' || r.result === 'LOSS');
+      const bySport = new Map();
+      graded.forEach(r => {
+        const key = r.sport_key || 'unknown';
+        const cur = bySport.get(key) || { sport: key, picks: 0, won: 0, pnl: 0 };
+        cur.picks += 1;
+        if (r.result === 'WIN') { cur.won += 1; cur.pnl += (r.best_odds || 0) - 1; }
+        else cur.pnl -= 1;
+        bySport.set(key, cur);
+      });
+      const rows = [...bySport.values()]
+        .sort((a, b) => (b.pnl - a.pnl) || (b.picks - a.picks))
+        .slice(0, 5)
+        .map((r, i) => {
+          const rate = r.picks ? (r.won / r.picks) * 100 : 0;
+          const badge = i === 0 ? 'badge-first' : (i === 1 ? 'badge-second' : (i === 2 ? 'badge-third' : ''));
+          return `<tr>
+            <td><span class="lb-rank-badge ${badge}">${i + 1}</span></td>
+            <td class="td-player-cell">
+              <div class="player-avatar-mini">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+              </div>
+              <span class="player-name-text">${cleanText(r.sport)}</span>
+            </td>
+            <td class="font-mono td-picks">${r.picks.toLocaleString()}</td>
+            <td class="font-mono text-lime td-winrate">${rate.toFixed(1)}%</td>
+          </tr>`;
+        });
+      lbTbody.innerHTML = rows.join('');
+    } else {
+      lbTbody.innerHTML = `<tr><td colspan="4" class="td-player-cell">No graded matches in the ledger yet — results appear after real matches settle.</td></tr>`;
     }
-
-    lbTbody.innerHTML = topPlayers.map(p => `
-      <tr>
-        <td><span class="lb-rank-badge ${p.badge}">${p.rank}</span></td>
-        <td class="td-player-cell">
-          <div class="player-avatar-mini">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-          </div>
-          <span class="player-name-text">${p.name}</span>
-        </td>
-        <td class="font-mono td-picks">${p.picks.toLocaleString()}</td>
-        <td class="font-mono text-lime td-winrate">${p.winRate}</td>
-      </tr>
-    `).join('');
   }
 
-  // 4. Dynamic AI Model Accuracy & Predictions Count
+  // 4. Model accuracy = the ledger's own win rate, or n/a.
   const accVal = document.getElementById('target-model-acc-val');
   if (accVal) {
-    if (s.win_rate) {
-      const acc = s.win_rate >= 0.8 ? ((s.win_rate + 0.087) * 100) : 92.7;
-      accVal.textContent = `${Math.min(96.5, Math.max(90.2, acc)).toFixed(1)}%`;
+    if (typeof s.win_rate === 'number') {
+      accVal.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
+      accVal.title = `Win rate across ${s.settled_picks_count || 0} settled real matches`;
+    } else {
+      accVal.textContent = 'n/a';
+      accVal.title = 'No settled picks yet';
     }
   }
 
   const predCountVal = document.getElementById('target-predictions-count-val');
   if (predCountVal) {
-    if (s.total_matches_evaluated) {
-      predCountVal.textContent = '1.2M+';
-      predCountVal.title = `${s.total_matches_evaluated.toLocaleString()} current fixtures evaluated across multi-season backtest`;
-    }
+    const evaluated = s.total_matches_evaluated || s.matches_observed || 0;
+    predCountVal.textContent = evaluated ? evaluated.toLocaleString() : 'n/a';
+    predCountVal.title = 'Real fixtures evaluated by the odds poller';
   }
 
   // 5. Dynamic Featured Slate Preview Teaser
@@ -1688,80 +1659,101 @@ function renderCalibration() {
 }
 
 function renderTier3Alpha() {
-  if (!state.data || !state.data.tier3_alpha) return;
-  const alpha = state.data.tier3_alpha;
+  // Everything here is derived from the live forecast board (real fixtures, real
+  // Poisson output) and the settled ledger (real CLV). Nothing is templated.
+  const forecast = state.forecast || { matches: [] };
+  const rows = (forecast.matches || []).filter(m => m && m.micro);
+  const settled = (state.data && state.data.settled_ledger) || [];
 
-  // 1. Poisson Table
+  // 1. Poisson micro markets for upcoming fixtures
   const poissonTbody = document.getElementById('alpha-poisson-tbody');
-  if (poissonTbody && alpha.poisson_micro_bets) {
-    poissonTbody.innerHTML = alpha.poisson_micro_bets.map(m => {
-      const cd = formatCountdown(m.commence_time, m.kickoff || 'Today');
+  if (poissonTbody) {
+    const micro = [];
+    rows.forEach(m => {
+      const p = m.micro.p_over_2_5;
+      if (typeof p !== 'number' || !m.commence_at) return;
+      micro.push({ m, market: 'Over 2.5 goals', p, fair: 1 / p });
+    });
+    micro.sort((a, b) => b.p - a.p);
+    poissonTbody.innerHTML = micro.length ? micro.slice(0, 12).map(({ m, market, p, fair }) => {
+      const cd = formatCountdown(m.commence_at);
       return `
       <tr>
-        <td style="font-weight: 600; color: #ffffff;">${m.match}</td>
+        <td style="font-weight: 600; color: #ffffff;">${cleanText(m.home)} vs ${cleanText(m.away)}</td>
         <td>
-          <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_time || ''}">
+          <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_at || ''}">
             <span class="countdown-text tabular-nums">${cd.text}</span>
           </div>
         </td>
-        <td style="color: var(--text-primary); font-weight: 600;">${m.derived_market}</td>
-        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-emerald);">${(m.p_true * 100).toFixed(1)}%</td>
-        <td class="tabular-nums">${m.fair_odds.toFixed(2)}</td>
-        <td class="tabular-nums" style="font-weight: 700; color: #ffffff;">${m.market_odds.toFixed(2)}</td>
-        <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">${m.alpha_ev}</td>
-        <td><span class="pill-accent" style="color: var(--accent-gold); border-color: rgba(251, 191, 36, 0.4);">${m.syndicate_rating}</span></td>
-      </tr>
-    `;
-    }).join('');
+        <td style="color: var(--text-primary); font-weight: 600;">${market}</td>
+        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-emerald);">${(p * 100).toFixed(1)}%</td>
+        <td class="tabular-nums">${fair.toFixed(2)}</td>
+        <td class="tabular-nums" style="color: var(--text-muted);">no priced market</td>
+        <td class="tabular-nums" style="color: var(--text-muted);">n/a</td>
+        <td><span class="pill-accent">${m.model && m.model.ready ? 'model ready' : 'thin model'}</span></td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="8" style="color: var(--text-muted);">No live fixtures with a scored model right now.</td></tr>`;
   }
 
-  // 2. Early Steam Radar
+  // 2. CLV reality check: what the ledger actually recorded
   const steamList = document.getElementById('steam-signals-list');
-  if (steamList && alpha.early_steam_radar) {
-    steamList.innerHTML = alpha.early_steam_radar.map(s => `
+  if (steamList) {
+    const withClv = settled.filter(r => typeof r.clv === 'number');
+    const clv = state.data && state.data.clv;
+    steamList.innerHTML = withClv.length ? `
       <div class="steam-signal-item">
         <div class="steam-header">
-          <div class="steam-match">${s.match} · <span style="color: var(--accent-cyan);">${s.market}</span></div>
-          <div class="steam-window">⏱ Window: ${s.clv_window_remaining}</div>
+          <div class="steam-match">Closing line value across ${withClv.length} settled picks</div>
         </div>
         <div class="steam-body">
-          <div>
-            <strong>${s.sharp_book}:</strong> dropped to ${s.sharp_line.toFixed(2)} <span style="color: var(--accent-rose);">(${s.sharp_shift})</span>
-          </div>
-          <div>
-            <strong>${s.lagging_book}:</strong> still @ ${s.lagging_line.toFixed(2)}
-          </div>
+          <div>Mean CLV: <strong>${clv && clv.mean_clv != null ? (clv.mean_clv * 100).toFixed(2) + '%' : 'n/a'}</strong></div>
+          <div>Positive CLV share: <strong>${clv && clv.positive_clv_share != null ? (clv.positive_clv_share * 100).toFixed(1) + '%' : 'n/a'}</strong></div>
+          <div>Best: <strong>${(Math.max(...withClv.map(r => r.clv)) * 100).toFixed(2)}%</strong></div>
+          <div>Worst: <strong>${(Math.min(...withClv.map(r => r.clv)) * 100).toFixed(2)}%</strong></div>
         </div>
-        <div style="margin-top: 6px; font-size: 12px; color: var(--accent-emerald); font-weight: 700;">
-          Arbitrage Edge: ${s.arb_ev}
-        </div>
-      </div>
-    `).join('');
+      </div>` : `<div class="steam-signal-item"><div class="steam-body">No settled pick has a recorded closing line yet. LISA shows nothing until the real close is captured.</div></div>`;
   }
 
-  // 3. Smart Parlays
+  // 3. Real parlay from live priced legs
   const parlaysList = document.getElementById('parlays-list');
-  if (parlaysList && alpha.smart_parlays) {
-    parlaysList.innerHTML = alpha.smart_parlays.map(p => `
-      <div class="parlay-item">
-        <div class="parlay-title">${cleanText(p.title)}</div>
-        <ul class="parlay-legs">
-          ${p.legs.map(leg => `<li>${leg}</li>`).join('')}
-        </ul>
+  if (parlaysList) {
+    const picks = (state.data && state.data.active_picks) || [];
+    const legs = picks
+      .filter(p => p.best_odds && p.p_true && p.outcome_name)
+      .sort((a, b) => (b.p_true || 0) - (a.p_true || 0))
+      .slice(0, 5);
+    if (legs.length < 2) {
+      parlaysList.innerHTML = `<div class="parlay-item"><div class="parlay-meta">Not enough priced live selections to build an honest parlay.</div></div>`;
+    } else {
+      const joint = legs.reduce((acc, p) => acc * p.p_true, 1.0);
+      const odds = legs.reduce((acc, p) => acc * p.best_odds, 1.0);
+      const edge = joint > 0 ? (odds * joint - 1) * 100 : 0;
+      parlaysList.innerHTML = `<div class="parlay-item">
+        <div class="parlay-title">Live ${legs.length}-leg consensus slip</div>
+        <ul class="parlay-legs">${legs.map(l => `<li>${cleanText(l.home_team)} vs ${cleanText(l.away_team)}: ${cleanText(l.outcome_name)} @ ${Number(l.best_odds).toFixed(2)} (${cleanText(l.best_book || 'best')})</li>`).join('')}</ul>
         <div class="parlay-meta">
-          <div>Joint Prob: <strong>${(p.joint_probability * 100).toFixed(1)}%</strong></div>
-          <div>Odds: <strong>${p.combined_market_odds.toFixed(2)}</strong></div>
-          <div style="color: var(--accent-gold); font-weight: 700;">Kelly: ${p.recommended_portfolio_kelly}</div>
-          <div style="color: var(--accent-emerald); font-weight: 700;">${p.compounding_ev}</div>
+          <div>Joint prob: <strong>${(joint * 100).toFixed(1)}%</strong></div>
+          <div>Combined odds: <strong>${odds.toFixed(2)}</strong></div>
+          <div style="color: var(--accent-emerald); font-weight: 700;">EV ${edge >= 0 ? '+' : ''}${edge.toFixed(1)}%</div>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }
   }
 }
 
-function renderBacktest() {
-  if (!state.data || !state.data.backtest) return;
-  const b = state.data.backtest;
+async function renderBacktest() {
+  // The archive replay is real but expensive: fetch it from the API on demand
+  // instead of shipping a stale static export to every visitor.
+  if (!state.backtest) {
+    try {
+      const res = await fetch('/api/backtest', { cache: 'no-cache' });
+      if (res.ok) state.backtest = await res.json();
+    } catch (e) {
+      console.warn('backtest unavailable:', e);
+    }
+  }
+  const b = state.backtest;
+  if (!b) return;
 
   // 1. Render Strategy Yield & Risk Comparison Matrix
   const matrixTbody = document.getElementById('strategy-matrix-tbody');
@@ -2798,7 +2790,7 @@ function setupEventListeners() {
       document.querySelectorAll('[data-bktstrategy]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.activeBktStrategy = btn.getAttribute('data-bktstrategy');
-      renderBacktest();
+      renderBacktest();  // resolves async from /api/backtest
     });
   });
 
@@ -2808,7 +2800,7 @@ function setupEventListeners() {
       document.querySelectorAll('[data-bktsport]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.activeBktSport = btn.getAttribute('data-bktsport');
-      renderBacktest();
+      renderBacktest();  // resolves async from /api/backtest
     });
   });
 
@@ -2818,7 +2810,7 @@ function setupEventListeners() {
       document.querySelectorAll('[data-bktgrade]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.activeBktGrade = btn.getAttribute('data-bktgrade');
-      renderBacktest();
+      renderBacktest();  // resolves async from /api/backtest
     });
   });
 
@@ -3224,7 +3216,7 @@ window.selectBookmakerForPick = function (matchId, bookId) {
   state.selectedBooks[matchId] = bookId;
   const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
   const book = SPORTSBOOKS.find(b => b.id === bookId) || SPORTSBOOKS[0];
-  const isDirectLinkOnly = book.hasBookingCode === false;
+  const isDirectLinkOnly = true;
   const code = getBookingCodeForPick(p, book.id);
   const link = (p.deep_links && p.deep_links[book.id]) || book.url;
 
@@ -3249,8 +3241,8 @@ window.selectBookmakerForPick = function (matchId, bookId) {
   const pill = document.querySelector(`#bet-box-${matchId} .bet-code-pill`);
   if (pill) {
     pill.classList.toggle('is-direct-link', isDirectLinkOnly);
-    pill.onclick = isDirectLinkOnly ? () => window.open(link, '_blank', 'noopener,noreferrer') : () => window.copyBookingCode(matchId);
-    pill.title = isDirectLinkOnly ? `Click to open on ${book.name}` : `Click to copy ${book.name} code`;
+    pill.onclick = () => window.open(link, '_blank', 'noopener,noreferrer');
+    pill.title = `Open ${book.name} to place this selection`;
   }
   const dot = document.querySelector(`#bet-box-${matchId} .pill-book-dot`);
   if (dot) dot.style.background = book.brandColor;
@@ -3258,7 +3250,7 @@ window.selectBookmakerForPick = function (matchId, bookId) {
   if (tag) tag.textContent = `${book.name}:`;
   const val = document.getElementById(`pill-code-val-${matchId}`);
   if (val) {
-    val.textContent = isDirectLinkOnly ? 'Direct slip, no code needed' : code;
+    val.textContent = code ? `code ${code}` : 'no booking code \u2014 open the book to place it';
     val.classList.toggle('link-mode', isDirectLinkOnly);
   }
 
@@ -3288,21 +3280,21 @@ window.selectBookmakerForPick = function (matchId, bookId) {
 };
 
 window.copyBookingCode = function (matchId) {
-  state.selectedBooks = state.selectedBooks || {};
-  const currentBookId = state.selectedBooks[matchId] || 'sportybet';
-  const book = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  // No bookmaker integration: hand the user the real price and send them to the
+  // book. A code LISA cannot verify is never shown as if it were real.
   const p = (state.data && state.data.active_picks && state.data.active_picks.find(x => x.match_id === matchId)) || { match_id: matchId };
+  const bookId = (state.selectedBooks && state.selectedBooks[matchId]) || state.defaultBook || 'sportybet';
+  const book = SPORTSBOOKS.find(b => b.id === bookId) || SPORTSBOOKS[0];
   const link = (p.deep_links && p.deep_links[book.id]) || book.url;
+  const code = getBookingCodeForPick(p, book.id);
 
-  if (book.hasBookingCode === false) {
+  if (!code) {
     window.open(link, '_blank', 'noopener,noreferrer');
-    showToast(`Opening selection on ${book.name}...`, 'info');
+    showToast('LISA has no booking code for this book \u2014 opening the sportsbook to place it yourself.', 'info');
     return;
   }
 
-  const code = getBookingCodeForPick(p, book.id);
   copyTextToClipboard(code);
-
   const btn = document.getElementById(`copy-btn-${matchId}`);
   if (btn) {
     const origHtml = btn.innerHTML;
@@ -3313,13 +3305,6 @@ window.copyBookingCode = function (matchId) {
       btn.innerHTML = origHtml;
     }, 2000);
   }
-
-  const pill = document.querySelector(`#bet-box-${matchId} .bet-code-pill`);
-  if (pill) {
-    pill.classList.add('pulse-highlight');
-    setTimeout(() => pill.classList.remove('pulse-highlight'), 600);
-  }
-
   showToast(`Copied ${book.name} code: ${code}`, 'success');
 };
 
@@ -3331,39 +3316,16 @@ window.selectAccuBookmaker = function (bookId) {
 window.copyAccumulatorCode = function () {
   const currentBookId = state.activeAccuBook || 'sportybet';
   const currentBook = SPORTSBOOKS.find(b => b.id === currentBookId) || SPORTSBOOKS[0];
+  const accuCode = (state.data && state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]) || null;
 
-  if (currentBook.hasBookingCode === false) {
+  if (!accuCode) {
     window.open(currentBook.url, '_blank', 'noopener,noreferrer');
-    showToast(`Opening 5-Game Parlay selections on ${currentBook.name}...`, 'info');
+    showToast('No accumulator code exists \u2014 opening ' + currentBook.name + ' to build the slip yourself.', 'info');
     return;
   }
 
-  let accuCode = (state.data && state.data.accumulator_booking_codes && state.data.accumulator_booking_codes[currentBookId]);
-  if (!accuCode) {
-    if (currentBookId === 'sportybet') accuCode = 'BC792K';
-    else if (currentBookId === 'football_com') accuCode = 'FC82910';
-    else if (currentBookId === '1xbet') accuCode = 'W49TG';
-    else if (currentBookId === 'bet9ja') accuCode = 'B941K2';
-    else if (currentBookId === 'betway') accuCode = 'BW44108';
-    else accuCode = 'ACCU5X';
-  } else {
-    accuCode = accuCode.replace(/^(SB|1X|365|BW|B9|DK|FC)-/i, '');
-  }
-
   copyTextToClipboard(accuCode);
-
-  const btn = document.getElementById('accu-copy-btn');
-  if (btn) {
-    const origHtml = btn.innerHTML;
-    btn.classList.add('copied');
-    btn.innerHTML = `5-Game Slip Copied!`;
-    setTimeout(() => {
-      btn.classList.remove('copied');
-      btn.innerHTML = origHtml;
-    }, 2500);
-  }
-
-  showToast(`Copied 5-Game Slip Code for ${currentBook.name}: ${accuCode}`, 'success');
+  showToast(`Copied accumulator code for ${currentBook.name}: ${accuCode}`, 'success');
 };
 
 // Commercial Checkout & Subscription Modal

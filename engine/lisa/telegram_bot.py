@@ -23,21 +23,32 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .gate import Pick
 
 logger = logging.getLogger(__name__)
 
-_UNLOCK_SECRET = "lisa_quantum_social_unlock_salt_2026"
-DEFAULT_VERIFIED_PATH = "web/data/verified_users.json"
+UNLOCK_SECRET_ENV = "LISA_UNLOCK_SECRET"
+UNLOCK_PREFIX = "LISA-"
+UNLOCK_BODY_LEN = 10
+# Base-30 alphabet without I/L/O/U/0/1 so codes survive being read aloud or
+# retyped from a Telegram message.
+UNLOCK_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+UNLOCK_BUCKET_SECONDS = 7 * 24 * 3600
+# Accept the current bucket plus this many previous ones (clock skew / boundary).
+UNLOCK_BUCKET_SLACK = 1
+_UNLOCK_SECRET_FALLBACK: Optional[bytes] = None
+DEFAULT_VERIFIED_PATH = "data/verified_users.json"
 
 
 class VerificationRegistry:
     """Thread-safe persistent store for web user Telegram verification sessions.
     
-    Persists verified sessions to SQLite (data/lisa.db) with automatic fallback
-    to web/data/verified_users.json for zero-dependency portability.
+    Persists verified sessions to SQLite (data/lisa.db) with an automatic
+    JSON mirror under ``data/`` for zero-dependency portability. The mirror is
+    deliberately kept out of ``web/`` because it holds user emails and Telegram
+    IDs, and ``web/`` is served as static content.
     """
 
     def __init__(self, storage_path: str = DEFAULT_VERIFIED_PATH, db_path: Optional[str] = "data/lisa.db"):
@@ -292,26 +303,90 @@ class BankrollFSMManager:
 bankroll_fsm = BankrollFSMManager()
 
 
-def generate_unlock_token(user_seed: str = "") -> str:
-    """Generate a reproducible, verifiable 6-digit alphanumeric unlock code."""
-    seed = user_seed or secrets.token_hex(4)
-    sig = hmac.new(
-        _UNLOCK_SECRET.encode("utf-8"),
-        seed.encode("utf-8"),
+def _unlock_secret() -> bytes:
+    """Signing key for unlock codes, sourced from ``LISA_UNLOCK_SECRET``.
+
+    An ephemeral per-process key keeps offline/local runs working, but every
+    code issued before a restart stops verifying, so production must set the
+    environment variable (and rotate it to invalidate outstanding codes).
+    """
+    global _UNLOCK_SECRET_FALLBACK
+    configured = os.environ.get(UNLOCK_SECRET_ENV, "").strip()
+    if configured:
+        return configured.encode("utf-8")
+    if _UNLOCK_SECRET_FALLBACK is None:
+        _UNLOCK_SECRET_FALLBACK = secrets.token_bytes(32)
+        logger.warning(
+            "%s is not set: using an ephemeral unlock-code key. Codes will not "
+            "survive a restart or verify in another process.",
+            UNLOCK_SECRET_ENV,
+        )
+    return _UNLOCK_SECRET_FALLBACK
+
+
+def _unlock_bucket(now: Optional[float] = None) -> int:
+    return int((time.time() if now is None else now) // UNLOCK_BUCKET_SECONDS)
+
+
+def _sign_unlock_seed(seed: str, bucket: int) -> str:
+    digest = hmac.new(
+        _unlock_secret(),
+        f"{seed}|{bucket}".encode("utf-8"),
         hashlib.sha256,
-    ).hexdigest()[:6].upper()
-    return f"LISA-{sig}"
+    ).digest()
+    value = int.from_bytes(digest, "big")
+    chars: list[str] = []
+    for _ in range(UNLOCK_BODY_LEN):
+        value, idx = divmod(value, len(UNLOCK_ALPHABET))
+        chars.append(UNLOCK_ALPHABET[idx])
+    return "".join(chars)
 
 
-def verify_unlock_token(token: str) -> bool:
-    """Verify that an unlock token matches format and structure."""
+def generate_unlock_token(user_seed: str = "", now: Optional[float] = None) -> str:
+    """Issue a seed-bound, time-bucketed unlock code (``LISA-`` + 10 chars).
+
+    The code is an HMAC over ``seed|bucket`` folded into an unambiguous
+    base-30 alphabet (~50 bits). It cannot be forged without the signing key and
+    stops verifying once its bucket falls outside the acceptance window, so a
+    leaked code expires on its own.
+    """
+    seed = str(user_seed or "").strip() or secrets.token_hex(16)
+    return UNLOCK_PREFIX + _sign_unlock_seed(seed, _unlock_bucket(now))
+
+
+def verify_unlock_token(
+    token: str,
+    user_seed: "str | Sequence[str]",
+    now: Optional[float] = None,
+) -> bool:
+    """Verify an unlock code against the seed(s) it was issued for.
+
+    Verification is seed-bound and constant-time: a well-formed but foreign or
+    tampered code is rejected instead of being waved through on shape alone.
+    ``user_seed`` may be a single seed or a sequence of candidate seeds.
+    """
     if not token or not isinstance(token, str):
         return False
     clean = token.strip().upper()
-    if clean.startswith("LISA-") and len(clean) == 11:
-        return True
-    if len(clean) == 6 and clean.isalnum():
-        return True
+    if not clean.startswith(UNLOCK_PREFIX):
+        return False
+    body = clean[len(UNLOCK_PREFIX):]
+    if len(body) != UNLOCK_BODY_LEN or any(ch not in UNLOCK_ALPHABET for ch in body):
+        return False
+
+    if isinstance(user_seed, str):
+        candidates = [user_seed]
+    else:
+        candidates = list(user_seed or ())
+    seeds = [str(s).strip() for s in candidates if str(s or "").strip()]
+    if not seeds:
+        return False
+
+    bucket = _unlock_bucket(now)
+    for seed in seeds:
+        for offset in range(UNLOCK_BUCKET_SLACK + 1):
+            if hmac.compare_digest(_sign_unlock_seed(seed, bucket - offset), body):
+                return True
     return False
 
 
@@ -445,23 +520,36 @@ def format_settlement_alert_html(pick_data: dict[str, Any]) -> str:
 
 
 def format_stats_html(summary: dict[str, Any]) -> str:
-    """Format audited track record statistics."""
-    win_rate = summary.get("win_rate", 0.840) * 100
-    brier = summary.get("brier_score", 0.1305)
-    ece = summary.get("ece", 0.0361) * 100
-    clv = summary.get("mean_clv", 0.0312) * 100
-    traps = summary.get("traps_avoided_month", 30)
-    settled = summary.get("settled_picks_count", 50)
+    """Format the audited track record. Missing history renders as n/a."""
+
+    def pct(value: Any) -> str:
+        return "n/a" if value is None else f"{float(value) * 100:.1f}%"
+
+    def num(value: Any, digits: int = 4) -> str:
+        return "n/a" if value is None else f"{float(value):.{digits}f}"
+
+    settled = summary.get("settled_picks_count") or 0
+    won = summary.get("won_count")
+    lost = summary.get("lost_count")
+    record = (
+        f"{int(won)}/{int(won) + int(lost)}" if won is not None and lost is not None else "n/a"
+    )
+    if not settled:
+        return (
+            "📈 <b>LISA PERFORMANCE LEDGER</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "ℹ️ <b>No settled picks yet.</b> Metrics appear once real matches "
+            "have been graded from the live ledger."
+        )
 
     return (
         f"📈 <b>LISA AUDITED PERFORMANCE AUDIT</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>Verified Win Rate:</b> <code>{win_rate:.1f}%</code> (42/50 picks)\n"
-        f"🎯 <b>Brier Calibration Score:</b> <code>{brier:.4f}</code>\n"
-        f"⚖️ <b>Expected Calibration Error:</b> <code>{ece:.2f}%</code>\n"
-        f"💎 <b>Mean Closing Line Value (CLV):</b> <code>+{clv:.2f}%</code>\n"
-        f"🛡️ <b>Capital Preserved (Traps):</b> <code>{traps} sucker bets avoided</code>\n"
-        f"📊 <b>Sample Size:</b> <code>{settled} fully audited real matches</code>\n"
+        f"✅ <b>Verified Win Rate:</b> <code>{pct(summary.get('win_rate'))}</code> ({record})\n"
+        f"🎯 <b>Brier Calibration Score:</b> <code>{num(summary.get('brier_score'))}</code>\n"
+        f"⚖️ <b>Expected Calibration Error:</b> <code>{pct(summary.get('ece'))}</code>\n"
+        f"💎 <b>Mean Closing Line Value (CLV):</b> <code>{pct(summary.get('mean_clv'))}</code>\n"
+        f"📊 <b>Sample Size:</b> <code>{int(settled)} fully audited real matches</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🌐 <i>View live ledger: http://localhost:8080/#ledger</i>"
     )
@@ -657,79 +745,80 @@ def format_active_top_picks_contract(
 
 
 def format_parlay_html(
-    accumulator_codes: Optional[dict[str, str]] = None,
+    picks: Optional[list[dict[str, Any]]] = None,
     user_tier: str = "free",
 ) -> tuple[str, dict[str, Any]]:
-    """Format high-conviction 5-fold parlay with booking codes and deep links."""
-    codes = accumulator_codes or {
-        "sportybet": "BC792K",
-        "football_com": "FC82910",
-        "1xbet": "W49TG",
-        "bet9ja": "B941K2",
-        "betway": "BW44108",
-    }
+    """Accumulator assembled from the live ledger — nothing is invented.
 
-    if user_tier in ("tier2", "tier3", "admin"):
+    Legs are the highest-conviction real picks currently on the board, the
+    combined probability is the product of their model probabilities, and the
+    combined price is the product of their best available odds. When there are
+    not enough live legs the board says so instead of showing a sample slip.
+    """
+    legs: list[dict[str, Any]] = []
+    for p in picks or []:
+        if p.get("outcome_name") and p.get("p_true") and p.get("best_odds"):
+            legs.append(p)
+    legs.sort(
+        key=lambda p: (float(p.get("p_true") or 0), float(p.get("best_ev") or 0)),
+        reverse=True,
+    )
+    legs = legs[:5]
+
+    if len(legs) < 2:
         text = (
-            "⚡ <b>LISA HIGH-CONVICTION 5-FOLD PARLAY</b>\n"
+            "⚡ <b>LISA ACCUMULATOR</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "1️⃣ <b>Arsenal vs Wolves:</b> Arsenal ML @ 1.23\n"
-            "2️⃣ <b>Man City vs Ipswich:</b> Man City ML @ 1.18\n"
-            "3️⃣ <b>Liverpool vs Brentford:</b> Liverpool ML @ 1.28\n"
-            "4️⃣ <b>Real Madrid vs Valladolid:</b> Real Madrid ML @ 1.17\n"
-            "5️⃣ <b>Bayern Munich vs Freiburg:</b> Bayern ML @ 1.22\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>Combined True Probability:</b> <code>74.2%</code>\n"
-            "⚖️ <b>Accumulator Combined Odds:</b> <code>2.38</code>\n"
-            "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n\n"
-            "🎟️ <b>Direct 1-Click Platform Booking Codes:</b>\n"
-            f"• 🔴 <b>SportyBet:</b> <code>{codes.get('sportybet', 'BC792K')}</code>\n"
-            f"• 🟢 <b>Football.com:</b> <code>{codes.get('football_com', 'FC82910')}</code>\n"
-            f"• 🔵 <b>1xBet:</b> <code>{codes.get('1xbet', 'W49TG')}</code>\n"
-            f"• 🟠 <b>Bet9ja:</b> <code>{codes.get('bet9ja', 'B941K2')}</code>\n"
-            f"• ⚪ <b>Betway:</b> <code>{codes.get('betway', 'BW44108')}</code>\n"
-            "• 🟩 <b>Bet365:</b> <i>Auto-loads via Direct Slip Link</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📱 <i>Open your bookmaker app, tap 'Load Bet Slip', and paste code.</i>"
+            "ℹ️ <b>Not enough live selections</b> to build an honest "
+            "accumulator right now. Legs are only shown when they come from the "
+            "live ledger — LISA never publishes a sample slip."
         )
         markup = {
             "inline_keyboard": [
-                [
-                    {"text": "🔴 SportyBet", "url": "https://www.sportybet.com/"},
-                    {"text": "🟢 Football.com", "url": "https://www.football.com/"},
-                ],
-                [
-                    {"text": "🔵 1xBet", "url": "https://www.1xbet.com/"},
-                    {"text": "🟠 Bet9ja", "url": "https://sports.bet9ja.com/"},
-                ],
-                [
-                    {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
-                    {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
-                ],
+                [{"text": "📊 Active Top Picks", "callback_data": "menu:picks"}],
             ]
         }
         return (text, markup)
 
+    combined_p = 1.0
+    combined_odds = 1.0
+    lines: list[str] = []
+    for i, p in enumerate(legs, start=1):
+        p_true = float(p["p_true"])
+        odds = float(p["best_odds"])
+        combined_p *= p_true
+        combined_odds *= odds
+        ev = float(p.get("best_ev") or 0.0) * 100
+        kickoff = p.get("commence_time") or ""
+        lines.append(
+            f"{i}️⃣ <b>{p.get('home_team', '?')} vs {p.get('away_team', '?')}:</b> "
+            f"{p['outcome_name']} @ <code>{odds:.2f}</code> "
+            f"({p.get('best_book') or 'best price'}, EV {ev:+.1f}%)"
+        )
+
+    fair_odds = (1.0 / combined_p) if combined_p > 0 else float("inf")
+    edge = (combined_odds / fair_odds - 1.0) if combined_p > 0 else 0.0
+
+    header = "⚡ <b>LISA LIVE ACCUMULATOR</b>" if user_tier in ("tier2", "tier3", "admin") else (
+        "⚡ <b>LISA LIVE ACCUMULATOR</b>"
+    )
     text = (
-        "⚡ <b>LISA HIGH-CONVICTION 5-FOLD PARLAY</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "1️⃣ <b>Arsenal vs Wolves:</b> Arsenal ML @ 1.23\n"
-        "2️⃣ <b>Man City vs Ipswich:</b> Man City ML @ 1.18\n"
-        "3️⃣ <b>Liverpool vs Brentford:</b> Liverpool ML @ 1.28\n"
-        "4️⃣ <b>Real Madrid vs Valladolid:</b> Real Madrid ML @ 1.17\n"
-        "5️⃣ <b>Bayern Munich vs Freiburg:</b> Bayern ML @ 1.22\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📊 <b>Combined True Probability:</b> <code>74.2%</code>\n"
-        "⚖️ <b>Accumulator Combined Odds:</b> <code>2.38</code>\n"
-        "💎 <b>Syndicate Advantage:</b> <code>+18.4% EV</code>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔒 <b>1-CLICK BOOKING CODES GATED (Tier 2 Pro Required)</b>\n\n"
-        "To prevent market line-movement slippage before sharp execution, 1-click booking slips across SportyBet, Football.com, and 1xBet are exclusive to <b>Tier 2 Pro ($49/mo)</b> subscribers.\n\n"
-        "👉 Tap below to upgrade and unlock immediate accumulator slips."
+        f"{header}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        + "\n".join(lines)
+        + "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>Combined Model Probability:</b> <code>{combined_p * 100:.1f}%</code>\n"
+        f"⚖️ <b>Combined Odds:</b> <code>{combined_odds:.2f}</code> "
+        f"(fair {fair_odds:.2f})\n"
+        f"💎 <b>Accumulator Edge:</b> <code>{edge * 100:+.1f}%</code>\n"
+        f"🕒 <i>Legs update every odds cycle. Kickoffs: "
+        f"{', '.join(str(l.get('commence_time') or 'TBC') for l in legs[:3])}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"ℹ️ <i>Accumulator odds are the product of the best prices found; no "
+        f"bookmaker is quoted until you place the bet yourself.</i>"
     )
     markup = {
         "inline_keyboard": [
-            [{"text": "👑 Unlock 5-Fold Slip with Tier 2 Pro ($49/mo)", "callback_data": "/vip"}],
             [
                 {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
                 {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
@@ -740,33 +829,37 @@ def format_parlay_html(
 
 
 def format_booking_codes_html() -> tuple[str, dict[str, Any]]:
-    """Format copyable booking codes cheatsheet for all primary platforms."""
+    """Bookmaker deep links.
+
+    LISA has no bookmaker partner integration, so it cannot mint one-click
+    booking codes. Rather than publish codes that do not exist, this page
+    explains how to price the live board yourself and links out to the books.
+    """
     text = (
-        "🎟️ <b>LISA VERIFIED BOOKMAKER BOOKING CODES</b>\n"
+        "🎟️ <b>LISA EXECUTION GUIDE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Tap and copy verified codes into your bookmaker app:\n\n"
-        "⚡ <b>5-Fold Flagship Parlay:</b>\n"
-        "• SportyBet: <code>BC792K</code>\n"
-        "• Football.com: <code>FC82910</code>\n"
-        "• 1xBet: <code>W49TG</code>\n"
-        "• Bet9ja: <code>B941K2</code>\n"
-        "• Betway: <code>BW44108</code>\n\n"
-        "💎 <b>Single Match Top Picks:</b>\n"
-        "• Oklahoma City Thunder ML (Sporty: <code>BC2EEA</code> | Football.com: <code>FCADFAE</code>)\n"
-        "• Boston Celtics ML (Sporty: <code>BC99A1</code> | Football.com: <code>FC10293</code>)\n"
-        "• Arsenal ML (Sporty: <code>BC118F</code> | Football.com: <code>FC77201</code>)\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 <i>Bet365 & DraftKings require direct URL slips rather than codes. Use the buttons below.</i>"
+        "LISA does not generate bookmaker booking codes: it has no direct "
+        "partnership with any sportsbook, and any code it printed would not be "
+        "real.\n\n"
+        "<b>What to do instead:</b>\n"
+        "1️⃣ Open the live board and note the outcome, line and fair price.\n"
+        "2️⃣ Compare that price across books yourself.\n"
+        "3️⃣ Only bet when a book pays more than the fair price shown.\n\n"
+        "<b>Price-check the books here:</b>"
     )
     markup = {
         "inline_keyboard": [
             [
-                {"text": "↗ Bet365 Direct Slip", "url": "https://www.bet365.com/"},
-                {"text": "⚡ Pinnacle Search", "url": "https://www.pinnacle.com/"},
+                {"text": "Bet365", "url": "https://www.bet365.com/"},
+                {"text": "Pinnacle", "url": "https://www.pinnacle.com/"},
+            ],
+            [
+                {"text": "SportyBet", "url": "https://www.sportybet.com/"},
+                {"text": "1xBet", "url": "https://1xbet.com/"},
             ],
             [
                 {"text": "📊 Active Top Picks", "callback_data": "menu:picks"},
-                {"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"},
+                {"text": "⚡ Live Accumulator", "callback_data": "menu:parlay"},
             ],
         ]
     }
@@ -811,8 +904,7 @@ class TelegramBot:
         self._mock_members: set[str] = set()
         self._member_cache: dict[str, tuple[bool, float]] = {}
         self._tier_cache: dict[str, tuple[str, float]] = {}
-        self._picks_cache: tuple[list[dict[str, Any]], float] = ([], 0.0)
-        self._summary_cache: tuple[dict[str, Any], float] = ({}, 0.0)
+        self._picks_cache: tuple[dict[str, Any], float] = ({}, 0.0)
 
         if admin_telegram_ids is not None:
             raw_admins = admin_telegram_ids
@@ -1278,7 +1370,7 @@ class TelegramBot:
         if cmd == "/unlock":
             arg = args[0] if args else ""
             if arg:
-                if verify_unlock_token(arg):
+                if verify_unlock_token(arg, user_id):
                     return (
                         f"✅ <b>Unlock Code Verified!</b>\n"
                         f"Code <code>{arg}</code> is active. Your web browser session at "
@@ -1930,31 +2022,57 @@ class TelegramBot:
         return (text, markup)
 
     def _handle_parlay(self, user_id: str = "") -> tuple[str, Optional[dict[str, Any]]]:
-        """Display high-conviction 5-fold parlay with bookmaker codes."""
+        """Accumulator built from the current live ledger."""
         tier = self.get_user_tier(user_id) if user_id else "free"
-        return format_parlay_html(user_tier=tier)
+        return format_parlay_html(self._load_dashboard_picks(), user_tier=tier)
 
     def _handle_booking_codes(self) -> tuple[str, Optional[dict[str, Any]]]:
         """Display bookmaker platform booking codes cheatsheet."""
         return format_booking_codes_html()
 
+    def _recent_traps(self) -> list[dict[str, Any]]:
+        """Real trap advisories recorded by the odds poller."""
+        if self.storage is None or not hasattr(self.storage, "get_live_stale"):
+            return []
+        try:
+            data = self.storage.get_live_stale("live:traps")
+        except Exception:
+            return []
+        return data if isinstance(data, list) else []
+
     def _handle_traps(self) -> tuple[str, Optional[dict[str, Any]]]:
-        """Display avoided public traps and capital preservation summary."""
-        text = (
-            "🛡️ <b>LISA CAPITAL PRESERVATION DESK</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Total Sucker Bets Avoided This Month: <b>30 Traps</b>\n"
-            "Capital Preserved: <b>+$1,700.00</b>\n\n"
-            "<b>Recent Avoided Disasters:</b>\n"
-            "• <i>Man United vs Tottenham</i>: ML Pass advised (CV 8.4%). Final: <b>0-3 Tottenham</b>.\n"
-            "• <i>Chelsea vs Nottingham Forest</i>: Pass advised due to variance. Final: <b>1-1 Draw</b>.\n"
-            "• <i>Valencia vs Las Palmas</i>: Pass advised due to sharp drift. Final: <b>2-3 Las Palmas</b>.\n\n"
-            "💡 <i>Recreational bettors lose because they bet every favorite. LISA only executes when variance is near zero.</i>"
-        )
+        """Recent trap advisories, straight from the ingestion daemon."""
+        traps = self._recent_traps()
+        if not traps:
+            text = (
+                "\U0001f6e1\ufe0f <b>LISA CAPITAL PRESERVATION DESK</b>\n"
+                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+                "\u2139\ufe0f <b>No trap advisories recorded yet.</b> A trap is logged "
+                "only when the books genuinely disagree on a public favourite during "
+                "a real odds cycle."
+            )
+        else:
+            lines = [
+                "\U0001f6e1\ufe0f <b>LISA CAPITAL PRESERVATION DESK</b>\n"
+                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+                f"Advisories in the recent cycle window: <b>{len(traps)}</b>\n\n"
+                "<b>Most recent:</b>",
+            ]
+            for t in traps[:5]:
+                lines.append(
+                    f"\u2022 <i>{t.get('home_team', '?')} vs {t.get('away_team', '?')}</i>: "
+                    f"pass on {t.get('public_favorite', '?')} "
+                    f"(books disagree, CV {float(t.get('cv') or 0) * 100:.1f}%)"
+                )
+            lines.append(
+                "\n\U0001f4a1 <i>A pass is not a result \u2014 check the ledger for "
+                "graded matches.</i>"
+            )
+            text = "\n".join(lines)
         markup = {
             "inline_keyboard": [
-                [{"text": "📊 View Active Value Picks", "callback_data": "menu:picks"}],
-                [{"text": "📈 Audited Accuracy Ledger", "callback_data": "menu:ledger"}],
+                [{"text": "\U0001f4ca View Active Value Picks", "callback_data": "menu:picks"}],
+                [{"text": "\U0001f4c8 Audited Accuracy Ledger", "callback_data": "menu:ledger"}],
             ]
         }
         return (text, markup)
@@ -2556,129 +2674,28 @@ class TelegramBot:
 
         return None
 
-    def _load_dashboard_picks(self) -> list[dict[str, Any]]:
+    def _dashboard_payload(self) -> dict[str, Any]:
+        """Real dashboard payload from the ledger (never a static/demo file)."""
         now = time.time()
         if self._picks_cache[0] and now < self._picks_cache[1]:
             return self._picks_cache[0]
+        payload: dict[str, Any] = {"active_picks": [], "summary": {}}
         try:
-            candidates = ["web/data/dashboard.json", "../web/data/dashboard.json"]
-            for path in candidates:
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        picks = data.get("active_picks") or data.get("picks")
-                        if picks:
-                            self._picks_cache = (picks, now + 30.0)
-                            return picks
-        except Exception:
-            pass
-        return [
-            {
-                "home_team": "Arsenal",
-                "away_team": "Wolverhampton",
-                "outcome_name": "Arsenal",
-                "p_true": 0.81,
-                "fair_odds": 1.23,
-                "best_odds": 1.23,
-                "best_ev": 0.025,
-                "conviction_score": 8.5,
-                "recommended_units": 1.0,
-                "kickoff_human": "Today in 2h 15m",
-                "booking_codes": {
-                    "sportybet": "BC2EEA",
-                    "football_com": "FCADFAE",
-                    "1xbet": "B5DB5",
-                    "bet9ja": "B9B9DC",
-                    "betway": "BW86681",
-                },
-                "deep_links": {
-                    "sportybet": "https://www.sportybet.com/",
-                    "football_com": "https://www.football.com/",
-                    "1xbet": "https://1xbet.com/",
-                    "bet365": "https://www.bet365.com/#/AX/K^Arsenal/",
-                    "pinnacle": "https://www.pinnacle.com/en/search/Arsenal",
-                },
-            },
-            {
-                "home_team": "Manchester City",
-                "away_team": "Ipswich Town",
-                "outcome_name": "Manchester City",
-                "p_true": 0.85,
-                "fair_odds": 1.18,
-                "best_odds": 1.18,
-                "best_ev": 0.031,
-                "conviction_score": 9.0,
-                "recommended_units": 1.5,
-                "kickoff_human": "Today in 4h 30m",
-                "booking_codes": {
-                    "sportybet": "BC99A1",
-                    "football_com": "FC10293",
-                    "1xbet": "W89BA",
-                    "bet9ja": "B97721",
-                    "betway": "BW99104",
-                },
-                "deep_links": {
-                    "sportybet": "https://www.sportybet.com/",
-                    "football_com": "https://www.football.com/",
-                    "1xbet": "https://1xbet.com/",
-                    "bet365": "https://www.bet365.com/#/AX/K^Manchester%20City/",
-                    "pinnacle": "https://www.pinnacle.com/en/search/Manchester%20City",
-                },
-            },
-            {
-                "home_team": "Liverpool",
-                "away_team": "Brentford",
-                "outcome_name": "Liverpool",
-                "p_true": 0.78,
-                "fair_odds": 1.28,
-                "best_odds": 1.28,
-                "best_ev": 0.021,
-                "conviction_score": 8.0,
-                "recommended_units": 1.0,
-                "kickoff_human": "Today in 6h 00m",
-                "booking_codes": {
-                    "sportybet": "BC118F",
-                    "football_com": "FC77201",
-                    "1xbet": "W49TG",
-                    "bet9ja": "B941K2",
-                    "betway": "BW44108",
-                },
-                "deep_links": {
-                    "sportybet": "https://www.sportybet.com/",
-                    "football_com": "https://www.football.com/",
-                    "1xbet": "https://1xbet.com/",
-                    "bet365": "https://www.bet365.com/#/AX/K^Liverpool/",
-                    "pinnacle": "https://www.pinnacle.com/en/search/Liverpool",
-                },
-            },
-        ]
+            from .dashboard import build_dashboard
+            payload = build_dashboard(self.storage)
+        except Exception as exc:  # a stats lookup must never kill the bot
+            logger.warning("[telegram] dashboard build failed: %r", exc)
+        self._picks_cache = (payload, now + 30.0)
+        return payload
+
+    def _load_dashboard_picks(self) -> list[dict[str, Any]]:
+        """Pending picks straight from the ledger. Empty means none are live yet."""
+        picks = self._dashboard_payload().get("active_picks") or []
+        return list(picks)
 
     def _load_dashboard_summary(self) -> dict[str, Any]:
-        now = time.time()
-        if self._summary_cache[0] and now < self._summary_cache[1]:
-            return self._summary_cache[0]
-        try:
-            candidates = ["web/data/dashboard.json", "../web/data/dashboard.json"]
-            for path in candidates:
-                if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        summary = data.get("summary")
-                        if summary:
-                            self._summary_cache = (summary, now + 30.0)
-                            return summary
-        except Exception:
-            pass
-        fallback = {
-            "win_rate": 0.840,
-            "brier_score": 0.1305,
-            "ece": 0.0361,
-            "mean_clv": 0.0312,
-            "traps_avoided_month": 30,
-            "settled_picks_count": 50,
-        }
-        self._summary_cache = (fallback, now + 30.0)
-        return fallback
+        """Real performance summary. Uncomputed metrics stay ``None``."""
+        return dict(self._dashboard_payload().get("summary") or {})
 
     def poll_updates(self) -> list[TelegramUpdate]:
         """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""

@@ -6,6 +6,7 @@ __pycache__/
 .env
 .api_key
 data/
-!web/data/
+# The dashboard reads live data from the API; no generated JSON is committed.
+web/data/
 dist/
 build/

@@ -14,6 +14,7 @@ from lisa.gate import Execution, Pick
 from lisa.odds import utcnow
 from lisa.server import make_production_server
 from lisa.storage import SqliteStorage
+from lisa.telegram_bot import generate_unlock_token
 
 
 def _get_free_port() -> int:
@@ -33,11 +34,15 @@ def _make_sample_pick(match_id: str, outcome: str) -> Pick:
     )
 
 
-def test_auth_api_flow(tmp_path):
+def test_auth_api_flow(tmp_path, monkeypatch):
     port = _get_free_port()
     db_file = str(tmp_path / "auth_api_test.db")
     storage = SqliteStorage(db_file)
     auth = AuthManager(storage=storage)
+    webhook_secret = "test_webhook_secret_do_not_reuse"
+    unlock_secret = "test_unlock_secret_do_not_reuse"
+    monkeypatch.setenv("LISA_WEBHOOK_SECRET", webhook_secret)
+    monkeypatch.setenv("LISA_UNLOCK_SECRET", unlock_secret)
 
     # Insert 4 picks: #0 (free), #1 (telegram), #2 (telegram), #3 (tier2 syndicate alpha)
     for i in range(4):
@@ -87,9 +92,20 @@ def test_auth_api_flow(tmp_path):
             data = json.loads(resp.read().decode())
             assert data["success"] is True
             assert data["user"]["email"] == "sarah@xpredict.ai"
-            assert data["user"]["tier"] == "tier2"
+            # A client-declared paid tier must never be honoured at signup.
+            assert data["user"]["tier"] == "free"
             session_id = data["session_id"]
             user_id = data["user"]["id"]
+
+        # 2b. Paid tier only via the authenticated webhook path
+        promote_req = urllib.request.Request(
+            f"{base_url}/api/auth/update-tier",
+            data=json.dumps({"user_id": user_id, "tier": "tier2"}).encode(),
+            headers={"Content-Type": "application/json", "X-Webhook-Secret": webhook_secret},
+            method="POST",
+        )
+        with urllib.request.urlopen(promote_req) as resp:
+            assert json.loads(resp.read().decode())["tier"] == "tier2"
 
         # 3. /api/auth/me using Cookie
         req = urllib.request.Request(
@@ -126,7 +142,7 @@ def test_auth_api_flow(tmp_path):
             assert picks[3]["is_locked"] is False
             assert picks[3]["outcome_name"] == "Outcome-3"
 
-        # 6. /api/auth/link-telegram
+        # 6. /api/auth/link-telegram — a bare claim must not grant verification
         link_req = urllib.request.Request(
             f"{base_url}/api/auth/link-telegram",
             data=json.dumps({"telegram_id": "778899", "telegram_username": "SarahTelegram"}).encode(),
@@ -139,8 +155,62 @@ def test_auth_api_flow(tmp_path):
         with urllib.request.urlopen(link_req) as resp:
             data = json.loads(resp.read().decode())
             assert data["success"] is True
-            assert data["user"]["telegram_verified"] is True
+            assert data["telegram_verified"] is False
+            assert data["user"]["telegram_verified"] is False
             assert data["user"]["telegram_username"] == "SarahTelegram"
+
+        # 6b. The same link with a valid unlock code is proven and unlocks
+        proven_link_req = urllib.request.Request(
+            f"{base_url}/api/auth/link-telegram",
+            data=json.dumps({
+                "telegram_id": "778899",
+                "telegram_username": "SarahTelegram",
+                "token": generate_unlock_token("sarah@xpredict.ai"),
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": f"lisa_session={session_id}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(proven_link_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["telegram_verified"] is True
+            assert data["user"]["telegram_verified"] is True
+
+        # 6c. A forged code never establishes a new verified identity
+        fraudster = auth.register_user("fraud@example.com", "FraudPassWord123!")
+        fraud_sess = auth.create_session(user_id=fraudster["id"])["session_id"]
+        forged_link_req = urllib.request.Request(
+            f"{base_url}/api/auth/link-telegram",
+            data=json.dumps({
+                "telegram_id": "11223344",
+                "token": "LISA-23456789AB",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": f"lisa_session={fraud_sess}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(forged_link_req) as resp:
+            assert json.loads(resp.read().decode())["telegram_verified"] is False
+
+        # And an already-proven identity is not demoted by a bogus retry
+        retry_req = urllib.request.Request(
+            f"{base_url}/api/auth/link-telegram",
+            data=json.dumps({
+                "telegram_id": "778899",
+                "token": "LISA-23456789AB",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": f"lisa_session={session_id}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(retry_req) as resp:
+            assert json.loads(resp.read().decode())["user"]["telegram_verified"] is True
 
         # 7. /api/auth/signin
         signin_req = urllib.request.Request(
@@ -199,7 +269,7 @@ def test_auth_api_flow(tmp_path):
             data=json.dumps({"user_id": user_id, "tier": "tier3"}).encode(),
             headers={
                 "Content-Type": "application/json",
-                "X-Webhook-Secret": "lisa_internal_secret_2026",
+                "X-Webhook-Secret": webhook_secret,
             },
             method="POST",
         )
@@ -218,7 +288,7 @@ def test_auth_api_flow(tmp_path):
             }).encode(),
             headers={
                 "Content-Type": "application/json",
-                "X-Webhook-Secret": "lisa_internal_secret_2026",
+                "X-Webhook-Secret": webhook_secret,
             },
             method="POST",
         )
@@ -241,7 +311,7 @@ def test_auth_api_flow(tmp_path):
             }).encode(),
             headers={
                 "Content-Type": "application/json",
-                "X-Webhook-Secret": "lisa_internal_secret_2026",
+                "X-Webhook-Secret": webhook_secret,
             },
             method="POST",
         )

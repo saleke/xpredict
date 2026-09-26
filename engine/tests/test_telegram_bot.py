@@ -61,17 +61,35 @@ class TestTelegramBot(unittest.TestCase):
     def test_unlock_token_generation_and_verification(self):
         token1 = generate_unlock_token("user_12345")
         self.assertTrue(token1.startswith("LISA-"))
-        self.assertEqual(len(token1), 11)
-        self.assertTrue(verify_unlock_token(token1))
+        self.assertEqual(len(token1), 15)
+        self.assertTrue(verify_unlock_token(token1, "user_12345"))
 
-        # Consistent generation with same seed
+        # Consistent generation with same seed inside the same time bucket
         token2 = generate_unlock_token("user_12345")
         self.assertEqual(token1, token2)
 
-        # Verification of 6-digit code
-        self.assertTrue(verify_unlock_token("AB12CD"))
-        self.assertFalse(verify_unlock_token(""))
-        self.assertFalse(verify_unlock_token("invalid-too-long-string-code"))
+        # Seed-bound: a genuine code is worthless for any other identity
+        self.assertFalse(verify_unlock_token(token1, "user_99999"))
+        self.assertFalse(verify_unlock_token(token1, ""))
+
+        # Forged / shape-only codes are rejected (regression: any 6-char string used to pass)
+        self.assertFalse(verify_unlock_token("AB12CD", "user_12345"))
+        self.assertFalse(verify_unlock_token("LISA-000000", "user_12345"))
+        self.assertFalse(verify_unlock_token("LISA-23456789AB", "user_12345"))
+        self.assertFalse(verify_unlock_token("", "user_12345"))
+        self.assertFalse(verify_unlock_token("invalid-too-long-string-code", "user_12345"))
+        self.assertFalse(verify_unlock_token(None, "user_12345"))
+
+        # A single flipped character breaks the signature
+        tampered = token1[:-1] + ("2" if token1[-1] != "2" else "3")
+        self.assertFalse(verify_unlock_token(tampered, "user_12345"))
+
+    def test_unlock_token_expires_outside_bucket_window(self):
+        seven_days = 7 * 24 * 3600
+        issued = 1_700_000_000.0
+        token = generate_unlock_token("user_12345", now=issued)
+        self.assertTrue(verify_unlock_token(token, "user_12345", now=issued + 3600))
+        self.assertFalse(verify_unlock_token(token, "user_12345", now=issued + 14 * seven_days))
 
     def test_format_diamond_alert_html(self):
         html = format_diamond_alert_html(self.sample_pick)

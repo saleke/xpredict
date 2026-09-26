@@ -114,12 +114,23 @@ def test_telegram_linking_and_tier_update(tmp_path):
     user = auth.register_user("eva@example.com", "EvaPassWord123!")
     assert user["telegram_verified"] is False
 
-    # Link Telegram
+    # A bare link does not grant the verified privilege (server only passes
+    # verified=True once unlock-code redemption or getChatMember has proven it)
     assert auth.link_telegram(user["id"], telegram_id="123456789", telegram_username="EvaTelegram") is True
     updated = auth.get_user_by_id(user["id"])
-    assert updated["telegram_verified"] is True
+    assert updated["telegram_verified"] is False
     assert updated["telegram_id"] == "123456789"
     assert updated["telegram_username"] == "EvaTelegram"
+
+    # Proof upgrades the same link
+    assert auth.link_telegram(user["id"], telegram_id="123456789", verified=True) is True
+    assert auth.get_user_by_id(user["id"])["telegram_verified"] is True
+
+    # A Telegram ID owned by somebody else can never be claimed
+    other = auth.register_user("mallory@example.com", "MalloryPassWord123!")
+    assert auth.link_telegram(other["id"], telegram_id="123456789") is False
+    assert auth.get_user_by_id(other["id"])["telegram_id"] in ("", None)
+    assert auth.get_user_by_telegram_id("123456789")["id"] == user["id"]
 
     # Upgrade tier
     assert auth.update_user_tier(user["id"], "tier3") is True

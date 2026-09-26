@@ -8,9 +8,10 @@ the same data never duplicates ledger rows or alerts.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from . import config as cfg
 from .consensus import refine as refine_match
@@ -19,6 +20,8 @@ from .notify import LogNotifier, Notifier, pick_alert_text
 from .odds import Match, utcnow
 from .parsing import parse_odds_payload
 from .storage import Storage, pick_key
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +35,9 @@ class CycleReport:
     finished: Optional[datetime] = None
     errors: list[str] = field(default_factory=list)
     matches: tuple[Match, ...] = ()  # parsed matches, for cadence/tracking
+    notifications_sent: int = 0
+    notifications_failed: int = 0
+    notifications_retried: int = 0
 
 
 class Pipeline:
@@ -46,27 +52,76 @@ class Pipeline:
 
     def run_cycle(self, sport_keys: Optional[Iterable[str]] = None, *,
                   live: bool = False,
+                  prefetched: Optional[Mapping[str, Any]] = None,
                   now: Optional[datetime] = None) -> list[CycleReport]:
-        """One ingestion+refinement pass over each requested sport."""
+        """One ingestion+refinement pass over each requested sport.
+
+        ``prefetched`` maps a sport key to an odds payload that the caller has
+        already fetched. Reusing it keeps a cycle at exactly one upstream
+        request per league, which matters when the API budget is limited.
+        """
         now = now or utcnow()
         requested = tuple(sport_keys) if sport_keys is not None else self.settings.sports
         cfg.validate_sports(requested)
+        # Deliver anything a previous cycle could not hand to the notifier before
+        # new work is considered, so a transient outage cannot swallow an alert.
+        self._flush_outbox()
         reports: list[CycleReport] = []
         for sport in requested:
-            reports.append(self._run_sport(sport, live=live, now=now))
+            reports.append(self._run_sport(
+                sport, live=live, now=now,
+                payload=(prefetched or {}).get(sport),
+            ))
         return reports
+
+    # -- notification outbox -------------------------------------------------
+
+    def _has_outbox(self) -> bool:
+        return callable(getattr(self.storage, "enqueue_notification", None))
+
+    def _flush_outbox(self, limit: int = 100) -> tuple[int, int]:
+        """Send pending alerts. Returns ``(sent, failed)``.
+
+        The ledger row is written before delivery, so dispatch has to be durable:
+        a failure leaves the row PENDING and it is retried on the next cycle
+        instead of being lost forever.
+        """
+        sent = failed = 0
+        if not self._has_outbox():
+            return sent, failed
+        for row in self.storage.list_pending_notifications(limit=limit):
+            try:
+                self.notifier.send(row["text"])
+            except Exception as exc:
+                failed += 1
+                self.storage.mark_notification_failed(row["dedupe_key"], repr(exc))
+                logger.warning("Notification for %s failed: %r", row["dedupe_key"], exc)
+                continue
+            self.storage.mark_notification_sent(row["dedupe_key"])
+            sent += 1
+        return sent, failed
+
+    def _enqueue_alert(self, pick: Pick, dedupe_key: Optional[str] = None) -> bool:
+        """Record the alert durably. Returns False if the driver has no outbox."""
+        if not self._has_outbox():
+            return False
+        key = dedupe_key or pick_key(pick.match_id, pick.market, pick.outcome_name)
+        self.storage.enqueue_notification(key, pick_alert_text(pick))
+        return True
 
     # -- internals -----------------------------------------------------------
 
-    def _run_sport(self, sport: str, *, live: bool, now: datetime) -> CycleReport:
+    def _run_sport(self, sport: str, *, live: bool, now: datetime,
+                   payload: Any = None) -> CycleReport:
         report = CycleReport(sport_key=sport, began=now)
-        try:
-            payload = self.client.get_odds(
-                sport, regions=self.settings.regions, markets=self.settings.markets)
-        except Exception as exc:  # per-sport degradation, never a crash
-            report.errors.append(f"{sport}: {exc!r}")
-            report.finished = utcnow()
-            return report
+        if payload is None:
+            try:
+                payload = self.client.get_odds(
+                    sport, regions=self.settings.regions, markets=self.settings.markets)
+            except Exception as exc:  # per-sport degradation, never a crash
+                report.errors.append(f"{sport}: {exc!r}")
+                report.finished = utcnow()
+                return report
 
         market_keys = tuple(m.strip() for m in self.settings.markets.split(",") if m.strip())
         matches = parse_odds_payload(payload, market_keys=market_keys)
@@ -80,6 +135,13 @@ class Pipeline:
 
         for match in matches:
             self._persist_telemetry(match)
+
+            # Never mint a "pre-game" pick for a fixture that already kicked off:
+            # post-kickoff prices are live odds and the CLV/closing logic below
+            # assumes the bet was available before kickoff.
+            if match.commence_time is not None and match.commence_time <= now:
+                report.suppressed.append(f"{match.id}:kickoff_passed")
+                continue
 
             consensus = refine_match(
                 match, now=now,
@@ -150,8 +212,17 @@ class Pipeline:
                     report.suppressed.append(f"{pick.match_id}:waiting_room_cycle_quota")
                     continue
 
-                self.notifier.send(pick_alert_text(pick))
+                if not self._enqueue_alert(pick):
+                    # Storage driver without an outbox: dispatch directly.
+                    self.notifier.send(pick_alert_text(pick))
                 dispatched_count += 1
+
+        # Deliver everything queued this cycle, including re-alerts raised above.
+        sent, failed = self._flush_outbox()
+        report.notifications_sent += sent
+        report.notifications_failed += failed
+        if failed:
+            report.errors.append(f"{failed} alert(s) still pending delivery")
 
         report.finished = utcnow()
         return report
@@ -199,7 +270,11 @@ class Pipeline:
         self.storage.upsert_live(
             f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name)}",
             hot, self.settings.live_ttl_sec)
-        self.notifier.send(pick_alert_text(pick))
+        base_key = pick_key(pick.match_id, pick.market, pick.outcome_name)
+        # A re-alert is a distinct notification, so it needs its own outbox key.
+        if not self._enqueue_alert(pick, f"{base_key}#re{int(now.timestamp())}"):
+            # Storage driver without an outbox: fall back to direct dispatch.
+            self.notifier.send(pick_alert_text(pick))
         return True
 
     def _maybe_update_closing(self, pick: Pick, match: Match,

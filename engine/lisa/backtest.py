@@ -365,22 +365,23 @@ class BacktestReport:
 class BacktestEngine:
     """Rigorous offline backtesting and calibration engine."""
 
-    # Match-id-scoped consensus cache: refine() is a pure function of a match
-    # plus the refinement settings, so re-running the audit never re-solves the
-    # (expensive) Shin de-vig for the same fixture.
-    _consensus_cache: dict[tuple[Any, ...], Optional[Consensus]] = {}
-
     def __init__(
         self,
         settings: Optional[cfg.Settings] = None,
         initial_bankroll: float = 10000.0,
         flat_stake_unit: float = 100.0,
         sports: Optional[Sequence[str]] = None,
+        cache_consensus: bool = True,
     ) -> None:
         self.settings = settings or cfg.Settings()
         self.initial_bankroll = initial_bankroll
         self.flat_stake_unit = flat_stake_unit
         self.sports = list(sports) if sports else None
+        # Per-instance, not per-class: a class-level cache leaks between engines
+        # (and between archives) and grows without bound for the process life.
+        # The key covers every refine() input, so a settings change is a miss.
+        self.cache_consensus = cache_consensus
+        self._consensus_cache: dict[tuple[Any, ...], Optional[Consensus]] = {}
 
     def run_simulation(self, sport_keys: Optional[Sequence[str]] = None) -> BacktestReport:
         return self.run(sport_keys=sport_keys or self.sports)
@@ -449,24 +450,28 @@ class BacktestEngine:
             sport_stats[match.sport_key]["matches"] += 1
 
             # 1. Pipeline Consensus De-vigging (Shin Model)
-            cons_key = (
-                match.id,
-                self.settings.min_books_telemetry,
-                tuple(self.settings.sharp_keys),
-                self.settings.sharp_multiplier,
-                self.settings.margin_weighted,
-                self.settings.min_margin_floor,
+            refine_kwargs = dict(
+                now=match.commence_time,
+                min_books=self.settings.min_books_telemetry,
+                sharp_keys=self.settings.sharp_keys,
+                sharp_multiplier=self.settings.sharp_multiplier,
+                margin_weighted=self.settings.margin_weighted,
+                min_margin_floor=self.settings.min_margin_floor,
+                max_book_age_sec=self.settings.stale_prematch_sec or None,
+                lo=self.settings.odds_sanity[0],
+                hi=self.settings.odds_sanity[1],
             )
-            consensus = self._consensus_cache.get(cons_key)
-            if consensus is None and cons_key not in self._consensus_cache:
-                consensus = refine(
-                    match,
-                    now=match.commence_time,
-                    min_books=self.settings.min_books_telemetry,
-                    sharp_keys=self.settings.sharp_keys,
-                    sharp_multiplier=self.settings.sharp_multiplier,
-                )
-                self._consensus_cache[cons_key] = consensus
+            cons_key = (match.id,) + tuple(
+                (k, tuple(v) if isinstance(v, list) else v)
+                for k, v in sorted(refine_kwargs.items(), key=lambda kv: kv[0])
+                if k != "now"
+            )
+            if self.cache_consensus and cons_key in self._consensus_cache:
+                consensus = self._consensus_cache[cons_key]
+            else:
+                consensus = refine(match, **refine_kwargs)
+                if self.cache_consensus:
+                    self._consensus_cache[cons_key] = consensus
             if consensus is None:
                 continue
 

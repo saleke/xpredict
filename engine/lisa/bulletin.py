@@ -168,6 +168,183 @@ def _locks(row_feature_keys: list[str]) -> list[dict[str, Any]]:
     return out
 
 
+#: Trained-on-archive model, built once per process. The archive is strictly
+#: historical, so using it as prior information for *upcoming* fixtures
+#: introduces no look-ahead.
+_TRAINED_MODEL: Optional[EloPoissonModel] = None
+
+
+def trained_model() -> EloPoissonModel:
+    """Elo/Poisson model fitted on real settled results, in kickoff order."""
+    global _TRAINED_MODEL
+    if _TRAINED_MODEL is not None:
+        return _TRAINED_MODEL
+    model = EloPoissonModel()
+    history = sorted(build_matches(), key=lambda m: str(m.get("commence_time") or ""))
+    for m in history:
+        hs, as_ = m.get("home_score"), m.get("away_score")
+        if hs is None or as_ is None:
+            continue
+        model.observe(m["league"], m["home"], m["away"], int(hs), int(as_))
+    _TRAINED_MODEL = model
+    return model
+
+
+def _row_from_match(match: Match, model: EloPoissonModel) -> Optional[dict[str, Any]]:
+    """One forecast row for a real (live) fixture."""
+    league = str(getattr(match, "sport_key", "") or "unknown")
+    home, away = match.home_team, match.away_team
+    consensus = refine(match, min_books=2)
+    market: Optional[dict[str, Any]] = None
+    if consensus:
+        market = {
+            "present": True,
+            "top_outcome": consensus.top_outcome,
+            "p_top": consensus.p_top,
+            "p_home": consensus.p.get("home", 0.0),
+            "p_draw": consensus.p.get("draw", 0.0),
+            "p_away": consensus.p.get("away", 0.0),
+            "fair_odds": consensus.fair_odds,
+            "cv": consensus.cv,
+            "n_books": consensus.n_books,
+        }
+
+    matrix = model.predict_score_matrix(league, home, away)
+    pred = model.predict_log(league, home, away)
+    model_view = {
+        "p_home": round(pred["p_home"], 4),
+        "p_draw": round(pred["p_draw"], 4),
+        "p_away": round(pred["p_away"], 4),
+        "ready": bool(pred["model_ready"]),
+    }
+    micro = {
+        "p_btts": matrix.get("p_btts"),
+        "p_over_2_5": matrix.get("p_over_2_5"),
+        "expected_goals_home": matrix.get("expected_goals", {}).get("home"),
+        "expected_goals_away": matrix.get("expected_goals", {}).get("away"),
+        "most_likely_scores": matrix.get("most_likely_scores", []),
+    }
+
+    reasons = _uncertainty_flags(market, model_view)
+    return {
+        "match_id": match.id,
+        "league": league,
+        "home": home,
+        "away": away,
+        "commence_at": (match.commence_time.isoformat() if match.commence_time else None),
+        "market": market,
+        "model": model_view,
+        "micro": micro,
+        "movement": None,
+        "uncertainty": {
+            "level": _uncertainty_level(reasons),
+            "reasons": reasons,
+        },
+        "is_top_pick": False,
+        "marquee": False,
+        "locks": _locks(["micro_pack", "top_pick", "diamond_picks", "steam_radar"]),
+    }
+
+
+def _finalize(rows: list[dict[str, Any]], *, mode: str, disclaimer: str,
+              day_label: Optional[str] = None) -> dict[str, Any]:
+    """Sort, mark marquee/top-pick and package the board."""
+    rows.sort(key=lambda r: (str(r.get("commence_at") or ""), r["match_id"]))
+
+    from collections import Counter
+    if day_label is None:
+        day_counts = Counter(
+            (_parse_dt(r["commence_at"]) or datetime.min).date().isoformat() for r in rows
+        )
+        day_label = day_counts.most_common(1)[0][0] if day_counts else None
+
+    def _coverage(r: dict[str, Any]) -> tuple[int, str]:
+        n = r["market"]["n_books"] if r["market"] else 0
+        return (-n, str(r.get("commence_at") or ""))
+
+    for r in sorted(rows, key=_coverage)[:3]:
+        r["marquee"] = True
+
+    candidates = [r for r in rows if r["market"] and r["market"]["p_top"] >= TOP_PICK_MIN_PROB]
+    if candidates:
+        max(candidates, key=lambda r: r["market"]["p_top"])["is_top_pick"] = True
+
+    return {
+        "kind": "match_forecast_bulletin",
+        "mode": mode,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "day": day_label,
+        "count": len(rows),
+        "top_pick": next((r["match_id"] for r in rows if r["is_top_pick"]), None),
+        "marquee_count": sum(1 for r in rows if r["marquee"]),
+        "high_uncertainty_count": sum(
+            1 for r in rows if r["uncertainty"]["level"] == "high"
+        ),
+        "disclaimer": disclaimer,
+        "matches": rows,
+    }
+
+
+LIVE_DISCLAIMER = (
+    "Live board: every fixture below comes from the odds feed right now. "
+    "Probabilities are forecasts, not guarantees."
+)
+
+NO_LIVE_DATA = {
+    "kind": "match_forecast_bulletin",
+    "mode": "no_live_data",
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "day": None,
+    "count": 0,
+    "top_pick": None,
+    "marquee_count": 0,
+    "high_uncertainty_count": 0,
+    "disclaimer": (
+        "No live fixture snapshot is available yet, so no board is shown. "
+        "The odds poller has not completed a cycle, or the feed is out of quota."
+    ),
+    "matches": [],
+}
+
+
+def build_live_bulletin(matches: list[Match], *, max_matches: int = 40) -> dict[str, Any]:
+    """Forecast board for real upcoming fixtures from the live feed."""
+    if not matches:
+        return dict(NO_LIVE_DATA)
+    model = trained_model()
+    rows: list[dict[str, Any]] = []
+    for match in matches[:max_matches]:
+        try:
+            row = _row_from_match(match, model)
+        except Exception:  # a single bad fixture must not blank the board
+            continue
+        if row is not None:
+            rows.append(row)
+    return _finalize(rows, mode="live", disclaimer=LIVE_DISCLAIMER)
+
+
+def build_live_bulletin_from_payloads(payloads: list[tuple[str, list[dict[str, Any]]]],
+                                      *, now: Optional[datetime] = None,
+                                      max_matches: int = 40) -> dict[str, Any]:
+    """Build the live board from cached raw odds payloads ``(sport_key, data)``."""
+    from .parsing import parse_odds_payload
+
+    now = now or datetime.now(timezone.utc)
+    matches: list[Match] = []
+    for sport_key, data in payloads:
+        if not data:
+            continue
+        try:
+            for m in parse_odds_payload(data):
+                if m.commence_time is not None and m.commence_time <= now:
+                    continue  # already kicked off: not an upcoming fixture
+                matches.append(m)
+        except Exception:
+            continue
+    matches.sort(key=lambda m: (m.commence_time or datetime.max.replace(tzinfo=timezone.utc), m.id))
+    return build_live_bulletin(matches, max_matches=max_matches)
+
+
 def build_bulletin(*, mode: str = "archive", min_matches: int = 8,
                    max_matches: int = 40) -> dict[str, Any]:
     """Build the day's forecast board from real fixtures.
@@ -317,48 +494,23 @@ def build_bulletin(*, mode: str = "archive", min_matches: int = 8,
     # Deterministic ordering: kickoff then match id.
     rows.sort(key=lambda r: (r["commence_at"], r["match_id"]))
 
-    # The board's headline day = the most common fixture date actually shown.
     from collections import Counter
     day_counts = Counter(
         (_parse_dt(r["commence_at"]) or datetime.min).date().isoformat() for r in rows
     )
     day_label = day_counts.most_common(1)[0][0] if day_counts else None
 
-    # Marquee = the most-covered fixtures of the day (coverage proxy for
-    # popularity: more books price it, more money chases it).
-    def _coverage(r: dict[str, Any]) -> tuple[int, str]:
-        n = r["market"]["n_books"] if r["market"] else 0
-        return (-n, r["commence_at"])
-
-    top_three = sorted(rows, key=_coverage)[:3]
-    for r in top_three:
-        r["marquee"] = True
-
-    # Pick of the Day = strongest genuine confidence, or none.
-    candidates = [r for r in rows if r["market"] and r["market"]["p_top"] >= TOP_PICK_MIN_PROB]
-    if candidates:
-        pick = max(candidates, key=lambda r: r["market"]["p_top"])
-        pick["is_top_pick"] = True
-
-    return {
-        "kind": "match_forecast_bulletin",
-        "mode": mode,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "day": day_label,
-        "count": len(rows),
-        "top_pick": next((r["match_id"] for r in rows if r["is_top_pick"]), None),
-        "marquee_count": sum(1 for r in rows if r["marquee"]),
-        "high_uncertainty_count": sum(
-            1 for r in rows if r["uncertainty"]["level"] == "high"
-        ),
-        "disclaimer": (
+    return _finalize(
+        rows,
+        mode=mode,
+        day_label=day_label,
+        disclaimer=(
             f"[{mode}] Demonstration board built from the real packaged archive. "
             "Probabilities use only information available before kickoff; they are "
             "forecasts, not guarantees. In production this exact schema is served "
             "from live odds."
         ),
-        "matches": rows,
-    }
+    )
 
 
 def format_bulletin(bulletin: dict[str, Any]) -> str:

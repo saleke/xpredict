@@ -237,160 +237,6 @@ def _cmd_calibrate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_export_web(args: argparse.Namespace) -> int:
-    import urllib.parse
-    out_path = Path(args.out or "web/data/dashboard.json")
-
-    if args.fixtures:
-        from .fixtures_generator import generate_rolling_commercial_dataset
-        payload = generate_rolling_commercial_dataset(now=utcnow())
-        try:
-            from .backtest import BacktestEngine
-            payload["backtest"] = BacktestEngine().run().to_web_dict()
-        except Exception as exc:
-            print(f"[export-web] Warning: could not attach backtest: {exc}")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, indent=2))
-        print(f"[export-web] Commercial 4-tier rolling dataset exported to {out_path} ({len(payload['active_picks'])} active, {len(payload['settled_ledger'])} settled)")
-        return 0
-
-    settings = cfg.load_settings()
-    client = _make_client(settings, args.fixtures)
-    storage = _make_storage(settings)
-    pipeline = Pipeline(client, storage, settings, notifier=LogNotifier())
-
-    # Populate live picks and settlement
-    pipeline.run_cycle(now=utcnow())
-    run_settlement(client, storage, settings)
-
-    pending = storage.list_pending_picks()
-    settled = storage.list_settled_picks()
-
-    from .calibration import evaluate_calibration, compute_clv_metrics
-
-    cal_rep = evaluate_calibration(settled).to_dict() if settled else None
-    clv_rep = compute_clv_metrics(settled).to_dict() if settled else None
-
-    active_picks_data = []
-    for p in pending:
-        exec_book = p.get("best_book") or "pinnacle"
-        odds_val = float(p.get("best_odds") or p.get("fair_odds", 1.0))
-        fair_val = float(p.get("fair_odds", 1.0))
-        ev_val = float(p.get("best_ev") or 0.0)
-
-        if odds_val > fair_val:
-            freshness = "FRESH"
-            badge_color = "emerald"
-            gauge_text = f"Optimal Entry (+{ev_val*100:.1f}% EV)"
-        elif abs(odds_val - fair_val) < 0.01:
-            freshness = "FAIR"
-            badge_color = "amber"
-            gauge_text = "Fair Value Entry"
-        else:
-            freshness = "SLIPPED"
-            badge_color = "rose"
-            gauge_text = "Decayed / Slippage"
-
-        import hashlib
-        m_hash = hashlib.md5(f"{p.get('match_id')}:{p.get('market')}:{p.get('outcome_name')}".encode()).hexdigest().upper()
-        
-        live_codes_data = {}
-        try:
-            live_file = Path("web/data/live_booking_codes.json")
-            if live_file.exists():
-                import json as _json
-                live_codes_data = _json.loads(live_file.read_text())
-        except Exception:
-            pass
-        pick_override = (live_codes_data.get("picks") or {}).get(p.get("match_id"), {})
-
-        booking_codes = p.get("booking_codes") or {
-            "sportybet": pick_override.get("sportybet") or f"BC{m_hash[:4]}",
-            "football_com": pick_override.get("football_com") or f"FC{m_hash[4:9]}",
-            "1xbet": pick_override.get("1xbet") or f"{m_hash[9:14]}",
-            "bet9ja": pick_override.get("bet9ja") or f"B9{m_hash[14:18]}",
-            "betway": pick_override.get("betway") or f"BW{m_hash[18:23]}",
-        }
-
-        deep_links = {
-            "sportybet": "https://www.sportybet.com/",
-            "football_com": "https://www.football.com/",
-            "1xbet": "https://1xbet.com/",
-            "bet365": f"https://www.bet365.com/#/AX/K^{urllib.parse.quote(str(p['home_team']))}/",
-            "betway": "https://www.betway.com/",
-            "bet9ja": "https://sports.bet9ja.com/",
-            "draftkings": f"https://sportsbook.draftkings.com/search?q={urllib.parse.quote(str(p['home_team']))}",
-            "pinnacle": f"https://www.pinnacle.com/en/search/{urllib.parse.quote(str(p['home_team']))}",
-        }
-
-        active_picks_data.append({
-            "dedupe_key": p.get("dedupe_key"),
-            "match_id": p.get("match_id"),
-            "sport_key": p.get("sport_key"),
-            "home_team": p.get("home_team"),
-            "away_team": p.get("away_team"),
-            "commence_time": p.get("commence_time"),
-            "market": p.get("market"),
-            "outcome_name": p.get("outcome_name"),
-            "line": p.get("line"),
-            "p_true": p.get("p_true"),
-            "fair_odds": fair_val,
-            "best_book": exec_book,
-            "best_odds": odds_val,
-            "best_ev": ev_val,
-            "conviction_score": p.get("conviction_score", 0.0),
-            "recommended_stake_pct": p.get("recommended_stake_pct", 0.0),
-            "recommended_units": p.get("recommended_units", 0.0),
-            "freshness": freshness,
-            "badge_color": badge_color,
-            "gauge_text": gauge_text,
-            "booking_codes": booking_codes,
-            "deep_links": deep_links,
-        })
-
-    payload = {
-        "meta": {
-            "generated_at": utcnow().isoformat(),
-            "version": __version__,
-            "total_sports": len(settings.sports),
-            "scope_leagues": list(settings.sports),
-        },
-        "summary": {
-            "active_picks_count": len(active_picks_data),
-            "settled_picks_count": len(settled),
-            "win_rate": cal_rep.get("win_rate") if cal_rep else None,
-            "brier_score": cal_rep.get("brier_score") if cal_rep else None,
-            "ece": cal_rep.get("ece") if cal_rep else None,
-            "mean_clv": clv_rep.get("mean_clv") if clv_rep else None,
-            "positive_clv_share": clv_rep.get("positive_clv_share") if clv_rep else None,
-        },
-        "active_picks": active_picks_data,
-        "accumulator_booking_codes": {
-            "sportybet": (live_codes_data.get("accumulator_booking_codes") or {}).get("sportybet", "BC792K"),
-            "football_com": (live_codes_data.get("accumulator_booking_codes") or {}).get("football_com", "FC82910"),
-            "1xbet": (live_codes_data.get("accumulator_booking_codes") or {}).get("1xbet", "W49TG"),
-            "bet9ja": (live_codes_data.get("accumulator_booking_codes") or {}).get("bet9ja", "B941K2"),
-            "betway": (live_codes_data.get("accumulator_booking_codes") or {}).get("betway", "BW44108"),
-        },
-        "settled_ledger": settled,
-        "calibration": cal_rep,
-        "clv": clv_rep,
-    }
-
-    try:
-        from .backtest import BacktestEngine
-        bkt_engine = BacktestEngine()
-        payload["backtest"] = bkt_engine.run().to_dict()
-    except Exception as exc:
-        print(f"[export-web] Warning: could not run backtest: {exc}")
-
-    out_path = Path(args.out or "web/data/dashboard.json")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2))
-    print(f"[export-web] Dashboard data exported to {out_path} ({len(active_picks_data)} active, {len(settled)} settled)")
-    return 0
-
-
 def _cmd_tune(args: argparse.Namespace) -> int:
     from .tuning import DEFAULT_LEAGUES, format_tuning, tune_subsets
 
@@ -470,20 +316,31 @@ def _cmd_tiers(args: argparse.Namespace) -> int:
 
 
 def _cmd_export_forecast(args: argparse.Namespace) -> int:
-    from .bulletin import build_bulletin
-    from .tiers import upgrade_path
+    """Print the live forecast board and tier matrix to stdout.
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    The dashboard is served from the API, so nothing is written to web/ any
+    more: a static file would inevitably go stale and would show fixtures the
+    odds feed no longer lists.
+    """
+    from .bulletin import build_bulletin, build_live_bulletin_from_payloads
+    from .dashboard import LIVE_ODDS_PREFIX
+    from .odds import utcnow
+    from .storage import SqliteStorage
 
-    bulletin = build_bulletin()
-    bulletin_path = out_dir / "forecast.json"
-    bulletin_path.write_text(json.dumps(bulletin, indent=2))
+    settings = cfg.load_settings()
+    storage = SqliteStorage(args.db or settings.database_url or "data/lisa.db")
+    payloads: list[tuple[str, list]] = []
+    for key in storage.scan_live_keys():
+        if key.startswith(LIVE_ODDS_PREFIX):
+            entry = storage.get_live(key)
+            if isinstance(entry, dict) and entry.get("payload"):
+                payloads.append((str(entry.get("sport_key") or key), entry["payload"]))
 
-    tiers_path = out_dir / "tiers.json"
-    tiers_path.write_text(json.dumps(upgrade_path(), indent=2))
-
-    print(f"[export-forecast] Wrote {bulletin_path} ({bulletin['count']} fixtures) + {tiers_path}")
+    bulletin = (
+        build_live_bulletin_from_payloads(payloads, now=utcnow())
+        if payloads else build_bulletin()
+    )
+    print(json.dumps(bulletin, indent=2))
     return 0
 
 
@@ -979,9 +836,6 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("--json", action="store_true",
                      help="output JSON instead of formatted text table")
 
-    exp = sub.add_parser("export-web", help="export live consensus and settled metrics to web dashboard JSON")
-    exp.add_argument("--out", default="web/data/dashboard.json",
-                     help="output JSON path (default: web/data/dashboard.json)")
     exp.add_argument("--fixtures", action="store_true",
                      help="use bundled fixture data instead of live API")
 
@@ -1062,10 +916,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ef = sub.add_parser(
         "export-forecast",
-        help="export the forecast board + tier matrix to web/data for the dashboard",
+        help="print the live forecast board as JSON (served from the live cache)",
     )
-    ef.add_argument("--out-dir", default="web/data",
-                    help="output directory (default: web/data)")
+    ef.add_argument("--db", default="", help="ledger/live-cache database path")
 
     tg = sub.add_parser("telegram-bot", help="run interactive Telegram bot for pick reveals, stats & unlocks")
     tg.add_argument("--token", default="", help="Telegram Bot API token")
@@ -1113,8 +966,6 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_report(args)
     if args.cmd == "calibrate":
         return _cmd_calibrate(args)
-    if args.cmd == "export-web":
-        return _cmd_export_web(args)
     if args.cmd == "serve":
         return _cmd_serve(args)
     if args.cmd == "backtest":

@@ -18,7 +18,7 @@
 3. **Leave-One-Out Expected Value (EV)**: Measures each sportsbook's price against an independent consensus excluding itself to identify genuine market mispricings.
 4. **Algorithmic Quality Gate**: Emits only high-conviction selections clearing certainty ($\ge 75\%$), strict cross-bookmaker agreement, and positive EV thresholds.
 5. **Trap Detection Engine**: Automatically flags and warns against deceptive public favorites driven by retail inflation.
-6. **Multi-Platform Execution Slips**: Converts selections into direct 1-click booking codes across major sportsbooks (SportyBet, Football.com, 1xBet, Bet9ja, Betway, Bet365).
+6. **Execution Transparency**: Shows the fair price next to the best price actually observed across the books, so the bettor can price it themselves at any sportsbook.
 7. **Write-Once Audited Ledger**: Immutable settlement pipeline grading results against official score feeds, tracking Closing Line Value (CLV) and Brier calibration.
 8. **Decoupled Architecture**: 100% headless backend exposing robust REST API contracts for custom UI/UX applications, paired with an asynchronous Telegram Gatekeeper Bot and Mobile Admin Console.
 
@@ -78,11 +78,13 @@ The LISA server runs by default on `http://localhost:8080` and provides the foll
 | Endpoint | Method | Purpose | Response Format |
 | :--- | :---: | :--- | :--- |
 | `/api/health` | `GET` | System health, database driver, active fixtures count, bot status | JSON (`status`, `ledger_counts`, `telegram_bot`, `odds_feed`) |
-| `/api/picks` or `/data/dashboard.json` | `GET` | Active refined picks, fair odds, execution recommendations, booking codes | JSON Array of Pick Objects |
+| `/api/dashboard` | `GET` | Full dashboard payload: live picks, settled ledger, calibration, feed health | JSON object |
+| `/api/picks` | `GET` | Active refined picks, fair odds, execution recommendation (tier-masked) | JSON object |
+| `/api/forecast` | `GET` | Live forecast board for currently-listed fixtures | JSON object |
+| `/api/backtest` | `GET` | Historical archive replay (computed on demand, cached 24h) | JSON object |
 | `/api/ledger` | `GET` | Audited historical settlement ledger, win rates, net units, CLV, Brier calibration | JSON (`summary`, `picks_settled`, `monthly_breakdown`) |
 | `/api/forecast` | `GET` | Daily match forecast board — 10+ fixtures with consensus/model probabilities, micro pack (BTTS/O-U/scorelines), uncertainty flags, popular games | JSON (`day`, `count`, `matches[]`, `disclaimer`) |
 | `/api/tiers` | `GET` | Subscription value ladder — feature matrix, per-tier reveal timing, upgrade hints | JSON (`tiers`, `features[]`, `ladder`) |
-| `/data/live_booking_codes.json` | `GET` | Configurable platform-specific booking codes for accumulator / straight slips | JSON Object (`sportybet`, `football_com`, `1xbet`, etc.) |
 | `/api/verify-status?user_id={id}` | `GET` | Checks if a web visitor has verified their Telegram channel membership | JSON (`verified`: `bool`, `tier`: `str`) |
 | `/api/auth/me` | `GET` | Current authenticated user profile, bankroll parameters, and tier level | JSON (`user_id`, `email`, `tier`, `bankroll`) |
 | `/api/auth/login` | `POST` | User authentication returning session token | JSON (`token`, `user`) |
@@ -150,8 +152,7 @@ A major failure point in commercial sports advisory platforms is user drop-off c
 LISA solves this by providing **Native Multi-Bookmaker Booking Codes**:
 
 * **Supported Platforms**: SportyBet, Football.com, 1xBet, Bet9ja, Betway, Bet365.
-* **Instant Slip Loading**: Bettors simply copy a 6-digit booking code (e.g. `FC-902143`), paste it into their sportsbook app, and their wager slip is automatically populated with the exact selections and market prices.
-* **Administrator Overrides**: Administrators can update live accumulator codes in real time via [`web/data/live_booking_codes.json`](web/data/live_booking_codes.json) or through the Telegram Bot console without restarting the server.
+* **Price Transparency**: LISA has no bookmaker partnership and therefore never prints booking codes. It publishes the fair price and the best price it actually observed; the bettor places the bet in their own sportsbook.
 
 ---
 
@@ -330,7 +331,7 @@ The **daily match forecast board** — the honest volume product that pairs with
 ```bash
 PYTHONPATH=engine python3 -m lisa.cli forecast            # full board
 PYTHONPATH=engine python3 -m lisa.cli forecast --top      # popular + pick of the day only
-PYTHONPATH=engine python3 -m lisa export-forecast         # writes web/data/forecast.json + tiers.json
+PYTHONPATH=engine python3 -m lisa export-forecast         # prints the live forecast board as JSON
 ```
 
 Per fixture: **market consensus 1X2** (Shin de-vig across the day's books), **independent model probabilities** (no look-ahead), a **micro pack** (BTTS %, over/under 2.5 %, expected goals, most-likely scorelines), steam/movement direction, and an **uncertainty flag** (`low` / `medium` / `high`) with plain-English reasons — market disagreement (high CV), model-vs-market disagreement, thin book coverage, short model history, or a heavy favourite where the model and market diverge (a classic sucker spot). **High-uncertainty fixtures are labeled "do not stake"** — the board is a forecast, not a betting tip. The most-covered fixtures are surfaced as `❤ POPULAR` (marquee), and the day's single strongest *genuine* consensus is `★ Pick of the Day` — which is omitted entirely when nothing clears the honesty bar.
@@ -408,7 +409,7 @@ The honest headline: the archive spans a market-efficient period — a quality-g
 │   ├── index.html             # UI structure & layout
 │   ├── css/                   # Vanilla styling & responsive glassmorphic system
 │   ├── js/                    # Client app, REST API bridge, countdowns & calculator
-│   └── data/                  # Static fallbacks & live_booking_codes.json
+│   └── data/                  # (unused: the dashboard is served from the API)
 └── docker-compose.yml         # Containerized production deployment
 ```
 

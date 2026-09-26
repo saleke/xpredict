@@ -172,6 +172,20 @@ class AuthManager:
             row = cur.fetchone()
             return sanitize_user(dict(row)) if row else None
 
+    def get_user_by_telegram_id(self, telegram_id: str) -> Optional[dict[str, Any]]:
+        """Retrieve sanitized user by linked Telegram ID.
+
+        Used to stop one account from claiming an identity (in particular an
+        admin's) that already belongs to somebody else.
+        """
+        clean_tg = str(telegram_id or "").strip()
+        if not clean_tg:
+            return None
+        with self._connect() as conn:
+            cur = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (clean_tg,))
+            row = cur.fetchone()
+            return sanitize_user(dict(row)) if row else None
+
     def update_user_tier(self, user_id: str, tier: str) -> bool:
         """Update subscription tier for a user."""
         clean_tier = tier.strip().lower()
@@ -185,15 +199,43 @@ class AuthManager:
             conn.commit()
             return cur.rowcount > 0
 
-    def link_telegram(self, user_id: str, telegram_id: str, telegram_username: str = "") -> bool:
-        """Link a verified Telegram identity to user account."""
+    def link_telegram(
+        self, user_id: str, telegram_id: str, telegram_username: str = "", verified: bool = False
+    ) -> bool:
+        """Attach a Telegram identity to an account.
+
+        ``verified`` must only be set by a caller that has proven control of the
+        Telegram account (unlock-code redemption or a bot-side
+        ``getChatMember`` check). Recording an unverified claim never grants the
+        ``telegram_verified`` privilege.
+
+        A Telegram ID already owned by another account is never reassigned:
+        claiming someone else's ID would inherit their privileges. An unproven
+        claim also never demotes an identity that was already proven.
+        """
         now = time.time()
+        clean_tg = str(telegram_id or "").strip()
+        if clean_tg:
+            owner = self.get_user_by_telegram_id(clean_tg)
+            if owner and owner.get("id") != user_id:
+                return False
+
+        already_proven = False
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT telegram_id, telegram_verified FROM users WHERE id = ?", (user_id,)
+            )
+            row = cur.fetchone()
+            if row:
+                already_proven = bool(row["telegram_verified"]) and str(row["telegram_id"] or "") == clean_tg
+        new_verified = 1 if (verified or already_proven) else 0
+
         with self._connect() as conn:
             cur = conn.execute("""
                 UPDATE users
-                SET telegram_id = ?, telegram_username = ?, telegram_verified = 1, updated_at = ?
+                SET telegram_id = ?, telegram_username = ?, telegram_verified = ?, updated_at = ?
                 WHERE id = ?
-            """, (str(telegram_id), telegram_username, now, user_id))
+            """, (str(telegram_id), telegram_username, new_verified, now, user_id))
             conn.commit()
             return cur.rowcount > 0
 

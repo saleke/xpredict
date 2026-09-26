@@ -69,6 +69,12 @@ class Storage:
     def get_live(self, key: str) -> Optional[dict]:
         raise NotImplementedError
 
+    def get_live_stale(self, key: str) -> Optional[dict]:
+        """Return a cached payload even after its TTL, so the UI can show the
+        last real observation (with its age) instead of nothing. Returns None
+        only when the key was never written."""
+        raise NotImplementedError
+
     def scan_live_keys(self) -> Iterable[str]:
         raise NotImplementedError
 
@@ -109,6 +115,20 @@ class Storage:
     def set_system_paused(self, paused: bool) -> None:
         pass
 
+    # -- notification outbox -------------------------------------------------
+
+    def enqueue_notification(self, dedupe_key: str, text: str) -> bool:
+        raise NotImplementedError
+
+    def list_pending_notifications(self, limit: int = 50) -> list[dict]:
+        raise NotImplementedError
+
+    def mark_notification_sent(self, dedupe_key: str) -> None:
+        raise NotImplementedError
+
+    def mark_notification_failed(self, dedupe_key: str, error: str) -> None:
+        raise NotImplementedError
+
 
 class InMemoryStorage(Storage):
     """Thread-safe-enough for a single worker; TTL is wall-clock monotonic."""
@@ -118,6 +138,7 @@ class InMemoryStorage(Storage):
         self._picks: dict[str, dict] = {}
         self._audit_logs: list[dict] = []
         self._system_paused: bool = False
+        self._outbox: dict[str, dict] = {}
 
     # -- hot layer -----------------------------------------------------------
 
@@ -133,6 +154,9 @@ class InMemoryStorage(Storage):
             del self._live[key]
             return None
         return data
+
+    def get_live_stale(self, key: str) -> Optional[dict]:
+        return self._live.get(key, (0.0, None))[1]
 
     def scan_live_keys(self) -> Iterable[str]:
         now = time.monotonic()
@@ -210,6 +234,40 @@ class InMemoryStorage(Storage):
 
     def set_system_paused(self, paused: bool) -> None:
         self._system_paused = bool(paused)
+
+    # -- notification outbox -------------------------------------------------
+
+    def enqueue_notification(self, dedupe_key: str, text: str) -> bool:
+        if dedupe_key in self._outbox:
+            return False
+        self._outbox[dedupe_key] = {
+            "dedupe_key": dedupe_key,
+            "text": text,
+            "status": "PENDING",
+            "attempts": 0,
+            "last_error": None,
+            "created_at": time.time(),
+            "sent_at": None,
+        }
+        return True
+
+    def list_pending_notifications(self, limit: int = 50) -> list[dict]:
+        pending = [dict(r) for r in self._outbox.values() if r["status"] == "PENDING"]
+        pending.sort(key=lambda r: r["created_at"])
+        return pending[:limit]
+
+    def mark_notification_sent(self, dedupe_key: str) -> None:
+        row = self._outbox.get(dedupe_key)
+        if row is not None:
+            row["status"] = "SENT"
+            row["sent_at"] = time.time()
+            row["last_error"] = None
+
+    def mark_notification_failed(self, dedupe_key: str, error: str) -> None:
+        row = self._outbox.get(dedupe_key)
+        if row is not None:
+            row["attempts"] = int(row.get("attempts", 0)) + 1
+            row["last_error"] = str(error)[:500]
 
 
 class JsonFileStorage(InMemoryStorage):
@@ -358,6 +416,21 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_admin ON admin_audit_logs(admin_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time ON admin_audit_logs(timestamp);
 
+-- Durable notification outbox: a pick is written to the ledger before its alert
+-- is delivered, so an at-most-once dispatch silently drops alerts on failure.
+-- Rows stay PENDING until a notifier confirms delivery, and are retried.
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    dedupe_key    TEXT NOT NULL UNIQUE,
+    text          TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'PENDING',
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    last_error    TEXT,
+    created_at    REAL NOT NULL,
+    sent_at       REAL
+);
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, id);
+
 CREATE VIEW IF NOT EXISTS lisa_predictions AS SELECT * FROM picks;
 CREATE VIEW IF NOT EXISTS user_profiles AS SELECT * FROM users;
 """
@@ -418,6 +491,12 @@ class SqliteStorage(Storage):
                 conn.commit()
                 return None
             return json.loads(row["data"])
+
+    def get_live_stale(self, key: str) -> Optional[dict]:
+        with self._connect() as conn:
+            cur = conn.execute("SELECT data FROM live_cache WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return json.loads(row["data"]) if row else None
 
     def scan_live_keys(self) -> Iterable[str]:
         now = time.time()
@@ -641,6 +720,45 @@ class SqliteStorage(Storage):
         """
         with self._connect() as conn:
             conn.execute(sql, (val_str, now_iso))
+            conn.commit()
+
+    # -- notification outbox -------------------------------------------------
+
+    def enqueue_notification(self, dedupe_key: str, text: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO notification_outbox (dedupe_key, text, status, created_at) "
+                "VALUES (?, ?, 'PENDING', ?)",
+                (dedupe_key, text, time.time()),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_pending_notifications(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "SELECT id, dedupe_key, text, attempts, created_at FROM notification_outbox "
+                "WHERE status = 'PENDING' ORDER BY id LIMIT ?",
+                (max(1, int(limit)),),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def mark_notification_sent(self, dedupe_key: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notification_outbox SET status = 'SENT', sent_at = ?, last_error = NULL "
+                "WHERE dedupe_key = ?",
+                (time.time(), dedupe_key),
+            )
+            conn.commit()
+
+    def mark_notification_failed(self, dedupe_key: str, error: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notification_outbox SET attempts = attempts + 1, last_error = ? "
+                "WHERE dedupe_key = ?",
+                (str(error)[:500], dedupe_key),
+            )
             conn.commit()
 
 

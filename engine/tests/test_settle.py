@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from conftest import insert_postponed_pick
+
 from lisa.settle import run_settlement
 
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
@@ -11,6 +13,9 @@ NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 def test_settlement_grades_the_ledger(pipeline, fixture_client, storage, settings):
     pipeline.run_cycle(now=NOW)
+    # The postponed fixture was picked pre-kickoff in real life; ingestion no
+    # longer mints picks for matches that already commenced.
+    insert_postponed_pick(storage)
     assert len(storage.list_pending_picks()) == 5
 
     rep = run_settlement(fixture_client, storage, settings, now=NOW)
@@ -41,6 +46,7 @@ def test_settlement_ignores_upstream_failure(pipeline, storage, settings):
             raise RuntimeError("scores endpoint down")
 
     pipeline.run_cycle(now=NOW)
+    insert_postponed_pick(storage)
     rep = run_settlement(Boom(), storage, settings, now=NOW)
     assert rep.errors and rep.settled == 0
     assert len(storage.list_pending_picks()) == 5  # nothing graded

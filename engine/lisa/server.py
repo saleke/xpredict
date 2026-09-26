@@ -24,6 +24,7 @@ from typing import Any, Optional
 from . import __version__
 from . import config as cfg
 from .auth import AuthManager
+from .dashboard import LIVE_ODDS_PREFIX
 from .gate import Pick
 from .storage import InMemoryStorage, SqliteStorage, Storage
 from .telegram_bot import TelegramBot, generate_unlock_token, registry, verify_unlock_token
@@ -33,6 +34,36 @@ logger = logging.getLogger(__name__)
 FAILED_SIGNIN_ATTEMPTS: dict[str, list[float]] = {}
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_SECONDS = 900
+
+#: Per-IP budget for unlock-code redemption attempts.
+MAX_VERIFY_TOKEN_ATTEMPTS = 10
+VERIFY_TOKEN_LOCKOUT_SECONDS = 900
+
+#: Per-IP budget for Telegram identity linking attempts.
+MAX_LINK_ATTEMPTS = 10
+LINK_LOCKOUT_SECONDS = 900
+
+#: Fallback limiter state for handlers constructed without a server object.
+RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
+
+#: Hard ceiling on request bodies accepted by the JSON API (bytes).
+MAX_BODY_BYTES = 64 * 1024
+
+#: Directories inside ``web/`` that must never be served as static assets:
+#: they hold user emails, Telegram IDs, and other non-public data.
+STATIC_DENY_DIRS = ("data",)
+
+#: Extra origins allowed to send credentialed cross-origin requests. Same-origin
+#: browser traffic never needs CORS, so this stays empty by default.
+ALLOWED_ORIGINS_ENV = "LISA_ALLOWED_ORIGINS"
+
+
+def _allowed_origins() -> tuple:
+    return tuple(
+        o.strip().rstrip("/")
+        for o in os.environ.get(ALLOWED_ORIGINS_ENV, "").split(",")
+        if o.strip()
+    )
 
 
 class LISAProductionHandler(SimpleHTTPRequestHandler):
@@ -67,14 +98,24 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def _send_cors_headers(self):
-        req_origin = self.headers.get("Origin")
-        if req_origin:
+        """Credentialed CORS is allowlist-only.
+
+        Reflecting the caller's ``Origin`` together with
+        ``Access-Control-Allow-Credentials`` lets any site on the internet make
+        authenticated calls with a visitor's session cookie, so unlisted
+        origins get no CORS headers at all.
+        """
+        req_origin = (self.headers.get("Origin") or "").strip().rstrip("/")
+        if req_origin and req_origin in _allowed_origins():
             self.send_header("Access-Control-Allow-Origin", req_origin)
             self.send_header("Access-Control-Allow-Credentials", "true")
-        else:
-            self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie, X-Webhook-Secret, X-Admin-Secret")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie, X-Webhook-Secret, X-Admin-Secret")
+            self.send_header("Vary", "Origin")
+        elif not req_origin:
+            # No Origin header: not a browser cross-origin request.
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie, X-Webhook-Secret, X-Admin-Secret")
 
     def _send_json(self, data: Any, status: int = 200):
         body = json.dumps(data, indent=2 if status != 200 else None).encode("utf-8")
@@ -122,24 +163,76 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
     def _read_json_body(self) -> Optional[dict]:
         try:
             length = int(self.headers.get("Content-Length", 0))
-            if length <= 0:
-                return None
-            raw_body = self.rfile.read(length).decode("utf-8")
-            return json.loads(raw_body)
-        except Exception:
+        except (TypeError, ValueError):
+            self._send_json({"success": False, "error": "Invalid Content-Length"}, status=400)
             return None
+        if length <= 0:
+            return None
+        if length > MAX_BODY_BYTES:
+            self._send_json({"success": False, "error": "Request body too large"}, status=413)
+            return None
+        try:
+            raw_body = self.rfile.read(length).decode("utf-8")
+            data = json.loads(raw_body)
+        except Exception:
+            self._send_json({"success": False, "error": "Invalid JSON body"}, status=400)
+            return None
+        return data if isinstance(data, dict) else None
+
+    @property
+    def _rate_limit_buckets(self) -> dict:
+        """Per-server limiter state, so restarts and tests start clean."""
+        server = getattr(self, "server", None)
+        if server is None:
+            return RATE_LIMIT_BUCKETS
+        buckets = getattr(server, "rate_limit_buckets", None)
+        if buckets is None:
+            buckets = {}
+            setattr(server, "rate_limit_buckets", buckets)
+        return buckets
+
+    def _rate_limited(self, bucket: str, limit: int, window: int) -> bool:
+        """Per-IP fixed-window limiter shared by credentialed endpoints."""
+        buckets = self._rate_limit_buckets
+        ip = self.client_address[0] if self.client_address else "unknown"
+        now_ts = time.time()
+        key = f"{bucket}:{ip}"
+        attempts = [t for t in buckets.get(key, []) if now_ts - t < window]
+        if len(attempts) >= limit:
+            buckets[key] = attempts
+            return True
+        attempts.append(now_ts)
+        buckets[key] = attempts
+        return False
+
+    def _clear_rate_limit(self, bucket: str) -> None:
+        ip = self.client_address[0] if self.client_address else "unknown"
+        self._rate_limit_buckets.pop(f"{bucket}:{ip}", None)
 
     def do_OPTIONS(self):
         self.send_response(204)
         self._send_cors_headers()
         self.end_headers()
 
+    def _is_denied_static_path(self, path: str) -> bool:
+        """Block static access to non-public directories under ``web/``."""
+        parts = [p for p in urllib.parse.urlparse(path).path.split("/") if p]
+        return any(p in STATIC_DENY_DIRS for p in parts[:-1])
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        if self._is_denied_static_path(path):
+            self._send_json({"error": "Not found"}, status=404)
+            return
+
         if path in ("/api/status", "/api/health", "/api/telemetry"):
             self._handle_status()
+            return
+
+        if path in ("/api/dashboard", "/api/data"):
+            self._handle_dashboard()
             return
 
         if path == "/api/auth/me":
@@ -160,6 +253,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/forecast":
             self._handle_forecast()
+            return
+
+        if path == "/api/backtest":
+            self._handle_backtest()
             return
 
         if path == "/api/ledger":
@@ -229,10 +326,18 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         email = str(data.get("email", "")).strip()
         password = str(data.get("password", ""))
         name = str(data.get("display_name", "")).strip()
-        tier = str(data.get("tier", "free")).strip().lower()
+        # Signup always provisions the free tier. Paid tiers are only granted by
+        # a verified payment webhook or an admin, never by the request body.
+        requested_tier = str(data.get("tier", "")).strip().lower()
+        if requested_tier and requested_tier != "free":
+            logger.warning(
+                "Ignoring client-supplied tier %r on signup for %s",
+                requested_tier,
+                email,
+            )
 
         try:
-            user = self.auth.register_user(email=email, password=password, display_name=name, tier=tier)
+            user = self.auth.register_user(email=email, password=password, display_name=name, tier="free")
             ip_addr = self.client_address[0] if self.client_address else ""
             ua = self.headers.get("User-Agent", "")
             sess = self.auth.create_session(user_id=user["id"], ip_address=ip_addr, user_agent=ua)
@@ -301,15 +406,32 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             status=200,
         )
 
+    def _expected_webhook_secret(self) -> str:
+        return os.environ.get("LISA_WEBHOOK_SECRET", "").strip()
+
+    def _webhook_authorized(self, data: dict) -> bool:
+        """Constant-time check of the shared payment/webhook secret.
+
+        With no ``LISA_WEBHOOK_SECRET`` configured there is no way to tell a real
+        payment event from a forged one, so the endpoint fails closed instead of
+        accepting unsigned (or hardcoded-secret) requests.
+        """
+        expected = self._expected_webhook_secret()
+        if not expected:
+            logger.error(
+                "LISA_WEBHOOK_SECRET is not configured: rejecting privileged request"
+            )
+            return False
+        provided = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
+        if not provided:
+            return False
+        return secrets.compare_digest(str(provided), expected)
+
     def _handle_auth_update_tier(self):
         user, _ = self._get_current_user_and_session()
         data = self._read_json_body() or {}
-        webhook_sec = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
-        env_secret = os.environ.get("LISA_WEBHOOK_SECRET", "lisa_internal_secret_2026")
-        is_authorized = False
-        if webhook_sec and webhook_sec == env_secret:
-            is_authorized = True
-        elif user:
+        is_authorized = self._webhook_authorized(data)
+        if not is_authorized and user:
             user_tg = str(user.get("telegram_id", "")).strip()
             if (self.bot and self.bot.is_admin(user_tg)) or user.get("tier") == "admin":
                 is_authorized = True
@@ -343,9 +465,13 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "JSON payload required"}, status=400)
             return
 
-        webhook_secret = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
-        env_secret = os.environ.get("LISA_WEBHOOK_SECRET", "lisa_internal_secret_2026")
-        if webhook_secret and webhook_secret != env_secret:
+        if not self._expected_webhook_secret():
+            self._send_json({
+                "success": False,
+                "error": "Payment webhook disabled: LISA_WEBHOOK_SECRET is not configured",
+            }, status=503)
+            return
+        if not self._webhook_authorized(data):
             self._send_json({"success": False, "error": "Invalid webhook secret signature"}, status=401)
             return
 
@@ -382,12 +508,20 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 user = self.auth.get_user_by_email(email)
                 if user:
                     self.auth.update_user_tier(user["id"], clean_tier)
-                    if telegram_id:
-                        self.auth.link_telegram(user["id"], telegram_id=telegram_id)
+                    if telegram_id and not self.auth.link_telegram(user["id"], telegram_id=telegram_id):
+                        logger.warning(
+                            "Payment for %s could not link Telegram ID %s: already owned by another account",
+                            email,
+                            telegram_id,
+                        )
                 else:
                     user = self.auth.register_user(email=email, password=secrets.token_urlsafe(16), tier=clean_tier)
-                    if telegram_id:
-                        self.auth.link_telegram(user["id"], telegram_id=telegram_id)
+                    if telegram_id and not self.auth.link_telegram(user["id"], telegram_id=telegram_id):
+                        logger.warning(
+                            "Provisioning for %s could not link Telegram ID %s: already owned by another account",
+                            email,
+                            telegram_id,
+                        )
 
             invite = None
             if self.bot:
@@ -470,9 +604,97 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "telegram_id required"}, status=400)
             return
 
-        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username)
+        # A self-declared Telegram ID is not evidence. Unlocking requires either
+        # a valid unlock code (issued after payment) or a live bot-side
+        # getChatMember check against the official channel.
+        seeds = self._unlock_seed_candidates(user["id"])
+        token = str(data.get("token", "")).strip()
+        proven = bool(token) and verify_unlock_token(token, seeds)
+
+        proof_source = "unlock_code"
+        if not proven:
+            proof_source = "channel_membership"
+            proven = bool(
+                self.bot
+                and getattr(self.bot, "token", "")
+                and self.bot.is_channel_member(self.bot.channel_chat_id, tg_id)
+            )
+
+        if self._rate_limited("link_telegram", MAX_LINK_ATTEMPTS, LINK_LOCKOUT_SECONDS):
+            self._send_json({"success": False, "error": "Too many link attempts. Try again later."}, status=429)
+            return
+
+        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username, verified=proven)
         updated = self.auth.get_user_by_id(user["id"])
-        self._send_json({"success": True, "user": updated})
+        if proven:
+            self._clear_rate_limit("link_telegram")
+            if self.storage and hasattr(self.storage, "verify_user"):
+                self.storage.verify_user(user["id"], telegram_user_id=tg_id, username=tg_username)
+            registry.verify(user["id"], telegram_user_id=tg_id, username=tg_username)
+        self._send_json({
+            "success": True,
+            "user": updated,
+            "telegram_verified": bool(proven),
+            "message": (
+                "Telegram identity verified."
+                if proven
+                else "Telegram ID recorded but not verified. Complete the unlock-code "
+                     "flow in Telegram (or join the channel) to unlock premium content."
+            ),
+        })
+
+    def _handle_backtest(self):
+        """Archive replay, computed on demand and cached for a day.
+
+        This is real historical odds from the packaged archive, not a live feed,
+        so the response is labelled with its provenance and compute time.
+        """
+        cache_key = "cache:backtest"
+        cached = None
+        if self.storage is not None and hasattr(self.storage, "get_live"):
+            cached = self.storage.get_live(cache_key)
+        if cached:
+            self._send_json(cached)
+            return
+
+        try:
+            from .backtest import BacktestEngine
+
+            started = time.time()
+            payload = BacktestEngine().run().to_web_dict()
+            payload["meta"] = {
+                "provenance": "packaged_historical_archive",
+                "is_live": False,
+                "statement": (
+                    "Replay of real historical odds from the packaged archive. "
+                    "Not a live feed; it measures the model, not today's board."
+                ),
+                "computed_in_sec": round(time.time() - started, 2),
+            }
+        except Exception as exc:
+            logger.warning("backtest compute failed: %r", exc)
+            self._send_json({"error": "backtest unavailable", "detail": str(exc)}, status=503)
+            return
+
+        if self.storage is not None and hasattr(self.storage, "upsert_live"):
+            try:
+                self.storage.upsert_live(cache_key, payload, 24 * 60 * 60)
+            except Exception:
+                pass
+        self._send_json(payload)
+
+    def _handle_dashboard(self):
+        """Real dashboard payload: ledger + last live observation only."""
+        from .dashboard import build_dashboard
+
+        settings = self.settings or cfg.load_settings()
+        try:
+            payload = build_dashboard(self.storage, settings)
+        except Exception as exc:
+            logger.warning("dashboard build failed: %r", exc)
+            self._send_json({"error": "dashboard unavailable", "detail": str(exc)}, status=503)
+            return
+        self._send_json(payload)
 
     def _handle_status(self):
         start_time = getattr(self.server, "start_time", time.time())
@@ -509,14 +731,42 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         self._send_json(upgrade_path())
 
     def _handle_forecast(self):
-        """Daily match forecast board (10+ fixtures, uncertainty flags)."""
-        from .bulletin import build_bulletin
+        """Forecast board for real upcoming fixtures from the live cache.
+
+        Never falls back to the packaged archive: if there is no live snapshot
+        the response is an explicit "no live data" board.
+        """
+        from .bulletin import NO_LIVE_DATA, build_live_bulletin_from_payloads
 
         cached = getattr(self, "_forecast_cache", None)
-        if not cached or time.time() - cached[0] > 300:
-            cached = (time.time(), build_bulletin())
-            self._forecast_cache = cached
-        self._send_json(cached[1])
+        if cached and time.time() - cached[0] <= 120:
+            self._send_json(cached[1])
+            return
+
+        payloads: list[tuple[str, list]] = []
+        if self.storage is not None and hasattr(self.storage, "scan_live_keys"):
+            try:
+                keys = [k for k in self.storage.scan_live_keys() if k.startswith(LIVE_ODDS_PREFIX)]
+            except Exception:
+                keys = []
+            for key in keys:
+                entry = self.storage.get_live(key) if hasattr(self.storage, "get_live") else None
+                if isinstance(entry, dict) and entry.get("payload"):
+                    payloads.append((str(entry.get("sport_key") or key), entry["payload"]))
+
+        if not payloads:
+            self._send_json(dict(NO_LIVE_DATA))
+            return
+
+        try:
+            board = build_live_bulletin_from_payloads(payloads)
+        except Exception as exc:
+            logger.warning("live bulletin failed: %r", exc)
+            self._send_json(dict(NO_LIVE_DATA))
+            return
+
+        self._forecast_cache = (time.time(), board)
+        self._send_json(board)
 
     def _handle_verify_status(self, parsed: urllib.parse.ParseResult):
         qs = urllib.parse.parse_qs(parsed.query)
@@ -529,20 +779,59 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             if not is_ver:
                 is_ver = registry.is_verified(user_id)
 
+            # Reconcile the auth row only for an account that has no Telegram
+            # identity yet, and never overwrite an existing one. This endpoint is
+            # unauthenticated, so it must not be able to grant privileges.
             if is_ver and user_id.startswith("usr_") and self.auth:
                 u = self.auth.get_user_by_id(user_id)
-                if u and not u.get("telegram_verified"):
-                    self.auth.link_telegram(user_id, telegram_id="")
+                if u and not u.get("telegram_verified") and not str(u.get("telegram_id") or "").strip():
+                    try:
+                        self._sync_verified_identity(user_id)
+                    except Exception:
+                        logger.debug("verify-status identity sync failed", exc_info=True)
 
         self._send_json({"user_id": user_id, "verified": bool(is_ver)})
 
+    def _sync_verified_identity(self, user_id: str) -> None:
+        """Copy the registry's proven Telegram identity onto the auth record."""
+        if not self.auth:
+            return
+        session = registry.get_session(user_id) or {}
+        telegram_id = str(session.get("telegram_user_id") or "").strip()
+        username = str(session.get("username") or "")
+        if not telegram_id:
+            return
+        if not self.auth.link_telegram(user_id, telegram_id=telegram_id, telegram_username=username, verified=True):
+            logger.warning("Refused identity sync for %s: Telegram ID already owned", user_id)
+
+    def _unlock_seed_candidates(self, user_id: str) -> list:
+        """Seeds an unlock code may legitimately be bound to for this request."""
+        seeds = []
+        for candidate in (user_id,):
+            candidate = str(candidate or "").strip()
+            if candidate:
+                seeds.append(candidate)
+        auth_user, _ = self._get_current_user_and_session()
+        if auth_user:
+            for key in ("email", "id", "telegram_id"):
+                value = str(auth_user.get(key) or "").strip()
+                if value and value not in seeds:
+                    seeds.append(value)
+        if self.auth and user_id:
+            try:
+                record = self.auth.get_user_by_id(user_id) or {}
+            except Exception:
+                record = {}
+            for key in ("email", "id", "telegram_id"):
+                value = str(record.get(key) or "").strip()
+                if value and value not in seeds:
+                    seeds.append(value)
+        return seeds
+
     def _handle_verify_token(self):
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(length).decode("utf-8")
-            data = json.loads(raw_body)
-        except Exception:
-            self._send_json({"success": False, "error": "Invalid JSON body"}, status=400)
+        data = self._read_json_body()
+        if not data:
+            self._send_json({"success": False, "error": "JSON payload required"}, status=400)
             return
 
         user_id = str(data.get("user_id", "")).strip()
@@ -552,10 +841,17 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "user_id and token required"}, status=400)
             return
 
-        if verify_unlock_token(token):
+        # Bound online guessing: the code is ~50 bits of HMAC, and this keeps the
+        # remaining search space off the table cheaply.
+        if self._rate_limited("verify_token", MAX_VERIFY_TOKEN_ATTEMPTS, VERIFY_TOKEN_LOCKOUT_SECONDS):
+            self._send_json({"success": False, "error": "Too many attempts. Try again later."}, status=429)
+            return
+
+        if verify_unlock_token(token, self._unlock_seed_candidates(user_id)):
             if self.storage and hasattr(self.storage, "verify_user"):
                 self.storage.verify_user(user_id)
             registry.verify(user_id)
+            self._clear_rate_limit("verify_token")
             self._send_json({"success": True, "user_id": user_id, "verified": True})
         else:
             self._send_json({"success": False, "error": "Invalid or expired verification token"}, status=403)
@@ -589,21 +885,11 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             if not is_ver:
                 is_ver = registry.is_verified(user_id)
 
-        # 1. Fetch pending picks from storage, or fallback to dashboard.json
+        # 1. Pending picks come from the ledger only. There is no static-file
+        # fallback: an empty ledger means "no live picks yet", not demo data.
         raw_picks: list[dict] = []
         if self.storage:
             raw_picks = self.storage.list_pending_picks()
-
-        if not raw_picks:
-            # Fallback to web/data/dashboard.json active_picks
-            dash_file = Path(getattr(self.server, "web_dir", Path("web"))) / "data" / "dashboard.json"
-            if dash_file.exists():
-                try:
-                    with open(dash_file, "r", encoding="utf-8") as f:
-                        dash_data = json.load(f)
-                        raw_picks = dash_data.get("active_picks", [])
-                except Exception:
-                    pass
 
         processed_picks = []
         for idx, pick in enumerate(raw_picks):

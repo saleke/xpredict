@@ -130,11 +130,15 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
         if commence is None:
             continue
 
-        by_market: dict[str, list[Book]] = {key: [] for key in wanted}
+        # One Book per bookmaker key: a payload may repeat a book (or repeat a
+        # market inside a book). Counting the same shop twice would inflate
+        # n_books, understate dispersion and corrupt the consensus weight.
+        by_market: dict[str, dict[str, Book]] = {key: {} for key in wanted}
         for bm in game.get("bookmakers", []) or []:
-            key = str(bm.get("key", ""))
+            key = str(bm.get("key", "")).strip()
             if not key:
                 continue
+            dedupe_key = key.lower()
             for mkt in bm.get("markets", []) or []:
                 mkey = mkt.get("key")
                 if mkey not in wanted:
@@ -145,16 +149,19 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
                 if not valid:
                     continue
 
-                by_market[mkey].append(Book(
+                book = Book(
                     key=key,
                     title=str(bm.get("title", key)),
                     last_update=_parse_iso(bm.get("last_update")),
                     outcomes=clean_outcomes,
                     line=book_line,
-                ))
+                )
+                existing = by_market[mkey].get(dedupe_key)
+                if existing is None or _is_fresher(book, existing):
+                    by_market[mkey][dedupe_key] = book
 
-        for mkey, books in by_market.items():
-            if not books:
+        for mkey, books_by_key in by_market.items():
+            if not books_by_key:
                 continue
             matches.append(Match(
                 id=match_id,
@@ -164,9 +171,18 @@ def parse_odds_payload(payload: Iterable[dict[str, Any]],
                 away_team=away,
                 completed=bool(game.get("completed", False)),
                 market=mkey,
-                bookmakers=tuple(books),
+                bookmakers=tuple(books_by_key.values()),
             ))
     return matches
+
+
+def _is_fresher(candidate: Book, existing: Book) -> bool:
+    """True when ``candidate`` is a more recent quote than ``existing``."""
+    if candidate.last_update is None:
+        return False
+    if existing.last_update is None:
+        return True
+    return candidate.last_update > existing.last_update
 
 
 def parse_scores_payload(payload: Iterable[dict[str, Any]]) -> list[Score]:
