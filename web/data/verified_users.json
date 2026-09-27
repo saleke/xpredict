@@ -1,0 +1,56 @@
+{
+  "usr_web_42": {
+    "verified": true,
+    "telegram_user_id": "tg_user_1",
+    "username": "trader_joe",
+    "verified_at": 1790088141.8914864
+  },
+  "test_valid_user": {
+    "verified": true,
+    "telegram_user_id": "999",
+    "username": "tester",
+    "verified_at": 1789945772.3169205
+  },
+  "user_seed_42": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1790035621.6453905
+  },
+  "usr_28252o3": {
+    "verified": true,
+    "telegram_user_id": "6423327380",
+    "username": "THEVICTORHOMES",
+    "verified_at": 1789946781.6990585
+  },
+  "partner@influencer.com": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1790088141.6970043
+  },
+  "influencer@review.com": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1790088141.7157266
+  },
+  "pro_bettor@quant.com": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789965819.0473015
+  },
+  "pro_trader@xpredict.ai": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1790035564.1820734
+  },
+  "live_test_sub@xpredict.ai": {
+    "verified": true,
+    "telegram_user_id": "",
+    "username": "",
+    "verified_at": 1789968988.441361
+  }
+}

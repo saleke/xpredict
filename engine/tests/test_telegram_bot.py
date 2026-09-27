@@ -13,7 +13,12 @@ from lisa.gate import Execution, Pick
 from lisa.live_ingest import LiveIngestionDaemon
 from lisa.storage import InMemoryStorage
 from lisa.telegram_bot import (
+    ADMIN_ONLY_SLUGS,
+    ADMIN_REPLY_KEYBOARD,
+    BUTTON_SLUGS,
+    FREE_REPLY_KEYBOARD,
     MAIN_REPLY_KEYBOARD,
+    PAID_REPLY_KEYBOARD,
     BankrollFSMManager,
     TelegramBot,
     TelegramUpdate,
@@ -25,6 +30,7 @@ from lisa.telegram_bot import (
     format_stats_html,
     format_trap_advisory_html,
     generate_unlock_token,
+    get_main_menu_for_user,
     verify_unlock_token,
 )
 
@@ -135,6 +141,7 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("84.0%", html)
         self.assertIn("0.1305", html)
         self.assertIn("3.61%", html)
+<<<<<<< HEAD
         self.assertIn("3.12%", html)
         self.assertIn("50 fully audited real matches", html)
         self.assertIn("42/50", html)
@@ -143,6 +150,45 @@ class TestTelegramBot(unittest.TestCase):
         html = format_stats_html({"settled_picks_count": 0})
         self.assertIn("No settled picks yet", html)
         self.assertNotIn("84.0%", html)
+=======
+        self.assertIn("+3.12%", html)
+        self.assertIn("50 fully audited real matches", html)
+
+    def test_format_stats_html_never_invents_missing_metrics(self):
+        """A missing metric must render as absent, not as a plausible default."""
+        html = format_stats_html({"settled_picks_count": 50})
+        for fabricated in ("84.0%", "0.1305", "3.61%", "+3.12%", "30 sucker bets"):
+            self.assertNotIn(fabricated, html)
+        # The metrics that were supplied are still shown.
+        self.assertIn("50 fully audited real matches", html)
+
+    def test_format_stats_html_insufficient_sample(self):
+        """Below the sample floor we say so instead of publishing a win rate."""
+        for summary in ({}, {"settled_picks_count": 0}, {"settled_picks_count": 3}):
+            html = format_stats_html(summary)
+            self.assertIn("Insufficient settled sample", html)
+            self.assertNotIn("Verified Win Rate", html)
+
+    def test_format_stats_html_reports_negative_clv_honestly(self):
+        """The real backtest numbers must not be dressed up as positive."""
+        summary = {
+            "win_rate": 0.7974,
+            "brier_score": 0.1584,
+            "mean_clv": -0.0111,
+            "positive_clv_share": 0.3789,
+            "roi_pct": -1.81,
+            "wins": 303,
+            "settled_picks_count": 380,
+        }
+        html = format_stats_html(summary)
+        self.assertIn("79.7%", html)
+        self.assertIn("(303/380 graded)", html)
+        self.assertIn("-1.11%", html)
+        self.assertIn("37.9%", html)
+        self.assertIn("-1.81%", html)
+        self.assertIn("did <b>not</b> beat the closing line", html)
+        self.assertNotIn("+3.12%", html)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_format_free_picks_html(self):
         picks = [
@@ -345,6 +391,7 @@ class TestTelegramBot(unittest.TestCase):
         self.assertEqual(self.bot.outbox[-1]["chat_id"], "chat_42")
 
     def test_persistent_reply_keyboard_structure(self):
+        """The default (free) keyboard is a valid persistent reply keyboard."""
         keyboard = MAIN_REPLY_KEYBOARD
         self.assertTrue(keyboard.get("is_persistent"))
         self.assertTrue(keyboard.get("resize_keyboard"))
@@ -352,9 +399,174 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("📊 Active Top Picks", buttons)
         self.assertIn("🏦 My Bankroll", buttons)
         self.assertIn("📈 Accuracy Ledger", buttons)
+<<<<<<< HEAD
         self.assertIn("⚡ Live Accumulator", buttons)
         self.assertIn("🎟️ Execution Guide", buttons)
+=======
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         self.assertIn("🛡️ Trap Advisories", buttons)
+        # Parlay and booking codes are paid-tier features, so they must NOT be
+        # advertised on the free keyboard.
+        self.assertNotIn("⚡ 5-Fold Parlay", buttons)
+        self.assertNotIn("🎟️ Bookmaker Codes", buttons)
+
+    def test_every_keyboard_button_resolves_to_a_slug(self):
+        """Guards against a button label that the router cannot match.
+
+        An unroutable button silently falls through to the conversational
+        fallback, so every label in every keyboard must be a known slug.
+        """
+        for name, keyboard in (
+            ("admin", ADMIN_REPLY_KEYBOARD),
+            ("paid", PAID_REPLY_KEYBOARD),
+            ("free", FREE_REPLY_KEYBOARD),
+        ):
+            for row in keyboard["keyboard"]:
+                for btn in row:
+                    self.assertIn(
+                        btn["text"], BUTTON_SLUGS,
+                        f"{name} keyboard button {btn['text']!r} has no slug",
+                    )
+
+    def test_admin_keyboard_is_the_only_one_with_operator_buttons(self):
+        def flat(kb):
+            return [b["text"] for row in kb["keyboard"] for b in row]
+
+        admin_only = [t for t, s in BUTTON_SLUGS.items() if s in ADMIN_ONLY_SLUGS]
+        self.assertTrue(admin_only)
+        for label in admin_only:
+            self.assertIn(label, flat(ADMIN_REPLY_KEYBOARD))
+            self.assertNotIn(label, flat(PAID_REPLY_KEYBOARD))
+            self.assertNotIn(label, flat(FREE_REPLY_KEYBOARD))
+
+    def test_get_main_menu_for_user_selects_by_role(self):
+        admin_id = "8720543490"
+        bot = TelegramBot(token="", channel_chat_id="@test_channel", mock=True,
+                          admin_telegram_ids=[admin_id])
+
+        def flat(kb):
+            return [b["text"] for row in kb["keyboard"] for b in row]
+
+        self.assertIs(get_main_menu_for_user(bot, admin_id), ADMIN_REPLY_KEYBOARD)
+
+        paid_id = "paid_user_456"
+        bot._tier_cache[paid_id] = ("tier2", time.time() + 300)
+        self.assertIs(get_main_menu_for_user(bot, paid_id), PAID_REPLY_KEYBOARD)
+
+        # Unknown user degrades to the least-privilege menu.
+        self.assertIs(get_main_menu_for_user(bot, "stranger_789"), FREE_REPLY_KEYBOARD)
+
+        # Admin beats a paid tier on the same account.
+        bot._tier_cache[admin_id] = ("tier1", time.time() + 300)
+        self.assertIs(get_main_menu_for_user(bot, admin_id), ADMIN_REPLY_KEYBOARD)
+
+    def test_menu_selector_survives_role_resolution_failure(self):
+        class ExplodingBot(TelegramBot):
+            def is_admin(self, user_id):
+                raise RuntimeError("boom")
+
+        bot = ExplodingBot(token="", channel_chat_id="@t", mock=True)
+        self.assertIs(get_main_menu_for_user(bot, "anyone"), FREE_REPLY_KEYBOARD)
+
+    def test_start_command_is_role_specific(self):
+        admin_id = "8720543490"
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                          admin_telegram_ids=[admin_id])
+
+        text, markup = bot.handle_command("/start", admin_id, "c1")
+        self.assertIn("ADMIN CONSOLE ACTIVE", text)
+        self.assertIs(markup, ADMIN_REPLY_KEYBOARD)
+
+        paid_id = "paid_user_1"
+        bot._tier_cache[paid_id] = ("tier2", time.time() + 300)
+        text, markup = bot.handle_command("/start", paid_id, "c2")
+        self.assertIn("TIER2 subscriber", text)
+        self.assertIs(markup, PAID_REPLY_KEYBOARD)
+
+        text, markup = bot.handle_command("/start", "free_user_1", "c3")
+        self.assertIn("Welcome to LISA Gatekeeper", text)
+        self.assertIs(markup, FREE_REPLY_KEYBOARD)
+        # The fabricated headline claim must be gone.
+        self.assertNotIn("84.0%", text)
+
+    def test_help_command_is_role_specific(self):
+        admin_id = "8720543490"
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                          admin_telegram_ids=[admin_id])
+
+        admin_text, admin_markup = bot.handle_command("/help", admin_id, "c1")
+        self.assertIn("LISA Admin Help Desk", admin_text)
+        self.assertIn("/sys_pause", admin_text)
+        self.assertIs(admin_markup, ADMIN_REPLY_KEYBOARD)
+
+        paid_id = "paid_user_2"
+        bot._tier_cache[paid_id] = ("tier1", time.time() + 300)
+        paid_text, paid_markup = bot.handle_command("/help", paid_id, "c2")
+        self.assertIn("LISA Subscriber Help Desk", paid_text)
+        self.assertNotIn("/sys_pause", paid_text)
+        self.assertIs(paid_markup, PAID_REPLY_KEYBOARD)
+
+        free_text, free_markup = bot.handle_command("/help", "free_user_2", "c3")
+        self.assertIn("LISA Bot Help Desk", free_text)
+        self.assertNotIn("/sys_pause", free_text)
+        self.assertNotIn("/grant", free_text)
+        self.assertIs(free_markup, FREE_REPLY_KEYBOARD)
+
+    def test_admin_button_press_is_routable(self):
+        admin_id = "8720543490"
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                          admin_telegram_ids=[admin_id])
+        upd = TelegramUpdate(1, 1, "c_admin", admin_id, "boss", text="🛠️ Admin Console")
+        reply = bot.process_one_update(upd)
+        self.assertNotIn("Admin access required", reply)
+        self.assertTrue(reply.strip())
+
+    def test_admin_buttons_are_rejected_for_non_admins(self):
+        """A non-admin must be refused even if they type the button label."""
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                          admin_telegram_ids=["8720543490"])
+        for label, slug in BUTTON_SLUGS.items():
+            if slug not in ADMIN_ONLY_SLUGS:
+                continue
+            upd = TelegramUpdate(2, 2, "c_free", "not_an_admin", "someone", text=label)
+            reply = bot.process_one_update(upd)
+            self.assertIn("Admin access required", reply, f"{label} was not gated")
+            # Refusal must not leak operator output.
+            self.assertNotIn("EXECUTIVE OVERRIDE", reply)
+
+    def test_subscription_button_reports_tier(self):
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True)
+        upd = TelegramUpdate(3, 3, "c_free", "free_sub_user", "someone",
+                             text="👑 Upgrade to Unlock Full Slate")
+        reply = bot.process_one_update(upd)
+        self.assertIn("SUBSCRIPTION STATUS", reply)
+        self.assertIn("Free Tier", reply)
+
+    def test_paid_parlay_button_unlocks_parlay(self):
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True)
+        paid_id = "paid_parlay_user"
+        bot._tier_cache[paid_id] = ("tier2", time.time() + 300)
+        upd = TelegramUpdate(4, 4, "c_paid", paid_id, "someone", text="⚡ 5-Fold Parlay")
+        reply = bot.process_one_update(upd)
+        self.assertNotIn("Admin access required", reply)
+        self.assertTrue(reply.strip())
+
+    def test_process_one_update_default_markup_is_role_aware(self):
+        """With no explicit markup, the sent keyboard matches the caller's role."""
+        admin_id = "8720543490"
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                          admin_telegram_ids=[admin_id])
+
+        # An unknown free-text message resolves to the free menu.
+        bot.process_one_update(
+            TelegramUpdate(5, 5, "c_free", "free_default_user", "u", text="zzzz qqqq")
+        )
+        self.assertEqual(bot.outbox[-1]["reply_markup"], FREE_REPLY_KEYBOARD)
+
+        bot.process_one_update(
+            TelegramUpdate(6, 6, "c_admin", admin_id, "boss", text="zzzz qqqq")
+        )
+        self.assertEqual(bot.outbox[-1]["reply_markup"], ADMIN_REPLY_KEYBOARD)
 
     def test_bankroll_fsm_onboarding_lifecycle(self):
         user_id = f"trader_alpha_{secrets.token_hex(4)}"
@@ -775,6 +987,7 @@ class TestTelegramBot(unittest.TestCase):
         for q in ["win rate", "accuracy", "track record"]:
             upd = TelegramUpdate(109, 209, "chat_conv", "user_free", "trader_joe", text=q)
             reply = self.bot.process_one_update(upd)
+<<<<<<< HEAD
             # The conversational answer is the real ledger page, never a
             # hardcoded headline number.
             self.assertIn("LISA PERFORMANCE LEDGER", reply)
@@ -792,6 +1005,15 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
         self.assertIn("100.0%", reply)
         self.assertIn("1/1", reply)
+=======
+            self.assertIn("AUDITED PERFORMANCE", reply)
+            # Figures must come from the measured summary, never a hardcoded
+            # marketing number.
+            self.assertNotIn("84.0%", reply)
+            self.assertNotIn("0.089", reply)
+            self.assertNotIn("+4.18%", reply)
+            self.assertIn("no configuration is claimed to be profitable", reply)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")
