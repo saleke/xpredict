@@ -25,6 +25,7 @@ from typing import Callable, Optional
 from . import config as cfg
 from .cadence import any_live, CadenceDecision, decide_cadence
 from .notify import LogNotifier, Notifier
+from .key_pool import QuotaExhausted
 from .odds import utcnow
 from .pipeline import CycleReport, Pipeline
 from .settle import SettlementReport, run_settlement
@@ -93,10 +94,22 @@ class Scheduler:
                 self.next_cycle_at = now + timedelta(
                     seconds=self.settings.cadence_idle_sec)
             else:
-                self._run_cycle(summary, now, live=decision.mode == "live")
-                decision = self._decide(now)  # fresh snapshot -> next cadence
-                summary.mode = decision.mode
-                self.next_cycle_at = now + timedelta(seconds=decision.interval_sec)
+                try:
+                    self._run_cycle(summary, now, live=decision.mode == "live")
+                except QuotaExhausted as exc:
+                    # The pool ran dry mid-cycle. Record it like a blocked cycle
+                    # and fall through to settlement, so the loop keeps serving
+                    # and resumes polling when credits return.
+                    summary.errors.append(str(exc))
+                    summary.skipped_reason = str(exc)
+                    self.stats.cycles_skipped += 1
+                    self.next_cycle_at = now + timedelta(
+                        seconds=self.settings.cadence_idle_sec)
+                else:
+                    decision = self._decide(now)  # fresh snapshot -> next cadence
+                    summary.mode = decision.mode
+                    self.next_cycle_at = now + timedelta(
+                        seconds=decision.interval_sec)
 
         if self.next_settle_at is None or now >= self.next_settle_at:
             report = run_settlement(self.client, self.storage, self.settings,
@@ -158,7 +171,20 @@ class Scheduler:
         )
 
     def _credit_block(self, mode: str) -> Optional[str]:
-        """Reason the cycle must be skipped, or None when it may run."""
+        """Reason the cycle must be skipped, or None when it may run.
+
+        A rotating pool reports the *combined* remaining quota, so the per-key
+        floor has to come from the pool itself; a key that is spent must not
+        stop the whole scheduler when a sibling key still has credits.
+        """
+        pool = getattr(self.client, "pool", None)
+        if pool is not None and callable(getattr(pool, "any_exhausted", None)):
+            try:
+                if pool.any_exhausted():
+                    return "all API keys spent (quota floor or daily budget)"
+            except Exception:
+                pass
+
         remaining = getattr(self.client, "last_remaining", None)
         if remaining is None:
             return None

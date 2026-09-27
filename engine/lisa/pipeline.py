@@ -9,12 +9,14 @@ the same data never duplicates ledger rows or alerts.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 from . import config as cfg
 from .consensus import refine as refine_match
+from .dashboard import LIVE_SNAPSHOT_KEY, live_odds_key
 from .gate import Pick, evaluate as evaluate_gate
 from .notify import LogNotifier, Notifier, pick_alert_text
 from .odds import Match, utcnow
@@ -22,6 +24,11 @@ from .parsing import parse_odds_payload
 from .storage import Storage, pick_key
 
 logger = logging.getLogger(__name__)
+
+#: How long a raw book payload stays readable for the forecast board.
+PAYLOAD_TTL_SEC = 90 * 60
+#: How long the merged board rollup stays readable.
+SNAPSHOT_TTL_SEC = 90 * 60
 
 
 @dataclass
@@ -72,6 +79,7 @@ class Pipeline:
                 sport, live=live, now=now,
                 payload=(prefetched or {}).get(sport),
             ))
+        self._write_snapshot(reports, now=now, live=live)
         return reports
 
     # -- notification outbox -------------------------------------------------
@@ -111,6 +119,92 @@ class Pipeline:
 
     # -- internals -----------------------------------------------------------
 
+    def _cache_payload(self, sport: str, payload: Any, *, live: bool) -> None:
+        """Persist the raw book payload so the forecast board can read it.
+
+        The daemon used to own this write, which meant the scheduler path
+        fetched odds but never cached them and ``/api/forecast`` went dark.
+        Caching where the payload is parsed keeps every path consistent, and
+        the wrapper shape below is the contract ``/api/forecast`` reads.
+        """
+        if not isinstance(payload, (list, dict)):
+            return
+        remaining = getattr(self.client, "last_remaining", None)
+        try:
+            self.storage.upsert_live(
+                live_odds_key(sport),
+                {
+                    "sport_key": sport,
+                    "observed_at": time.time(),
+                    "credits_remaining": (
+                        remaining if isinstance(remaining, int) else None
+                    ),
+                    "payload": payload,
+                },
+                ttl_seconds=PAYLOAD_TTL_SEC,
+            )
+        except Exception as exc:
+            # The cache only backs the UI; losing it must not stop picks.
+            logger.warning("Could not cache odds payload for %s: %r", sport, exc)
+
+    def _write_snapshot(self, reports: list[CycleReport], *,
+                        now: datetime, live: bool) -> None:
+        """Merge this cycle into the board rollup the dashboard reads.
+
+        Merging rather than replacing is deliberate: a cycle that polled
+        nothing (quota floor, upstream outage) must not erase the last thing we
+        actually saw, and a stale league keeps its own age so the UI can say how
+        old the numbers are.
+        """
+        if not hasattr(self.storage, "upsert_live"):
+            return
+        try:
+            previous = self.storage.get_live_stale(LIVE_SNAPSHOT_KEY) or {}
+        except Exception:
+            previous = {}
+
+        observed_at = time.time()
+        merged: dict[str, dict] = {
+            sport: dict(entry)
+            for sport, entry in (previous.get("sports") or {}).items()
+        }
+        polled = False
+        for report in reports:
+            # An empty payload means the fetch failed for this league; keep the
+            # previous row instead of recording a false zero.
+            if not report.matches and report.errors and report.sport_key in merged:
+                entry = dict(merged[report.sport_key])
+                entry["error"] = report.errors[0]
+                merged[report.sport_key] = entry
+                continue
+            polled = True
+            merged[report.sport_key] = {
+                "observed_at": observed_at,
+                "n_matches": len(report.matches),
+                "error": report.errors[0] if report.errors else None,
+            }
+
+        total = sum(int(v.get("n_matches", 0) or 0) for v in merged.values())
+        stamps = [v["observed_at"] for v in merged.values() if v.get("observed_at")]
+        remaining = getattr(self.client, "last_remaining", None)
+        errors = [e for r in reports for e in r.errors]
+        snapshot = {
+            "observed_at": max(stamps) if stamps else None,
+            "credits_remaining": (
+                remaining if isinstance(remaining, int) else None
+            ),
+            "matches": [],
+            "matches_observed": total if polled else int(
+                previous.get("matches_observed", total) or 0),
+            "sports": merged,
+            "last_error": errors[0] if errors else previous.get("last_error"),
+        }
+        try:
+            self.storage.upsert_live(
+                LIVE_SNAPSHOT_KEY, snapshot, SNAPSHOT_TTL_SEC)
+        except Exception as exc:
+            logger.warning("Could not write board rollup: %r", exc)
+
     def _run_sport(self, sport: str, *, live: bool, now: datetime,
                    payload: Any = None) -> CycleReport:
         report = CycleReport(sport_key=sport, began=now)
@@ -122,6 +216,8 @@ class Pipeline:
                 report.errors.append(f"{sport}: {exc!r}")
                 report.finished = utcnow()
                 return report
+
+        self._cache_payload(sport, payload, live=live)
 
         market_keys = tuple(m.strip() for m in self.settings.markets.split(",") if m.strip())
         matches = parse_odds_payload(payload, market_keys=market_keys)

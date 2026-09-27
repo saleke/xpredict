@@ -165,3 +165,106 @@ def test_upstream_failure_degrades_per_sport(pipeline, storage):
     assert nba.matches_seen == 0
     others = [r for r in reports if r.sport_key != "basketball_nba"]
     assert all(r.errors == [] and r.picks_emitted >= 1 for r in others)
+
+def test_cycle_caches_raw_payloads_for_the_forecast_board(pipeline, storage):
+    """Every ingestion path must leave the cache the /api/forecast handler reads.
+
+    The payload cache used to live in the live-ingest daemon, so the scheduler
+    path fetched odds but left the forecast board empty. Caching now happens
+    where the payload is parsed, and this guards the wrapper shape that
+    ``server._handle_forecast`` depends on.
+    """
+    from lisa.dashboard import LIVE_ODDS_PREFIX
+
+    pipeline.run_cycle(now=NOW)
+
+    keys = {k for k in storage.scan_live_keys() if k.startswith(LIVE_ODDS_PREFIX)}
+    assert keys == {
+        f"{LIVE_ODDS_PREFIX}soccer_spain_la_liga",
+        f"{LIVE_ODDS_PREFIX}soccer_germany_bundesliga",
+        f"{LIVE_ODDS_PREFIX}basketball_nba",
+    }
+
+    entry = storage.get_live(f"{LIVE_ODDS_PREFIX}basketball_nba")
+    # The reader requires a dict wrapper with a truthy "payload" list.
+    assert isinstance(entry, dict)
+    assert entry["sport_key"] == "basketball_nba"
+    assert isinstance(entry["payload"], list) and entry["payload"]
+    assert entry["observed_at"] > 0
+
+
+def test_cache_write_failure_does_not_block_picks(pipeline):
+    """The cache only backs the UI, so a storage fault must not stop picks."""
+    from lisa.dashboard import LIVE_ODDS_PREFIX
+
+    real_upsert = pipeline.storage.upsert_live
+
+    def explode_if_forecast(key, *args, **kwargs):
+        # Only the forecast cache fails; telemetry writes still succeed.
+        if str(key).startswith(LIVE_ODDS_PREFIX):
+            raise RuntimeError("cache backend down")
+        return real_upsert(key, *args, **kwargs)
+
+    pipeline.storage.upsert_live = explode_if_forecast
+    reports = pipeline.run_cycle(now=NOW)
+
+    # Same picks as a healthy cycle: nba 2 + la_liga 1 + bundesliga 1.
+    assert sum(r.picks_emitted for r in reports) == 4
+    assert not any("cache" in e for r in reports for e in r.errors)
+
+
+def test_cycle_publishes_the_board_rollup(pipeline, storage):
+    """The dashboard's live snapshot must be written by every ingestion path."""
+    from lisa.dashboard import LIVE_SNAPSHOT_KEY
+
+    pipeline.run_cycle(now=NOW)
+    snap = storage.get_live(LIVE_SNAPSHOT_KEY)
+
+    assert snap is not None, "board rollup missing after a cycle"
+    assert snap["matches_observed"] == 10   # nba 6 + la_liga 2 + bundesliga 2
+    assert set(snap["sports"]) == {
+        "basketball_nba", "soccer_spain_la_liga", "soccer_germany_bundesliga",
+    }
+    assert snap["sports"]["basketball_nba"]["n_matches"] == 6
+    assert snap["observed_at"] > 0
+
+
+def test_a_quota_blocked_cycle_keeps_the_last_observation(pipeline, storage):
+    """A cycle that polls nothing must never erase what we last saw."""
+    from lisa.dashboard import LIVE_SNAPSHOT_KEY
+
+    pipeline.run_cycle(now=NOW)
+    first = storage.get_live(LIVE_SNAPSHOT_KEY)
+    assert first["matches_observed"] == 10
+
+    # Simulate a fully blocked cycle: no sports polled, everything errored.
+    from lisa.pipeline import CycleReport
+    blocked = [
+        CycleReport(sport_key=sport, began=NOW, errors=["quota floor reached"])
+        for sport in first["sports"]
+    ]
+    pipeline._write_snapshot(blocked, now=NOW, live=False)
+
+    after = storage.get_live(LIVE_SNAPSHOT_KEY)
+    assert after["matches_observed"] == 10, "last observation was erased"
+    assert after["observed_at"] == first["observed_at"]
+    # The reason is still surfaced, so the UI can explain the stale numbers.
+    assert "quota floor" in after["last_error"]
+    for entry in after["sports"].values():
+        assert entry["n_matches"] > 0
+        assert "quota floor" in entry["error"]
+
+
+def test_a_rollup_failure_does_not_break_the_cycle(pipeline):
+    from lisa.dashboard import LIVE_SNAPSHOT_KEY
+
+    real_upsert = pipeline.storage.upsert_live
+
+    def explode_if_snapshot(key, *args, **kwargs):
+        if str(key) == LIVE_SNAPSHOT_KEY:
+            raise RuntimeError("rollup backend down")
+        return real_upsert(key, *args, **kwargs)
+
+    pipeline.storage.upsert_live = explode_if_snapshot
+    reports = pipeline.run_cycle(now=NOW)
+    assert sum(r.picks_emitted for r in reports) == 4

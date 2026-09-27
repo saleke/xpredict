@@ -740,25 +740,44 @@ def _cmd_start(args: argparse.Namespace) -> int:
         t_bot = threading.Thread(target=_bot_loop, daemon=True)
         t_bot.start()
 
-    # Start Live Odds Ingestion Scheduler if Odds API configured and not disabled
-    if not getattr(args, "no_ingest", False) and settings.odds_api_key:
-        from .client import OddsApiClient
-        from .live_ingest import LiveIngestionEngine
-        client = OddsApiClient(settings.odds_api_key, base_url=settings.api_base_url)
-        ingest_engine = LiveIngestionEngine(
-            client=client,
-            settings=settings,
-            telegram_bot=bot_inst,
-            storage=storage,
+    # Start the live odds poller when an API key is configured.
+    #
+    # This uses the adaptive Scheduler rather than a fixed sleep, and a rotating
+    # client that spreads requests across every configured key under a shared
+    # quota floor and per-key daily budget. The Ledger (not the process) stays
+    # the source of truth, so a restart resumes cleanly.
+    api_keys = tuple(getattr(settings, "odds_api_keys", ()) or ())
+    if not getattr(args, "no_ingest", False) and api_keys:
+        from .key_pool import RotatingOddsClient
+        from .scheduler import Scheduler
+        client = RotatingOddsClient(
+            api_keys,
+            base_url=settings.api_base_url,
+            budget_daily=settings.credit_budget_daily,
+            credit_warn=settings.credit_warn,
+            credit_stop=settings.credit_stop,
         )
+        scheduler = Scheduler(
+            client=client,
+            storage=storage,
+            settings=settings,
+            notifier=_make_notifier(settings),
+        )
+        labels = ", ".join(s.label() for s in client.pool._states)
+        print(f"[live-ingest] Rotating client online with {len(api_keys)} key(s): {labels}")
+        print(f"[live-ingest] Per-key daily budget: {settings.credit_budget_daily} request(s)")
+
         def _ingest_loop():
-            print("[live-ingest] Background odds poller active.")
+            print("[live-ingest] Adaptive odds poller active.")
             while True:
                 try:
-                    ingest_engine.run_cycle()
+                    scheduler.tick()
                 except Exception as exc:
-                    print(f"[live-ingest] Cycle error: {exc}")
-                time.sleep(settings.cadence_prematch_sec)
+                    # Never let one bad cycle kill the thread; the next tick
+                    # re-derives cadence from the ledger.
+                    print(f"[live-ingest] Cycle error: {exc!r}")
+                    time.sleep(min(60, settings.cadence_idle_sec))
+
         t_ingest = threading.Thread(target=_ingest_loop, daemon=True)
         t_ingest.start()
     else:

@@ -91,12 +91,33 @@ class LiveIngestionDaemon:
         remaining = getattr(self.client, "last_remaining", None)
         return remaining if isinstance(remaining, int) else None
 
-    def _quota_blocked(self) -> Optional[str]:
-        remaining = self.credits_remaining()
-        if remaining is None:
+    def credit_status(self) -> Optional[dict[str, Any]]:
+        """Per-key quota/spend detail, when the client manages a key pool."""
+        status = getattr(self.client, "status", None)
+        if not callable(status):
             return None
-        if remaining <= int(getattr(self.settings, "credit_stop", 20) or 20):
+        try:
+            return status().to_dict()
+        except Exception:
+            return None
+
+    def _quota_blocked(self) -> Optional[str]:
+        """Refuse to poll when no key in the pool can serve the request.
+
+        A pool also enforces a per-key daily spend cap, so a key with plenty of
+        quota still blocks once the day's budget is gone.
+        """
+        remaining = self.credits_remaining()
+        stop = int(getattr(self.settings, "credit_stop", 20) or 20)
+        if remaining is not None and remaining <= stop:
             return f"quota floor reached ({remaining} credits left)"
+        exhausted = getattr(self.client, "any_exhausted", None)
+        if callable(exhausted):
+            try:
+                if exhausted():
+                    return "no API key has quota or daily budget left"
+            except Exception:
+                pass
         return None
 
     # -- upstream polling ----------------------------------------------------
@@ -112,22 +133,8 @@ class LiveIngestionDaemon:
             logger.warning("Failed to fetch odds for league %s: %s", sport_key, exc)
             return [], None, [f"{sport_key}: {exc!r}"]
 
-        now = time.time()
-        if self.storage is not None and hasattr(self.storage, "upsert_live"):
-            try:
-                self.storage.upsert_live(
-                    live_odds_key(sport_key),
-                    {
-                        "sport_key": sport_key,
-                        "observed_at": now,
-                        "credits_remaining": self.credits_remaining(),
-                        "payload": raw_data,
-                    },
-                    SNAPSHOT_TTL_SEC,
-                )
-            except Exception as exc:
-                logger.warning("[live-ingest] cache write failed for %s: %r", sport_key, exc)
-
+        # The pipeline caches this payload; writing it here too would have two
+        # owners racing on the same key with different shapes.
         try:
             return parse_odds_payload(raw_data), raw_data, []
         except Exception as exc:

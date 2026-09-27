@@ -66,6 +66,7 @@ def validate_sports(sports: tuple[str, ...]) -> tuple[str, ...]:
 class Settings:
     # -- Stage 1: data source ------------------------------------------------
     odds_api_key: str = ""
+    odds_api_keys: tuple[str, ...] = ()
     api_base_url: str = DEFAULT_API_BASE_URL
     regions: str = "eu,us"
     markets: str = "h2h"
@@ -127,8 +128,9 @@ class Settings:
     spike_window_sec: int = 90 * 60        # before kickoff
     live_window_hours: float = 4.0         # post-kickoff "in progress" buffer
     horizon_hours: float = 36.0            # how far ahead cadence cares
-    credit_warn: int = 100                 # degrade below this remaining
-    credit_stop: int = 20                  # only settlement below this
+    credit_warn: int = 100                 # degrade below this remaining (per key)
+    credit_stop: int = 20                  # only settlement below this (per key)
+    credit_budget_daily: int = 50          # hard cap on requests per key per UTC day
     metrics_path: str = "data/metrics.jsonl"
 
 
@@ -163,11 +165,40 @@ def _load_dotenv(filepath: str = ".env", force: bool = False) -> None:
         pass
 
 
+def _collect_api_keys() -> tuple[str, ...]:
+    """Gather every configured odds key, in preference order.
+
+    Supported forms, so an operator can add a key without touching code:
+      THE_ODDS_API_KEYS=k1,k2      explicit pool (preferred)
+      THE_ODDS_API_KEY=k1          primary, kept for backwards compatibility
+      THE_ODDS_API_KEY_2=k2        numbered extras (and 3, 4, ...)
+      THE_ODD_API_KEY=k1           tolerated typo seen in older templates
+    """
+    found: list[str] = []
+
+    def _add(value: str) -> None:
+        for part in (value or "").split(","):
+            key = part.strip()
+            if key and key not in found:
+                found.append(key)
+
+    _add(os.getenv("THE_ODDS_API_KEYS", ""))
+    _add(os.getenv("THE_ODDS_API_KEY", ""))
+    _add(os.getenv("LISA_ODDS_API_KEY", ""))
+    _add(os.getenv("THE_ODD_API_KEY", ""))
+    # Numbered extras, tolerating gaps so setting only _KEY_3 still works.
+    for index in range(2, 12):
+        _add(os.getenv(f"THE_ODDS_API_KEY_{index}", ""))
+    return tuple(found)
+
+
 def load_settings() -> Settings:
     _load_dotenv()
     sports = validate_sports(_tuple("LISA_SPORTS", Settings.sports))
+    api_keys = _collect_api_keys()
     return Settings(
-        odds_api_key=os.getenv("THE_ODDS_API_KEY") or os.getenv("LISA_ODDS_API_KEY", ""),
+        odds_api_key=api_keys[0] if api_keys else "",
+        odds_api_keys=api_keys,
         api_base_url=os.getenv("THE_ODDS_API_BASE_URL")
         or os.getenv("LISA_API_BASE_URL", DEFAULT_API_BASE_URL),
         regions=os.getenv("LISA_REGIONS", "eu,us"),
@@ -213,5 +244,6 @@ def load_settings() -> Settings:
         horizon_hours=_float("LISA_HORIZON_HOURS", Settings.horizon_hours),
         credit_warn=_int("LISA_CREDIT_WARN", Settings.credit_warn),
         credit_stop=_int("LISA_CREDIT_STOP", Settings.credit_stop),
+        credit_budget_daily=_int("LISA_CREDIT_BUDGET_DAILY", Settings.credit_budget_daily),
         metrics_path=os.environ.get("LISA_METRICS_PATH", Settings.metrics_path),
     )

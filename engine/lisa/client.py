@@ -48,6 +48,7 @@ class OddsApiClient:
         self.max_retries = max_retries
         self.backoff_base = backoff_base
         self.last_remaining: int | None = None
+        self.last_used: int | None = None
 
     # -- transport -----------------------------------------------------------
 
@@ -83,8 +84,11 @@ class OddsApiClient:
     def _track_remaining(self, headers) -> None:
         try:
             raw = headers.get("x-requests-remaining")
-            if raw:
+            if raw is not None and raw != "":
                 self.last_remaining = int(raw)
+            used = headers.get("x-requests-used")
+            if used is not None and used != "":
+                self.last_used = int(used)
         except (AttributeError, TypeError, ValueError):
             pass
 
