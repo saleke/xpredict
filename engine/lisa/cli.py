@@ -670,50 +670,22 @@ def _cmd_start(args: argparse.Namespace) -> int:
     db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
     storage = SqliteStorage(db_path)
 
-    # Seed audited backtest ledger if database picks table is empty
+    # The operational ledger starts empty on purpose.
+    #
+    # It used to be seeded from the backtest archive when the picks table was
+    # empty, which mixed historical simulation rows into the live record and
+    # invented the fields the archive does not have (a fixed book count, a
+    # fabricated dispersion, and a closing line derived by multiplying the best
+    # odds by 0.96). Accuracy and CLV on the dashboard would then have been
+    # fiction presented as results. Historical analysis stays in the archive
+    # and the backtest report; live picks are only ever rows this service
+    # actually emitted and settled.
     counts = storage.count_picks()
+    print(f"[start] Operational ledger: {counts['total']} pick(s) on record "
+          f"({counts['pending']} pending, {counts['settled']} settled).")
     if counts["total"] == 0:
-        print("[start] Initializing SQLite ledger from verified backtest audit...")
-        try:
-            from .backtest import BacktestEngine
-            bkt = BacktestEngine().run()
-            seeded = 0
-            for r in bkt.records:
-                if r.result in ("WIN", "LOSS"):
-                    row = {
-                        "dedupe_key": f"{r.match_id}::{r.market}::{r.outcome_name}",
-                        "match_id": r.match_id,
-                        "sport_key": r.sport_key,
-                        "market": r.market,
-                        "outcome_name": r.outcome_name,
-                        "line": None,
-                        "home_team": r.home_team,
-                        "away_team": r.away_team,
-                        "commence_time": r.commence_time,
-                        "p_true": r.p_true,
-                        "fair_odds": r.fair_odds,
-                        "n_books": 5,
-                        "stdev": 0.010,
-                        "cv": 0.012,
-                        "state": "SETTLED",
-                        "result": r.result,
-                        "best_book": r.best_book,
-                        "best_odds": r.best_odds,
-                        "best_ev": r.ev,
-                        "closing_odds": r.closing_odds or round(r.best_odds * 0.96, 2),
-                        "closing_p_true": round(r.p_true * 1.01, 3),
-                        "clv": round((r.best_odds / (r.closing_odds or (r.best_odds * 0.96))) - 1.0, 4) if r.closing_odds else 0.025,
-                        "conviction_score": r.conviction_score,
-                        "recommended_stake_pct": round(r.stake_units or 1.5, 1),
-                        "recommended_units": r.stake_units or 1.5,
-                        "created_at": r.commence_time,
-                        "settled_at": r.commence_time,
-                    }
-                    if storage.insert_pick_row(row):
-                        seeded += 1
-            print(f"[start] Successfully seeded {seeded} audited matches into SQLite ledger.")
-        except Exception as exc:
-            print(f"[start] Warning: failed to seed backtest audit: {exc}")
+        print("[start] Ledger is empty, which is correct for a fresh install: "
+              "picks appear here only after live ingestion emits and settles them.")
 
     bot_inst = None
     if not getattr(args, "no_bot", False) and settings.telegram_token:

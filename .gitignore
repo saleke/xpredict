@@ -10,3 +10,6 @@ data/
 web/data/
 dist/
 build/
+
+# Deploy updater bookkeeping: runtime log, not source.
+deploy/update.log

@@ -439,3 +439,22 @@ class TestCreditDiscipline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_start_does_not_seed_the_operational_ledger_from_backtest():
+    """A fresh install must show an empty ledger, not simulated history.
+
+    `lisa start` used to seed the picks table from the backtest archive when it
+    was empty, inventing the fields the archive lacks (fixed book count,
+    fabricated dispersion, closing odds = best odds * 0.96). The dashboard would
+    then present simulated accuracy and CLV as results.
+    """
+    import inspect
+    from lisa import cli
+
+    source = inspect.getsource(cli._cmd_start)
+    assert "BacktestEngine" not in source, (
+        "_cmd_start must not build backtest rows into the operational ledger"
+    )
+    assert "best_odds * 0.96" not in source
+    assert "insert_pick_row" not in source
