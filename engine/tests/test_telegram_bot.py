@@ -11,6 +11,7 @@ from lisa.client import FixtureClient
 from lisa.fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from lisa.gate import Execution, Pick
 from lisa.live_ingest import LiveIngestionDaemon
+from lisa.storage import InMemoryStorage
 from lisa.telegram_bot import (
     MAIN_REPLY_KEYBOARD,
     BankrollFSMManager,
@@ -30,7 +31,13 @@ from lisa.telegram_bot import (
 
 class TestTelegramBot(unittest.TestCase):
     def setUp(self):
-        self.bot = TelegramBot(token="", channel_chat_id="@test_channel", mock=True)
+        # Isolated per-test storage: the bot must never read the operator's
+        # real ledger, and the tests must not depend on it.
+        from lisa.storage import InMemoryStorage
+        self.storage = InMemoryStorage()
+        self.bot = TelegramBot(
+            token="", channel_chat_id="@test_channel", mock=True, storage=self.storage
+        )
         self.now = datetime.now(timezone.utc)
         self.sample_pick = Pick(
             match_id="test-match-101",
@@ -51,7 +58,7 @@ class TestTelegramBot(unittest.TestCase):
                 odds=1.25,
                 ev=0.013,
             ),
-            state="ACTIVE",
+            state="TRIGGER_ALERT",
             created_at=self.now,
             conviction_score=8.5,
             recommended_stake_pct=1.5,
@@ -120,15 +127,22 @@ class TestTelegramBot(unittest.TestCase):
             "brier_score": 0.1305,
             "ece": 0.0361,
             "mean_clv": 0.0312,
-            "traps_avoided_month": 30,
             "settled_picks_count": 50,
+            "won_count": 42,
+            "lost_count": 8,
         }
         html = format_stats_html(summary)
         self.assertIn("84.0%", html)
         self.assertIn("0.1305", html)
         self.assertIn("3.61%", html)
-        self.assertIn("+3.12%", html)
-        self.assertIn("30 sucker bets avoided", html)
+        self.assertIn("3.12%", html)
+        self.assertIn("50 fully audited real matches", html)
+        self.assertIn("42/50", html)
+
+    def test_format_stats_html_empty_is_honest(self):
+        html = format_stats_html({"settled_picks_count": 0})
+        self.assertIn("No settled picks yet", html)
+        self.assertNotIn("84.0%", html)
 
     def test_format_free_picks_html(self):
         picks = [
@@ -204,17 +218,51 @@ class TestTelegramBot(unittest.TestCase):
         self.assertTrue(any("Bet365" in b["text"] for b in row))
 
     def test_command_picks_stats_traps_vip(self):
+        # Empty ledger: the bot must say so rather than print a sample board.
+        reply_empty, _ = self.bot.handle_command("/picks", "user_1", "chat_1")
+        self.assertIn("No active signals", reply_empty)
+
+        reply_stats_empty, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
+        self.assertIn("No settled picks yet", reply_stats_empty)
+
+        reply_traps_empty, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
+        self.assertIn("No trap advisories recorded yet", reply_traps_empty)
+
+        # With a real ledger row the genuine board is rendered.
+        storage = self.storage
+        self.bot._picks_cache = ({}, 0.0)
+        storage.insert_pick(self.sample_pick)
         reply_picks, _ = self.bot.handle_command("/picks", "user_1", "chat_1")
         self.assertIn("LISA TODAY'S TOP SELECTIONS", reply_picks)
-
-        reply_stats, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
-        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply_stats)
-
-        reply_traps, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
-        self.assertIn("LISA CAPITAL PRESERVATION DESK", reply_traps)
+        self.assertIn("Arsenal", reply_picks)
 
         reply_vip, _ = self.bot.handle_command("/vip", "user_1", "chat_1")
         self.assertIn("LISA INSTITUTIONAL MEMBERSHIP TIERS", reply_vip)
+
+    def test_command_stats_from_settled_ledger(self):
+        storage = self.storage
+        self.bot._picks_cache = ({}, 0.0)
+        storage.insert_pick(self.sample_pick)
+        key = f"{self.sample_pick.match_id}::{self.sample_pick.market}::{self.sample_pick.outcome_name}"
+        storage.settle_pick(key, "WIN", datetime.now(timezone.utc))
+
+        reply, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
+        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
+        self.assertIn("100.0%", reply)
+        self.assertIn("1/1", reply)
+
+    def test_command_traps_from_real_history(self):
+        storage = self.storage
+        storage.upsert_live("live:traps", [{
+            "home_team": "Real Madrid",
+            "away_team": "Sevilla",
+            "public_favorite": "Real Madrid",
+            "cv": 0.11,
+        }], 3600)
+        reply, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
+        self.assertIn("LISA CAPITAL PRESERVATION DESK", reply)
+        self.assertIn("Real Madrid", reply)
+        self.assertIn("11.0%", reply)
 
     def test_command_unlock(self):
         reply_gen, _ = self.bot.handle_command("/unlock", "user_1", "chat_1")
@@ -287,6 +335,11 @@ class TestTelegramBot(unittest.TestCase):
             username="investor_bob",
             text="/stats",
         )
+        self.storage.insert_pick(self.sample_pick)
+        self.bot._picks_cache = ({}, 0.0)
+        self.storage.settle_pick(
+            f"{self.sample_pick.match_id}::{self.sample_pick.market}::"
+            f"{self.sample_pick.outcome_name}", "WIN", self.now)
         reply = self.bot.process_one_update(update)
         self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
         self.assertEqual(self.bot.outbox[-1]["chat_id"], "chat_42")
@@ -299,8 +352,8 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("📊 Active Top Picks", buttons)
         self.assertIn("🏦 My Bankroll", buttons)
         self.assertIn("📈 Accuracy Ledger", buttons)
-        self.assertIn("⚡ 5-Fold Parlay", buttons)
-        self.assertIn("🎟️ Bookmaker Codes", buttons)
+        self.assertIn("⚡ Live Accumulator", buttons)
+        self.assertIn("🎟️ Execution Guide", buttons)
         self.assertIn("🛡️ Trap Advisories", buttons)
 
     def test_bankroll_fsm_onboarding_lifecycle(self):
@@ -351,6 +404,8 @@ class TestTelegramBot(unittest.TestCase):
         user_id = "trader_beta_2"
         chat_id = "chat_beta_2"
 
+        self.storage.insert_pick(self.sample_pick)
+        self.bot._picks_cache = ({}, 0.0)
         self.bot.fsm.save_profile(user_id, "beta", 5000.0, "balanced", 0.50, "SportyBet")
 
         update = TelegramUpdate(10, 20, chat_id, user_id, "beta", text="📊 Active Top Picks")
@@ -367,26 +422,45 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIsNotNone(last_msg["reply_markup"])
         inline_rows = last_msg["reply_markup"].get("inline_keyboard", [])
         self.assertTrue(len(inline_rows) >= 2)
-        urls = [b.get("url", "") for row in inline_rows for b in row if b.get("url")]
-        self.assertTrue(any("sportybet" in u for u in urls))
+        # Real board content only: no invented booking code is ever rendered.
+        self.assertNotIn("BC2EEA", reply)
+        self.assertIn("Arsenal vs Wolverhampton", reply)
 
     def test_parlay_and_booking_codes_features(self):
+        # No live legs: an honest board instead of a sample 5-fold slip.
         update_parlay = TelegramUpdate(20, 30, "chat_1", "user_1", "user", text="⚡ 5-Fold Parlay")
         reply_parlay = self.bot.process_one_update(update_parlay)
-        self.assertIn("LISA HIGH-CONVICTION 5-FOLD PARLAY", reply_parlay)
-        self.assertIn("BOOKING CODES GATED (Tier 2 Pro Required)", reply_parlay)
+        self.assertIn("LISA ACCUMULATOR", reply_parlay)
+        self.assertIn("Not enough live selections", reply_parlay)
 
-        vip_bot = TelegramBot(token="", channel_chat_id="@test_channel", mock=True, admin_telegram_ids=["vip_boss"])
-        update_vip = TelegramUpdate(22, 32, "chat_1", "vip_boss", "vip_boss", text="⚡ 5-Fold Parlay")
+        # With two real priced legs the accumulator is computed from them.
+        self.storage.insert_pick(self.sample_pick)
+        second = Pick(
+            match_id="test-match-102", sport_key="soccer_epl", home_team="Chelsea",
+            away_team="Brighton", commence_time=self.now, market="h2h",
+            outcome_name="Chelsea", p_true=0.72, fair_odds=1.39, n_books=4,
+            stdev=0.01, cv=0.02,
+            best_execution=Execution(book_key="bet365", book_title="Bet365", odds=1.45, ev=0.045),
+            state="TRIGGER_ALERT", created_at=self.now, conviction_score=6.0,
+            recommended_stake_pct=1.0, recommended_units=1.0,
+        )
+        self.storage.insert_pick(second)
+        self.bot._picks_cache = ({}, 0.0)
+        reply_real = self.bot.process_one_update(update_parlay)
+        self.assertIn("LISA LIVE ACCUMULATOR", reply_real)
+        self.assertIn("Chelsea", reply_real)
+        self.assertIn("Combined Odds", reply_real)
+        # No invented booking code is ever printed.
+        self.assertNotIn("BC792K", reply_real)
+        self.assertNotIn("FC82910", reply_real)
+
+        # The codes page explains there is no integration rather than faking one.
+        vip_bot = TelegramBot(token="", channel_chat_id="@test_channel", mock=True,
+                              admin_telegram_ids=["vip_boss"], storage=self.storage)
+        update_vip = TelegramUpdate(22, 32, "chat_1", "vip_boss", "vip_boss", text="/codes")
         reply_vip = vip_bot.process_one_update(update_vip)
-        self.assertIn("BC792K", reply_vip)
-        self.assertIn("FC82910", reply_vip)
-
-        update_codes = TelegramUpdate(21, 31, "chat_1", "user_1", "user", text="🎟️ Bookmaker Codes")
-        reply_codes = self.bot.process_one_update(update_codes)
-        self.assertIn("LISA VERIFIED BOOKMAKER BOOKING CODES", reply_codes)
-        self.assertIn("SportyBet", reply_codes)
-        self.assertIn("Football.com", reply_codes)
+        self.assertIn("does not generate bookmaker booking codes", reply_vip)
+        self.assertNotIn("BC792K", reply_vip)
 
     def test_unexpected_input_and_natural_team_search(self):
         update_search = TelegramUpdate(30, 40, "chat_1", "user_1", "user", text="Arsenal")
@@ -687,8 +761,11 @@ class TestTelegramBot(unittest.TestCase):
     def test_conversational_faq_codes_and_how_to_bet(self):
         upd_codes = TelegramUpdate(107, 207, "chat_conv", "user_free", "trader_joe", text="what are booking codes")
         reply_codes = self.bot.process_one_update(upd_codes)
-        self.assertIn("BOOKMAKER BOOKING CODES", reply_codes)
-        self.assertIn("SportyBet", reply_codes)
+        # No bookmaker integration, so the page says so instead of listing codes.
+        self.assertIn("does not generate bookmaker booking codes", reply_codes)
+        books = [b.get("text") for row in (self.bot.outbox[-1]["reply_markup"]
+                 or {}).get("inline_keyboard", []) for b in row]
+        self.assertIn("Bet365", books)
 
         upd_how = TelegramUpdate(108, 208, "chat_conv", "user_free", "trader_joe", text="how to bet")
         reply_how = self.bot.process_one_update(upd_how)
@@ -698,8 +775,23 @@ class TestTelegramBot(unittest.TestCase):
         for q in ["win rate", "accuracy", "track record"]:
             upd = TelegramUpdate(109, 209, "chat_conv", "user_free", "trader_joe", text=q)
             reply = self.bot.process_one_update(upd)
-            self.assertIn("AUDITED PERFORMANCE", reply)
-            self.assertIn("84.0%", reply)
+            # The conversational answer is the real ledger page, never a
+            # hardcoded headline number.
+            self.assertIn("LISA PERFORMANCE LEDGER", reply)
+            self.assertNotIn("84.0%", reply)
+
+    def test_conversational_faq_accuracy_reports_graded_rows(self):
+        storage = InMemoryStorage()
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=storage)
+        pick = self.sample_pick
+        storage.insert_pick(pick)
+        storage.settle_pick(
+            f"{pick.match_id}::{pick.market}::{pick.outcome_name}", "WIN", self.now)
+        upd = TelegramUpdate(119, 219, "chat_conv", "user_free", "trader_joe", text="win rate")
+        reply = bot.process_one_update(upd)
+        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
+        self.assertIn("100.0%", reply)
+        self.assertIn("1/1", reply)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")
@@ -777,7 +869,6 @@ class TestLiveIngest(unittest.TestCase):
             storage=storage,
             auto_settle=True,
             notify_settle=True,
-            dashboard_path="",
         )
 
         result = daemon.run_cycle()

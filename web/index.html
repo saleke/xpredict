@@ -687,14 +687,14 @@
             </div>
             <div class="visualizer-scenario-pills" role="tablist" aria-label="Interactive Valuation Scenarios">
               <button type="button" class="vis-scenario-btn visualizer-scenario-btn active scenario-diamond"
-                data-scenario="nba" onclick="window.switchVisualizerScenario('nba')">
+                data-scenario="diamond" onclick="window.switchVisualizerScenario('diamond')">
                 <span class="scenario-dot cyan"></span>
-                <span>High-Conviction Diamond</span>
+                <span>Top Conviction</span>
               </button>
               <button type="button" class="vis-scenario-btn visualizer-scenario-btn scenario-pivot"
-                data-scenario="laliga" onclick="window.switchVisualizerScenario('laliga')">
+                data-scenario="pivot" onclick="window.switchVisualizerScenario('pivot')">
                 <span class="scenario-dot amber"></span>
-                <span>Smart Safety Pivot</span>
+                <span>Next Best Value</span>
               </button>
               <button type="button" class="vis-scenario-btn visualizer-scenario-btn scenario-trap" data-scenario="trap"
                 onclick="window.switchVisualizerScenario('trap')">
@@ -707,12 +707,12 @@
           <div class="visualizer-stage-body">
             <div class="visualizer-fixture-row">
               <div class="fixture-primary">
-                <h3 class="vis-match-title" id="vis-match-name">Oklahoma City Thunder vs Washington Wizards</h3>
-                <span class="vis-league-chip" id="vis-league">NBA · Game Winner (Moneyline)</span>
+                <h3 class="vis-match-title" id="vis-match-name" data-empty-text="No live selection loaded">—</h3>
+                <span class="vis-league-chip" id="vis-league">—</span>
               </div>
               <div class="fixture-tag-right">
                 <span class="micro-label">ENGINE WORKFLOW</span>
-                <span class="tag-status-live demo">Interactive Engine Demo</span>
+                <span class="tag-status-live demo" id="vis-data-source">Live Ledger</span>
               </div>
             </div>
 
@@ -726,15 +726,15 @@
                 <div class="step-metric-list">
                   <div class="step-metric-item">
                     <span class="metric-key">Odds Compared</span>
-                    <span class="metric-val" id="vis-quotes">Bet365 1.17 · Pinnacle 1.16 · DraftKings 1.15</span>
+                    <span class="metric-val" id="vis-quotes">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Hidden Bookie Vig</span>
-                    <span class="metric-val text-warn" id="vis-overround">4.8% hidden bookmaker margin</span>
+                    <span class="metric-val text-warn" id="vis-overround">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Market Flow</span>
-                    <span class="metric-val text-brand" id="vis-shin-z">Heavy sharp volume on favorite</span>
+                    <span class="metric-val text-brand" id="vis-shin-z">—</span>
                   </div>
                 </div>
                 <div class="step-footnote">Vig-free baseline derived from global books</div>
@@ -749,15 +749,15 @@
                 <div class="step-metric-list">
                   <div class="step-metric-item">
                     <span class="metric-key">LISA True Probability</span>
-                    <span class="metric-val text-pos font-mono text-lg" id="vis-prob-true">88.7%</span>
+                    <span class="metric-val text-pos font-mono text-lg" id="vis-prob-true">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Fair Execution Odds</span>
-                    <span class="metric-val font-mono" id="vis-fair-price">1.13 or better</span>
+                    <span class="metric-val font-mono" id="vis-fair-price">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Model Confidence</span>
-                    <span class="metric-val text-pos">97.5% High Confidence</span>
+                    <span class="metric-val text-pos" id="vis-confidence">—</span>
                   </div>
                 </div>
                 <div class="step-footnote">Filtered for public sentiment biases</div>
@@ -772,15 +772,15 @@
                 <div class="step-metric-list">
                   <div class="step-metric-item">
                     <span class="metric-key">Expected Value (EV)</span>
-                    <span class="metric-val text-pos font-mono" id="vis-ev-delta">+2.9% Edge over sportsbooks</span>
+                    <span class="metric-val text-pos font-mono" id="vis-ev-delta">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Kelly Recommended Stake</span>
-                    <span class="metric-val text-warn font-mono" id="vis-kelly-stake">2.4% of bankroll (2.4u)</span>
+                    <span class="metric-val text-warn font-mono" id="vis-kelly-stake">—</span>
                   </div>
                   <div class="step-metric-item">
                     <span class="metric-key">Odds Movement Outlook</span>
-                    <span class="metric-val text-violet">Odds expected to drop before kickoff</span>
+                    <span class="metric-val text-violet" id="vis-outlook">—</span>
                   </div>
                 </div>
                 <div class="step-footnote">Conservative stake sizing to protect bankroll</div>
@@ -790,9 +790,9 @@
             <!-- Verdict Bar -->
             <div class="pipeline-verdict-bar" id="vis-verdict-bar">
               <div class="verdict-text-block">
-                <div class="verdict-title" id="vis-verdict-badge">HIGH-CONFIDENCE DIAMOND PICK</div>
-                <div class="verdict-desc" id="vis-verdict-desc">Strong mathematical edge detected. Bookmakers set
-                  generous lines compared to actual modeled probability.</div>
+                <div class="verdict-title" id="vis-verdict-badge">—</div>
+                <div class="verdict-desc" id="vis-verdict-desc">Select a live selection to see the engine's
+                  de-vig, probability and sizing work on real prices.</div>
               </div>
               <button type="button" class="btn-verdict-action" onclick="window.switchTab('picks')">
                 Execute on Slate →
@@ -810,78 +810,26 @@
             </div>
             <div class="teaser-status-badge">
               <span class="live-pulse-dot"></span>
-              <span id="teaser-predictions-count">12 Predictions Analyzed Today</span>
+              <span id="teaser-predictions-count">Loading live selections…</span>
             </div>
           </div>
 
           <div class="teaser-grid" id="teaser-items-grid">
             <div class="teaser-item">
               <div class="teaser-item-header">
-                <span class="teaser-sport-tag">NBA</span>
-                <span class="teaser-tier-pill free">FREE COMMUNITY PICK</span>
-                <span class="teaser-odds-chip">Odds 1.17</span>
+                <span class="teaser-sport-tag">Live ledger</span>
+                <span class="teaser-tier-pill free">LOADING</span>
               </div>
-              <div class="teaser-teams">Oklahoma City Thunder vs Washington Wizards</div>
+              <div class="teaser-teams">Reading the odds poller…</div>
               <div class="teaser-meta">
-                <span class="text-pos font-mono font-bold">88.7% True Win Prob</span>
-                <span class="text-secondary">Moneyline Favorite</span>
-              </div>
-            </div>
-
-            <div class="teaser-item">
-              <div class="teaser-item-header">
-                <span class="teaser-sport-tag">LA LIGA</span>
-                <span class="teaser-tier-pill telegram">TELEGRAM UNLOCK</span>
-                <span class="teaser-odds-chip">Odds 1.25</span>
-              </div>
-              <div class="teaser-blur-wrap">
-                <div class="teaser-teams blur-target">FC Barcelona vs Getafe CF</div>
-                <div class="teaser-meta blur-target">
-                  <span class="text-pos font-mono font-bold">84.5% True Win Prob</span>
-                  <span class="text-secondary">Home Win Value</span>
-                </div>
-                <div class="teaser-lock-overlay">
-                  <button type="button" class="btn-teaser-unlock telegram" onclick="window.openTelegramModal()">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"
-                      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                    </svg>
-                    <span>Unlock with Free Bot</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="teaser-item">
-              <div class="teaser-item-header">
-                <span class="teaser-sport-tag">SERIE A</span>
-                <span class="teaser-tier-pill pro">PRO EXCLUSIVE</span>
-                <span class="teaser-odds-chip">Odds 1.28</span>
-              </div>
-              <div class="teaser-blur-wrap">
-                <div class="teaser-teams blur-target">Inter Milan vs Empoli FC</div>
-                <div class="teaser-meta blur-target">
-                  <span class="text-pos font-mono font-bold">85.1% True Win Prob</span>
-                  <span class="text-secondary">Double Chance Anchor</span>
-                </div>
-                <div class="teaser-lock-overlay">
-                  <button type="button" class="btn-teaser-unlock pro" onclick="window.handlePricingSelect('tier1')">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2"
-                      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                    </svg>
-                    <span>Unlock in Terminal</span>
-                  </button>
-                </div>
+                <span class="text-secondary">Selections appear here once the live feed records them.</span>
               </div>
             </div>
           </div>
 
           <div class="teaser-actions">
             <button type="button" class="btn-cta-primary" onclick="window.switchTab('picks')">
-              Access All <span id="teaser-btn-count">12</span> Match Predictions in Terminal →
+              Access <span id="teaser-btn-count">0</span> Live Selections in Terminal →
             </button>
           </div>
         </div>
@@ -1017,12 +965,12 @@
                   <span class="price-period">/month</span>
                 </div>
               </div>
-              <p class="pricing-blurb">The top 5 daily high-conviction Flagship Diamonds with EV &gt; 2.5%.</p>
+              <p class="pricing-blurb">The strongest selections the live engine currently rates, with the measured edge shown on each one.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> Matches #1 to #5 unlocked daily</li>
+                <li><span>✔</span> Top-ranked live selections, ranked by measured conviction</li>
                 <li><span>✔</span> Instant Telegram alert before kickoff</li>
                 <li><span>✔</span> Trap &amp; vig avoidance warning radar</li>
-                <li><span>✔</span> 1-click booking codes across 6 sportsbooks</li>
+                <li><span>✔</span> Best available price and book per selection, from the live feed</li>
               </ul>
               <button type="button" class="btn-pricing-action" onclick="window.handlePricingSelect('tier1')">
                 Select Tier 1 Pro
@@ -1040,15 +988,15 @@
                   <span class="price-period">/month</span>
                 </div>
               </div>
-              <p class="pricing-blurb">Complete daily predictive slate, smart pivots, and algorithmic parlays.</p>
+              <p class="pricing-blurb">The full live board, ranked alternatives, and a priced accumulator built from real legs.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> All 12 daily match predictions unlocked</li>
-                <li><span>✔</span> 5-Fold Diamond Parlay with 1-click slips</li>
+                <li><span>✔</span> Every live selection on the board, not a fixed count</li>
+                <li><span>✔</span> Accumulator priced from the live legs that actually exist</li>
                 <li><span>✔</span> Smart Market Pivots &amp; pass advisories</li>
                 <li><span>✔</span> Early CLV steam alerts before bookies cut odds</li>
               </ul>
               <button type="button" class="btn-pricing-action featured" onclick="window.handlePricingSelect('tier2')">
-                Unlock All 12 Predictions
+                Unlock The Full Board
               </button>
             </div>
 
@@ -1920,8 +1868,8 @@
           <h3 class="modal-heading">Unlock Match #2: Secondary Value Pick</h3>
           <p class="modal-subheading">
             Connect with our official verification bot (<span class="tg-bot-handle">@XpredictPremiumBot</span>) to
-            authenticate your browser and instantly unlock <strong>Match #2</strong> with full predictive probability
-            and booking codes.
+            authenticate your browser and unlock the second-ranked live selection with its full probability and
+            best available price.
           </p>
         </div>
         <button type="button" class="modal-close" id="modal-close-btn" aria-label="Close modal">&times;</button>
@@ -1930,8 +1878,8 @@
       <div class="modal-body">
         <div class="unlocked-preview-pill">
           <span class="pill-badge">FREE BONUS</span>
-          <span class="pill-text">Unlocks: <strong>Match #2 (Value Forecast)</strong> + multi-bookmaker booking codes.
-            <span class="tier-footnote">(Matches #3-5 are reserved for Tier 1 Sharp members)</span></span>
+          <span class="pill-text">Unlocks: <strong>the second-ranked live selection</strong> with its best price.
+            <span class="tier-footnote">(Ranks 3-5 are reserved for Tier 1 Sharp members)</span></span>
         </div>
 
         <ul class="modal-benefits">
@@ -1941,7 +1889,7 @@
           </li>
           <li>
             <span class="benefit-check">✓</span>
-            <div><strong>1-click multi-bookmaker booking codes</strong> (SportyBet, Bet9ja, 1xBet, Betway &amp; more)
+            <div><strong>Best available price and book per selection</strong>, read from the live feed
             </div>
           </li>
           <li>
@@ -2100,8 +2048,8 @@
               <span class="checkout-plan-name" id="checkout-plan-name">Tier 2 Pro Trader</span>
               <span class="checkout-plan-price font-mono font-bold text-pos" id="checkout-plan-price">$49.00 / mo</span>
             </div>
-            <div class="checkout-plan-desc" id="checkout-plan-desc">Full commercial access to the daily algorithmic
-              diamond slate with 1-click booking codes across 6 sportsbooks.</div>
+            <div class="checkout-plan-desc" id="checkout-plan-desc">Full commercial access to the complete live
+              board, with the measured price and edge on every selection.</div>
           </div>
 
           <form id="form-checkout" onsubmit="window.handleCheckoutSubmit(event)">

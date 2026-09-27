@@ -5,7 +5,8 @@ Features:
   * Native Telegram getChatMember verification bridge for 100% genuine community joins.
   * Single-use self-destructing invite links (createChatInviteLink: member_limit=1, expire=300s).
   * Automated subscriber churn kicker loop (banChatMember / unbanChatMember).
-  * 1-Click Interactive Inline Bet-Slip Execution Buttons (Pinnacle, Bet365, DraftKings).
+  * Deep links to the books quoting a selection (LISA has no bookmaker
+    integration, so it never mints booking codes).
   * Anti-piracy content protection (protect_content=True) to prevent forwarding and leaks.
   * Zero external dependencies: uses Python standard library urllib, hmac, and json.
 """
@@ -177,8 +178,8 @@ registry = VerificationRegistry()
 MAIN_REPLY_KEYBOARD = {
     "keyboard": [
         [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
-        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ 5-Fold Parlay"}],
-        [{"text": "🎟️ Bookmaker Codes"}, {"text": "🛡️ Trap Advisories"}],
+        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ Live Accumulator"}],
+        [{"text": "🎟️ Execution Guide"}, {"text": "🛡️ Trap Advisories"}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -394,10 +395,10 @@ validate_unlock_token = verify_unlock_token
 
 
 def make_execution_buttons(pick: Pick) -> dict[str, Any]:
-    """Generate horizontal 1-click interactive inline bet-slip execution buttons.
+    """Deep links to the books quoting this selection.
 
-    Eliminates the 2-minute manual betting search by deep-linking the user's
-    phone directly into the pre-loaded bet slip.
+    LISA has no bookmaker partnership, so it cannot pre-load a bet slip; these
+    open the sportsbooks where the selection can be priced and placed.
     """
     clean_home = urllib.parse.quote(pick.home_team)
     clean_away = urllib.parse.quote(pick.away_team)
@@ -522,8 +523,8 @@ def format_settlement_alert_html(pick_data: dict[str, Any]) -> str:
 def format_stats_html(summary: dict[str, Any]) -> str:
     """Format the audited track record. Missing history renders as n/a."""
 
-    def pct(value: Any) -> str:
-        return "n/a" if value is None else f"{float(value) * 100:.1f}%"
+    def pct(value: Any, digits: int = 1) -> str:
+        return "n/a" if value is None else f"{float(value) * 100:.{digits}f}%"
 
     def num(value: Any, digits: int = 4) -> str:
         return "n/a" if value is None else f"{float(value):.{digits}f}"
@@ -547,8 +548,8 @@ def format_stats_html(summary: dict[str, Any]) -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"✅ <b>Verified Win Rate:</b> <code>{pct(summary.get('win_rate'))}</code> ({record})\n"
         f"🎯 <b>Brier Calibration Score:</b> <code>{num(summary.get('brier_score'))}</code>\n"
-        f"⚖️ <b>Expected Calibration Error:</b> <code>{pct(summary.get('ece'))}</code>\n"
-        f"💎 <b>Mean Closing Line Value (CLV):</b> <code>{pct(summary.get('mean_clv'))}</code>\n"
+        f"⚖️ <b>Expected Calibration Error:</b> <code>{pct(summary.get('ece'), 2)}</code>\n"
+        f"💎 <b>Mean Closing Line Value (CLV):</b> <code>{pct(summary.get('mean_clv'), 2)}</code>\n"
         f"📊 <b>Sample Size:</b> <code>{int(settled)} fully audited real matches</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🌐 <i>View live ledger: http://localhost:8080/#ledger</i>"
@@ -640,7 +641,7 @@ def format_active_top_picks_contract(
                 lines.append(
                     f"<b>Match #2 [{tier_tag}] • {kickoff}</b>\n"
                     f"• <b>{home} vs {away}</b>\n"
-                    f"• 🔒 <i>Join our Telegram channel to unlock this match and booking codes for free!</i>\n"
+                    f"• 🔒 <i>Join our Telegram channel to unlock this selection and its best price for free!</i>\n"
                 )
                 continue
         elif idx in (3, 4, 5):
@@ -693,9 +694,9 @@ def format_active_top_picks_contract(
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     if user_tier == "free":
         lines.append("🔒 <i>Matches #3–#5 available in Tier 1 ($19/mo).</i>")
-        lines.append("⚡ <i>Matches #6–#12 & 5-Fold Parlay Acca in Tier 2 Pro ($49/mo).</i>")
+        lines.append("⚡ <i>Ranks #6 and beyond, plus the live accumulator, in Tier 2 Pro ($49/mo).</i>")
     elif user_tier == "tier1":
-        lines.append("⚡ <i>Matches #6–#12 & 5-Fold Parlay Acca in Tier 2 Pro ($49/mo).</i>")
+        lines.append("⚡ <i>Ranks #6 and beyond, plus the live accumulator, in Tier 2 Pro ($49/mo).</i>")
     else:
         lines.append("👑 <i>Full institutional slate unlocked.</i>")
     lines.append("🌐 <i>Web Terminal: http://localhost:8080/#picks</i>")
@@ -729,7 +730,7 @@ def format_active_top_picks_contract(
         keyboard_rows.append(row2)
 
     keyboard_rows.append([
-        {"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"},
+        {"text": "⚡ Live Accumulator", "callback_data": "menu:parlay"},
         {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"},
     ])
     keyboard_rows.append([
@@ -1392,13 +1393,13 @@ class TelegramBot:
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🆓 <b>Free Tier:</b> 1 Daily Anchor Pick + Match #2 free upon joining Telegram\n\n"
                 f"⚡ <b>Tier 1: Sharp Starter</b> ($19/mo)\n"
-                f"• Top 5 Diamond Picks daily (Matches #1 to #5)\n"
+                f"• The 5 highest-conviction live selections\n"
                 f"• Real-time Telegram push alerts on value detection\n"
                 f"• Daily Sucker-Bet Avoidance Warnings\n"
-                f"• Full 6-bookmaker booking codes for all 5 picks\n\n"
+                f"• Best available price and book for each selection\n\n"
                 f"🚀 <b>Tier 2: Pro Trader</b> ($49/mo)\n"
-                f"• All 12 daily picks across 9 leagues unlocked\n"
-                f"• Algorithmic 5-Fold Parlay Acca with 1-click booking codes\n"
+                f"• The complete live board across every configured league\n"
+                f"• Accumulator priced from the live legs that actually exist\n"
                 f"• VIP Private Channel priority access\n"
                 f"• CLV early steam alerts before lines drop\n\n"
                 f"👑 <b>Tier 3: Syndicate VIP</b> ($149/mo)\n"
@@ -1416,8 +1417,8 @@ class TelegramBot:
                 "📖 <b>LISA Bot Help Desk</b>\n",
                 "/picks — View today's free picks",
                 "/bankroll — Configure your personalized Kelly bankroll profile",
-                "/parlay — View 5-fold institutional accumulator with booking codes",
-                "/codes — View all bookmaker platform booking codes",
+                "/parlay — View the accumulator priced from live legs",
+                "/codes — How to place a selection (LISA mints no booking codes)",
                 "/stats — Institutional audited track record",
                 "/traps — Capital preserved and traps avoided",
                 "/unlock — Get your free web terminal unlock code",
@@ -2027,7 +2028,7 @@ class TelegramBot:
         return format_parlay_html(self._load_dashboard_picks(), user_tier=tier)
 
     def _handle_booking_codes(self) -> tuple[str, Optional[dict[str, Any]]]:
-        """Display bookmaker platform booking codes cheatsheet."""
+        """Explain how to execute a selection (no booking codes are generated)."""
         return format_booking_codes_html()
 
     def _recent_traps(self) -> list[dict[str, Any]]:
@@ -2166,7 +2167,7 @@ class TelegramBot:
             markup = {
                 "inline_keyboard": [
                     [{"text": "📊 View Active Picks With My Sizing", "callback_data": "menu:picks"}],
-                    [{"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"}],
+                    [{"text": "⚡ Live Accumulator", "callback_data": "menu:parlay"}],
                     [{"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"}],
                 ]
             }
@@ -2407,7 +2408,7 @@ class TelegramBot:
         quick_nav_markup = {
             "inline_keyboard": [
                 [{"text": "📊 Active Top Picks", "callback_data": "menu:picks"}, {"text": "🏦 My Bankroll", "callback_data": "menu:bankroll"}],
-                [{"text": "⚡ 5-Fold Parlay", "callback_data": "menu:parlay"}, {"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"}],
+                [{"text": "⚡ Live Accumulator", "callback_data": "menu:parlay"}, {"text": "📈 Accuracy Ledger", "callback_data": "menu:ledger"}],
             ]
         }
 
@@ -2421,7 +2422,7 @@ class TelegramBot:
                 "• True implied probability & fair odds consensus\n"
                 "• Positive Expected Value (+EV) threshold flags\n"
                 "• Fractional Kelly bankroll allocation stakes\n"
-                "• 1-Click bookmaker booking codes\n\n"
+                "• Best available price and book for each selection\n\n"
                 "Tap below to review active mathematical selections."
             )
             return (text, quick_nav_markup)
@@ -2471,7 +2472,7 @@ class TelegramBot:
                 "• <b>Value Detection:</b> Identify pricing anomalies where soft bookmakers offer odds higher than true fair probability (+EV).\n"
                 "• <b>Trap Screening:</b> Detect artificial public bait lines and preserve capital by flagging sucker bets.\n"
                 "• <b>Bankroll Sizing:</b> Provide dynamic fractional Kelly stakes (Quarter, Half, Full Kelly) customized to your personal capital.\n"
-                "• <b>1-Click Slips:</b> Generate ready-to-bet booking codes across SportyBet, Football.com, 1xBet, Bet9ja, Betway, and Bet365.\n\n"
+                "• <b>Price Transparency:</b> Show the best available price and book for every selection, read from the live feed. LISA has no bookmaker partner integration and does not generate booking codes.\n\n"
                 "💡 <i>LISA relies strictly on mathematical expected value, avoiding emotional bias and public hype.</i>"
             )
             return (text, quick_nav_markup)
@@ -2529,24 +2530,9 @@ class TelegramBot:
 
         codes_phrases = ["what are booking codes", "what is a booking code", "booking codes", "booking code", "how to use code", "how to load code", "bet codes", "slip code"]
         if any(p in clean for p in codes_phrases) or ("code" in tokens and ("booking" in tokens or "how" in tokens or "what" in tokens or "load" in tokens)):
-            text = (
-                "🎟️ <b>BOOKMAKER BOOKING CODES</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "Booking codes allow you to load pre-selected bet slips instantly onto your sportsbook without searching manually.\n\n"
-                "<b>Supported Bookmakers:</b>\n"
-                "• 🔴 <b>SportyBet</b>\n"
-                "• 🟢 <b>Football.com</b>\n"
-                "• 🔵 <b>1xBet</b>\n"
-                "• 🟢 <b>Bet9ja</b>\n"
-                "• ⚪ <b>Betway</b>\n"
-                "• 🟢 <b>Bet365</b> (Direct 1-Click Link)\n\n"
-                "<b>How to Use:</b>\n"
-                "1. Copy the code shown in <b>/picks</b> or <b>/parlay</b>\n"
-                "2. Open your bookmaker app\n"
-                "3. Tap 'Load Bet Slip' or 'Booking Code' and paste\n"
-                "4. Enter your stake calculated by <b>/bankroll</b> and confirm"
-            )
-            return (text, quick_nav_markup)
+            # Route to the honest page: LISA has no bookmaker integration.
+            text, markup = format_booking_codes_html()
+            return (text, markup)
 
         how_to_bet_phrases = ["how to bet", "how do i bet", "how to place bet", "how to follow picks", "getting started", "how do i use this", "how to use", "how do i start", "how do i play"]
         if any(p in clean for p in how_to_bet_phrases):
@@ -2555,7 +2541,7 @@ class TelegramBot:
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
                 "1️⃣ <b>Configure Bankroll:</b> Type <b>/bankroll</b> to establish your working capital and risk appetite. LISA calculates your exact dollar stake.\n"
                 "2️⃣ <b>Inspect Selections:</b> Run <b>/picks</b> to inspect today's top Diamond value picks.\n"
-                "3️⃣ <b>Execute with Booking Codes:</b> Copy the booking code for your preferred bookmaker or use direct bookmaker links.\n"
+                "3️⃣ <b>Execute:</b> Open the best available book from the selection and place the bet yourself. LISA has no bookmaker integration, so it never produces booking codes.\n"
                 "4️⃣ <b>Unlock Free Perks:</b> Join our community channel @lisa_sports_alpha to unlock Match #2 100% free!\n\n"
                 "Never chase losses; strictly respect recommended unit sizing."
             )
@@ -2563,18 +2549,8 @@ class TelegramBot:
 
         accuracy_phrases = ["win rate", "winrate", "accuracy", "track record", "how accurate", "are you profitable", "past results", "performance", "audit", "ledger"]
         if any(p in clean for p in accuracy_phrases) or ("win" in tokens and "rate" in tokens) or ("accurate" in tokens and "how" in tokens):
-            text = (
-                "📈 <b>AUDITED PERFORMANCE & LEDGER</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "LISA maintains 100% verified transparency on all settled picks:\n\n"
-                "🎯 <b>Audited Win Rate:</b> <b>84.0%</b>\n"
-                "📐 <b>Brier Calibration Score:</b> <b>0.089</b> (Institutional Grade)\n"
-                "💰 <b>Mean Signal EV:</b> <b>+4.18%</b>\n"
-                "📈 <b>Mean Closing Line Value (CLV):</b> <b>+3.12%</b>\n"
-                "🛡️ <b>Public Traps Avoided:</b> <b>30 Sucker Bets</b> (+$1,700 preserved)\n\n"
-                "Audit the full settled ledger anytime with <b>/stats</b>."
-            )
-            return (text, quick_nav_markup)
+            # Metrics come from the graded ledger or the page says it has none.
+            return (format_stats_html(self._load_dashboard_summary()), quick_nav_markup)
 
         tier_check_phrases = ["my tier", "my plan", "my subscription", "my status", "my account", "what is my tier", "what tier am i", "check tier", "current tier"]
         if any(p in clean for p in tier_check_phrases):
@@ -2589,25 +2565,25 @@ class TelegramBot:
                 desc = (
                     "👑 <b>Tier: Tier 3 Syndicate VIP</b>\n"
                     "• Real-time REST API & Webhook data stream (/api/v1/stream)\n"
-                    "• Full 12 picks + joint covariance & correlation matrix\n"
+                    "• The full live board + joint covariance & correlation matrix\n"
                     "• Real-time arbitrage alerts & soft-book discrepancy stream\n"
                     "• 1-on-1 Syndicate Desk consultation"
                 )
             elif user_tier == "tier2":
                 desc = (
                     "🚀 <b>Tier: Tier 2 Pro Trader</b>\n"
-                    "• All 12 daily picks across 9 leagues unlocked\n"
-                    "• Algorithmic 5-Fold Parlay Acca with booking codes\n"
+                    "• The complete live board across every configured league\n"
+                    "• Accumulator priced from the live legs that actually exist\n"
                     "• VIP Private Channel priority access\n"
                     "• CLV early steam alerts before lines move"
                 )
             elif user_tier == "tier1":
                 desc = (
                     "⚡ <b>Tier: Tier 1 Sharp Starter</b>\n"
-                    "• Top 5 Diamond Picks daily (Matches #1 to #5)\n"
-                    "• Full booking codes across all 6 platforms\n"
+                    "• The 5 highest-conviction live selections\n"
+                    "• Best available price and book for each selection\n"
                     "• Daily sucker-bet avoidance warnings\n"
-                    "• <i>Upgrade to Tier 2 Pro for all 12 picks & 5-Fold Parlay.</i>"
+                    "• <i>Upgrade to Tier 2 Pro for the whole board & the accumulator.</i>"
                 )
             else:
                 perk = "✅ Match #2 Unlocked via Channel Membership" if is_member else "🔒 Match #2 Locked (Join @lisa_sports_alpha to unlock free)"

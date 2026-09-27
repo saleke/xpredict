@@ -8,13 +8,19 @@ the UI renders an explicit "no data" state instead of a placeholder number.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Optional
 
+logger = logging.getLogger(__name__)
+
 LIVE_ODDS_PREFIX = "live:odds:"
 LIVE_SNAPSHOT_KEY = "live:odds_snapshot"
+TRAPS_KEY = "live:traps"
 PENDING_LIMIT = 50
 SETTLED_LIMIT = 200
+#: Books quoted per match in the pipeline explainer.
+QUOTE_LIMIT = 4
 
 
 def live_odds_key(sport_key: str) -> str:
@@ -22,17 +28,114 @@ def live_odds_key(sport_key: str) -> str:
     return f"{LIVE_ODDS_PREFIX}{sport_key}"
 
 
-def _live_snapshot(storage: Any) -> Optional[dict]:
-    """Last real upstream observation, even if its TTL has lapsed."""
+def _live_json(storage: Any, key: str) -> Optional[Any]:
+    """Read a cached live value, even if its TTL has lapsed."""
     if storage is None:
         return None
     reader = getattr(storage, "get_live_stale", None)
     if not callable(reader):
         return None
     try:
-        return reader(LIVE_SNAPSHOT_KEY)
+        return reader(key)
     except Exception:
         return None
+
+
+def _live_snapshot(storage: Any) -> Optional[dict]:
+    """Last real upstream observation, even if its TTL has lapsed."""
+    return _live_json(storage, LIVE_SNAPSHOT_KEY)
+
+
+def _record_traps(storage: Any, limit: int = 10) -> list[dict]:
+    """Recorded trap advisories, newest first, from the operations history."""
+    raw = _live_json(storage, TRAPS_KEY)
+    rows: list[dict] = []
+    if isinstance(raw, dict):
+        raw = raw.get("traps") or []
+    if not isinstance(raw, list):
+        return rows
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        # A record is only useful with both fixtures and the metric behind it.
+        if not row.get("home_team") or row.get("cv") is None:
+            continue
+        rows.append({
+            "home_team": row.get("home_team"),
+            "away_team": row.get("away_team"),
+            "public_favorite": row.get("public_favorite"),
+            "cv": row.get("cv"),
+            "fair_odds": row.get("fair_odds"),
+            "public_odds": row.get("public_odds"),
+            "detected_at": row.get("detected_at"),
+        })
+    rows.sort(key=lambda r: str(r.get("detected_at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def _quote_index(storage: Any, match_ids: set[str]) -> dict[str, dict]:
+    """Real per-book prices and vig for the requested fixtures.
+
+    Built from the raw payloads already in the live cache, so the explainer
+    costs no upstream credit. A fixture that is not in the cache simply has no
+    entry: the UI then says the quotes are unavailable.
+    """
+    if storage is None or not match_ids:
+        return {}
+    keys: list[str] = []
+    scanner = getattr(storage, "scan_live_keys", None)
+    if callable(scanner):
+        try:
+            keys = [k for k in scanner() if str(k).startswith(LIVE_ODDS_PREFIX)]
+        except Exception:
+            keys = []
+    if not keys:
+        return {}
+
+    from .parsing import parse_odds_payload
+
+    out: dict[str, dict] = {}
+    for key in keys:
+        entry = _live_json(storage, key)
+        payload = entry.get("payload") if isinstance(entry, dict) else entry
+        if not payload:
+            continue
+        try:
+            matches = parse_odds_payload(payload)
+        except Exception as exc:  # a malformed payload must not blank the board
+            logger.warning("dashboard: cannot parse cached payload %s: %r", key, exc)
+            continue
+        for match in matches:
+            if match.id not in match_ids or match.id in out:
+                continue
+            books = []
+            margins: list[float] = []
+            for book in match.bookmakers:
+                prices = [
+                    p for p in book.outcomes.values()
+                    if isinstance(p, (int, float)) and p > 1
+                ]
+                if not prices:
+                    continue
+                if len(prices) > 1:
+                    margins.append(sum(1.0 / p for p in prices) - 1.0)
+                books.append({
+                    "book_key": book.key,
+                    "book_title": book.title,
+                    "prices": dict(book.outcomes),
+                    "margin": (sum(1.0 / p for p in prices) - 1.0) if len(prices) > 1 else None,
+                })
+            if not books:
+                continue
+            out[match.id] = {
+                "home_team": match.home_team,
+                "away_team": match.away_team,
+                "sport_key": match.sport_key,
+                "margin": (sum(margins) / len(margins)) if margins else None,
+                "n_books": len(books),
+                "books": books[:QUOTE_LIMIT],
+            }
+    return out
 
 
 def _upcoming_matches(snapshot: Optional[dict]) -> list[dict]:
@@ -142,20 +245,41 @@ def build_dashboard(
 
     remaining = snapshot.get("credits_remaining") if snapshot else None
     matches = _upcoming_matches(snapshot)
+    # The rollup counts what upstream actually returned; its ``matches`` list is
+    # intentionally empty (the raw payloads are cached separately), so the
+    # per-league tally is the only honest source for these two numbers.
+    sport_rows = (snapshot or {}).get("sports") or {}
     observed_sports = sorted(
-        {str(m.get("sport_key")) for m in matches if m.get("sport_key")}
+        {str(k) for k, v in sport_rows.items() if isinstance(v, dict) and not v.get("error")}
     )
+    matches_observed = int((snapshot or {}).get("matches_observed") or 0)
 
     live_state = "live" if snapshot_age_sec is not None and snapshot_age_sec <= 300 else (
         "stale" if snapshot_age_sec is not None else "never"
     )
 
-    counts = {"total": 0, "pending": len(pending), "settled": 0, "won": 0, "lost": 0, "void": 0}
+    counts = {
+        "total": len(pending) + len(settled),
+        "pending": len(pending),
+        "settled": len(settled),
+        "won": sum(1 for p in settled if p.get("result") == "WIN"),
+        "lost": sum(1 for p in settled if p.get("result") == "LOSS"),
+        "void": sum(1 for p in settled if p.get("result") == "VOID"),
+    }
     if storage is not None and hasattr(storage, "count_picks"):
         try:
             counts = storage.count_picks()
         except Exception:
             pass
+
+    traps = _record_traps(storage)
+    quotes = _quote_index(
+        storage, {str(p.get("match_id")) for p in pending if p.get("match_id")})
+    cards = []
+    for row in pending:
+        card = _pick_row_to_card(row)
+        card["quotes"] = quotes.get(str(row.get("match_id")))
+        cards.append(card)
 
     return {
         "meta": {
@@ -190,12 +314,13 @@ def build_dashboard(
             "observed_at": snapshot_at,
             "age_sec": snapshot_age_sec,
             "sports_observed": observed_sports,
-            "matches_observed": len(matches),
+            "matches_observed": matches_observed,
             "credits_remaining": remaining,
             "quota_state": _quota_state(settings, remaining),
             "last_error": (snapshot or {}).get("last_error"),
         },
-        "active_picks": [_pick_row_to_card(p) for p in pending],
+        "active_picks": cards,
+        "traps": traps,
         "settled_ledger": settled,
         "calibration": cal_rep,
         "clv": clv_rep,

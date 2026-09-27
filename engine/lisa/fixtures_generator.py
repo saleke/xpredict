@@ -472,15 +472,6 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
 
     all_matches = grade_a_diamonds + grade_b_pivots + grade_c_passes
 
-    live_codes_data = {}
-    try:
-        live_file = Path("web/data/live_booking_codes.json")
-        if live_file.exists():
-            import json as _json
-            live_codes_data = _json.loads(live_file.read_text())
-    except Exception:
-        pass
-
     # Calculate actual commence_time ISO strings and human kickoff strings
     for p in all_matches:
         commence = now + timedelta(hours=p["kickoff_offset_hours"])
@@ -492,16 +483,6 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
         else:
             p["kickoff_human"] = f"Tomorrow in {hrs-24}h {mins:02d}m"
 
-        import hashlib
-        m_hash = hashlib.md5(f"{p['match_id']}:{p['market']}:{p['outcome_name']}".encode()).hexdigest().upper()
-        pick_override = (live_codes_data.get("picks") or {}).get(p.get("match_id"), {})
-        p["booking_codes"] = {
-            "sportybet": pick_override.get("sportybet") or f"BC{m_hash[:4]}",
-            "football_com": pick_override.get("football_com") or f"FC{m_hash[4:9]}",
-            "1xbet": pick_override.get("1xbet") or f"{m_hash[9:14]}",
-            "bet9ja": pick_override.get("bet9ja") or f"B9{m_hash[14:18]}",
-            "betway": pick_override.get("betway") or f"BW{m_hash[18:23]}",
-        }
 
         p["deep_links"] = {
             "sportybet": "https://www.sportybet.com/",
@@ -741,18 +722,11 @@ def generate_rolling_commercial_dataset(now: datetime | None = None) -> dict[str
                     "Poisson Micro-Bet Derivative Matrix (BTTS, Over 1.5, Double Chance)",
                     "Sub-Second Early Steam & CLV Arbitrage Radar",
                     "Smart Correlated Parlay Builder (Compounding Kelly Math)",
-                    "Direct VIP Telegram Bot with Native Inline Execution Slips"
+                    "Direct VIP Telegram Bot"
                 ]
             }
         },
         "active_picks": all_matches,
-        "accumulator_booking_codes": {
-            "sportybet": (live_codes_data.get("accumulator_booking_codes") or {}).get("sportybet", "BC792K"),
-            "football_com": (live_codes_data.get("accumulator_booking_codes") or {}).get("football_com", "FC82910"),
-            "1xbet": (live_codes_data.get("accumulator_booking_codes") or {}).get("1xbet", "W49TG"),
-            "bet9ja": (live_codes_data.get("accumulator_booking_codes") or {}).get("bet9ja", "B941K2"),
-            "betway": (live_codes_data.get("accumulator_booking_codes") or {}).get("betway", "BW44108"),
-        },
         "settled_ledger": settled_ledger,
         "calibration": {
             "sample_size": len(settled_ledger),

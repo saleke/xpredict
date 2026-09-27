@@ -931,7 +931,9 @@ def main(argv: list[str] | None = None) -> int:
     ing = sub.add_parser("live-ingest", help="run real-time odds ingestion and automated alert dispatch")
     ing.add_argument("--fixtures", action="store_true", help="use fixture payloads instead of live API")
     ing.add_argument("--once", action="store_true", help="run single cycle and exit")
-    ing.add_argument("--interval", type=int, default=60, help="polling interval in seconds (default: 60)")
+    ing.add_argument("--interval", type=int, default=None,
+                     help="polling interval in seconds (default: the prematch cadence; "
+                          "each pass spends one credit per league per region)")
     ing.add_argument("--iterations", type=int, default=None, help="max iterations to run")
     ing.add_argument("--mock-bot", action="store_true", help="use mock Telegram bot for testing alerts")
     ing.add_argument("--no-settle", action="store_true", help="disable automatic match settlement check")
@@ -1115,8 +1117,10 @@ def _cmd_live_ingest(args: argparse.Namespace) -> int:
         print(f"[live-ingest] Single cycle finished: {res.matches_seen} matches, {res.diamonds_found} diamonds, {res.traps_found} traps, {res.alerts_dispatched} alerts, {res.settled_count} settled.")
         return 0
 
-    interval = int(args.interval or 60)
-    daemon.run_daemon(max_iterations=args.iterations, interval_sec=interval)
+    daemon.run_daemon(
+        max_iterations=args.iterations,
+        interval_sec=int(args.interval) if args.interval else None,
+    )
     return 0
 
 

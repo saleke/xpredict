@@ -72,6 +72,12 @@ class LiveIngestionDaemon:
         self.settings = settings
         self.notifier = notifier or LogNotifier()
         self.telegram_bot = telegram_bot
+        # The ledger is what makes picks real and dedupes alerts, so the daemon
+        # always has one. Without a configured database it uses an in-memory
+        # ledger for this process rather than silently dropping data.
+        if storage is None:
+            from .storage import InMemoryStorage
+            storage = InMemoryStorage()
         self.storage = storage
         self.auto_settle = auto_settle
         self.notify_settle = notify_settle
@@ -131,18 +137,35 @@ class LiveIngestionDaemon:
     # -- live snapshot rollup -------------------------------------------------
     def _write_snapshot_rollup(self, now_iso: str, per_sport: dict[str, dict],
                                last_error: Optional[str]) -> None:
+        """Record the board state, merging over the previous observation.
+
+        A cycle that polls nothing (quota floor) must not erase what we last
+        saw, so per-league entries are merged and only overwritten when the
+        league was actually contacted this cycle.
+        """
         if self.storage is None or not hasattr(self.storage, "upsert_live"):
             return
-        total = sum(int(v.get("n_matches", 0)) for v in per_sport.values())
-        observed = [v for v in per_sport.values() if not v.get("error")]
+        merged: dict[str, dict] = {}
+        previous = self.storage.get_live_stale(LIVE_SNAPSHOT_KEY) or {}
+        for sport, entry in (previous.get("sports") or {}).items():
+            merged[sport] = dict(entry)
+        for sport, entry in per_sport.items():
+            merged[sport] = dict(entry)
+        # An error is only news while it is current; a stale league keeps its
+        # age so the UI can still say how old the numbers are.
+        total = sum(int(v.get("n_matches", 0)) for v in merged.values())
+        observed = [v["observed_at"] for v in merged.values() if v.get("observed_at")]
         snapshot = {
-            "observed_at": max((v["observed_at"] for v in observed), default=None),
+            "observed_at": max(observed) if observed else None,
             "credits_remaining": self.credits_remaining(),
             "matches": [],
             "matches_observed": total,
-            "sports": per_sport,
+            "sports": merged,
             "last_error": last_error,
         }
+        if not per_sport and previous:
+            # Nothing new was observed: keep the previous counts as-is.
+            snapshot["matches_observed"] = int(previous.get("matches_observed", total) or 0)
         try:
             self.storage.upsert_live(LIVE_SNAPSHOT_KEY, snapshot, SNAPSHOT_TTL_SEC)
         except Exception as exc:
@@ -246,8 +269,10 @@ class LiveIngestionDaemon:
             res.matches_seen += len(matches)
             res.errors.extend(errors)
             all_matches.extend(matches)
-            if payload is not None:
-                prefetched[sport] = payload
+            # Record the attempt for every league, including failures: an empty
+            # payload tells the Pipeline this league was already polled so it
+            # cannot spend a second request re-fetching it.
+            prefetched[sport] = payload if payload is not None else []
             per_sport[sport] = {
                 "observed_at": time.time(),
                 "n_matches": len(matches),
@@ -293,8 +318,16 @@ class LiveIngestionDaemon:
         )
         return res
 
-    def run_daemon(self, max_iterations: Optional[int] = None, interval_sec: int = 60) -> None:
-        """Run continuous live polling daemon."""
+    def run_daemon(self, max_iterations: Optional[int] = None,
+                   interval_sec: Optional[int] = None) -> None:
+        """Run continuous live polling daemon.
+
+        The default cadence is the configured prematch interval, not a tight
+        loop: every pass spends one request per league per region, so polling
+        faster than the fixtures move is how a limited key gets drained.
+        """
+        if interval_sec is None:
+            interval_sec = max(300, int(self.settings.cadence_prematch_sec or 3600))
         iteration = 0
         logger.info("Starting LISA Live Ingestion Daemon (interval=%ds)...", interval_sec)
         while max_iterations is None or iteration < max_iterations:

@@ -951,19 +951,14 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_ledger(self, parsed: urllib.parse.ParseResult):
+        # The graded ledger is the only source. There is no static JSON
+        # fallback: an empty ledger means nothing has been settled yet.
         settled: list[dict] = []
         if self.storage:
-            settled = self.storage.list_settled_picks()
-
-        if not settled:
-            dash_file = Path(getattr(self.server, "web_dir", Path("web"))) / "data" / "dashboard.json"
-            if dash_file.exists():
-                try:
-                    with open(dash_file, "r", encoding="utf-8") as f:
-                        dash_data = json.load(f)
-                        settled = dash_data.get("settled_ledger", [])
-                except Exception:
-                    pass
+            try:
+                settled = self.storage.list_settled_picks()
+            except Exception:
+                settled = []
 
         self._send_json({
             "settled_ledger": settled,

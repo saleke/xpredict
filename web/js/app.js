@@ -23,6 +23,19 @@ function cleanText(value) {
     .trim();
 }
 
+// Team names, book titles and league labels come from the upstream feed, so
+// they are escaped before any innerHTML interpolation. Sanitising text is not
+// enough on its own: "&lt;img onerror=...&gt;" is inert as text but not in HTML.
+function esc(value) {
+  if (value == null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function formatKo(iso) {
   if (!iso) return 'Time TBC';
@@ -107,7 +120,7 @@ export const SPORTSBOOKS = [
     hasBookingCode: false,
     brandColor: '#FFDF1B',
     url: 'https://www.bet365.com/',
-    tip: 'Bet365 uses Direct Links (No booking code needed)',
+    tip: 'Bet365 uses direct links (LISA has no bookmaker integration)',
     svg: `<svg viewBox="0 0 38 20" width="38" height="20" aria-label="Bet365"><rect width="38" height="20" rx="4" fill="#006034"/><text x="19" y="14.5" fill="#FFDF1B" font-weight="900" font-style="italic" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" text-anchor="middle">365</text></svg>`
   },
   {
@@ -116,7 +129,7 @@ export const SPORTSBOOKS = [
     hasBookingCode: false,
     brandColor: '#FF6B00',
     url: 'https://sportsbook.draftkings.com/',
-    tip: 'DraftKings uses Direct Links (No booking code needed)',
+    tip: 'DraftKings uses direct links (LISA has no bookmaker integration)',
     svg: `<svg viewBox="0 0 40 20" width="40" height="20" aria-label="DraftKings"><rect width="40" height="20" rx="4" fill="#18191A" stroke="rgba(255,107,0,0.4)" stroke-width="0.8"/><text x="20" y="14" fill="#FF6B00" font-weight="900" font-family="system-ui, -apple-system, sans-serif" font-size="9" text-anchor="middle">DK</text></svg>`
   }
 ];
@@ -432,6 +445,7 @@ async function loadData() {
     ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
+    state.dashboard = state.data;
     renderProvenanceBanner();
     renderLiveStatusBanner();
 
@@ -499,6 +513,7 @@ function startDashboardPolling() {
       if (freshGen && freshGen !== currentGen) {
         console.log('[LISA] New pipeline cycle detected:', freshGen);
         state.data = freshData;
+        state.dashboard = freshData;
         renderAll();
       }
     } catch (e) {
@@ -530,6 +545,7 @@ function renderAll() {
   renderForecastBoard();
   renderTierMatrix();
   renderTicker();
+  refreshVisualizer();
   flushPendingScrollRestore();
 }
 
@@ -543,16 +559,16 @@ function renderTargetLandingData() {
   function getTeamVisualHtml(teamName) {
     const lower = String(teamName || '').toLowerCase();
     if (lower.includes('raven')) {
-      return `<img src="assets/ravens_trans.png" alt="${cleanText(teamName)}" class="mct-helmet-img">`;
+      return `<img src="assets/ravens_trans.png" alt="${esc(cleanText(teamName))}" class="mct-helmet-img">`;
     }
     if (lower.includes('chief')) {
-      return `<img src="assets/chiefs_trans.png" alt="${cleanText(teamName)}" class="mct-helmet-img">`;
+      return `<img src="assets/chiefs_trans.png" alt="${esc(cleanText(teamName))}" class="mct-helmet-img">`;
     }
     if (lower.includes('nugget')) {
-      return `<img src="assets/nuggets_trans.png" alt="${cleanText(teamName)}" class="mct-helmet-img">`;
+      return `<img src="assets/nuggets_trans.png" alt="${esc(cleanText(teamName))}" class="mct-helmet-img">`;
     }
     if (lower.includes('laker')) {
-      return `<img src="assets/lakers_trans.png" alt="${cleanText(teamName)}" class="mct-helmet-img">`;
+      return `<img src="assets/lakers_trans.png" alt="${esc(cleanText(teamName))}" class="mct-helmet-img">`;
     }
     return teamCrestSvg(teamName);
   }
@@ -587,22 +603,24 @@ function renderTargetLandingData() {
     }
     const rA1 = document.getElementById('target-m1-away-record');
     if (rA1) {
-      const awayOdds = m1.p_true && m1.p_true < 0.99 ? (1 / Math.max(0.01, (1 - m1.p_true))).toFixed(2) : '3.80';
-      rA1.textContent = m1.books_odds?.bet365 ? `@ ${m1.books_odds.bet365.toFixed(2)}` : `@ ${awayOdds}`;
+      // The opposing side's price must come from the feed, never be inferred
+      // from our own probability (a draw makes that arithmetic wrong anyway).
+      rA1.textContent = m1.quotes
+        ? 'see quotes' : 'n/a';
     }
 
-    // Win probabilities
-    const p1Home = Math.round((m1.p_true || 0.63) * 100);
-    const p1Away = Math.max(1, 100 - p1Home);
+    // Win probability: the model value for this selection only. The opposite
+    // side is not shown as 100-p (a draw makes that wrong on a 1X2 market).
+    const p1Home = typeof m1.p_true === 'number' ? m1.p_true * 100 : null;
     const ph1 = document.getElementById('target-m1-prob-home');
-    if (ph1) ph1.textContent = `${p1Home}%`;
+    if (ph1) ph1.textContent = p1Home == null ? 'n/a' : `${p1Home.toFixed(1)}%`;
     const pa1 = document.getElementById('target-m1-prob-away');
-    if (pa1) pa1.textContent = `${p1Away}%`;
+    if (pa1) pa1.textContent = '—';
 
     const fh1 = document.getElementById('target-m1-fill-home');
-    if (fh1) fh1.style.width = `${p1Home}%`;
+    if (fh1) fh1.style.width = `${p1Home == null ? 0 : Math.min(100, p1Home)}%`;
     const fa1 = document.getElementById('target-m1-fill-away');
-    if (fa1) fa1.style.width = `${p1Away}%`;
+    if (fa1) fa1.style.width = '0%';
 
     // Action button
     const btn1 = document.getElementById('target-m1-btn-predict');
@@ -647,8 +665,7 @@ function renderTargetLandingData() {
     }
     const rA2 = document.getElementById('target-m2-away-record');
     if (rA2) {
-      const awayOdds2 = m2.p_true && m2.p_true < 0.99 ? (1 / Math.max(0.01, (1 - m2.p_true))).toFixed(2) : '3.80';
-      rA2.textContent = m2.books_odds?.bet365 ? `@ ${m2.books_odds.bet365.toFixed(2)}` : `@ ${awayOdds2}`;
+      rA2.textContent = m2.quotes ? 'see quotes' : 'n/a';
     }
 
     // Win probabilities
@@ -703,7 +720,7 @@ function renderTargetLandingData() {
               <div class="player-avatar-mini">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
               </div>
-              <span class="player-name-text">${cleanText(r.sport)}</span>
+              <span class="player-name-text">${esc(cleanText(r.sport))}</span>
             </td>
             <td class="font-mono td-picks">${r.picks.toLocaleString()}</td>
             <td class="font-mono text-lime td-winrate">${rate.toFixed(1)}%</td>
@@ -738,8 +755,11 @@ function renderTargetLandingData() {
   const teaserGrid = document.getElementById('teaser-items-grid');
   const teaserCount = document.getElementById('teaser-predictions-count');
   const teaserBtnCount = document.getElementById('teaser-btn-count');
-  if (teaserCount) teaserCount.textContent = `${picks.length || 12} Predictions Analyzed Today`;
-  if (teaserBtnCount) teaserBtnCount.textContent = `${picks.length || 12}`;
+  const liveCount = picks.length;
+  if (teaserCount) teaserCount.textContent = liveCount
+    ? `${liveCount} Live ${liveCount === 1 ? 'Selection' : 'Selections'} Right Now`
+    : 'No live selections right now';
+  if (teaserBtnCount) teaserBtnCount.textContent = liveCount ? String(liveCount) : '0';
 
   if (teaserGrid && picks.length > 0) {
     const isTg = state.isTelegramVerified;
@@ -752,35 +772,35 @@ function renderTargetLandingData() {
     teaserGrid.innerHTML = `
       <div class="teaser-item" onclick="window.switchTab('picks')" style="cursor: pointer;">
         <div class="teaser-item-header">
-          <span class="teaser-sport-tag">${cleanText(p0.league_label || 'NBA')}</span>
+          <span class="teaser-sport-tag">${esc(cleanText(p0.league_label || p0.sport_key || 'Live'))}</span>
           <span class="teaser-tier-pill free">FREE COMMUNITY PICK</span>
-          <span class="teaser-odds-chip">Odds ${p0.best_odds ? p0.best_odds.toFixed(2) : '1.16'}</span>
+          <span class="teaser-odds-chip">Odds ${fmtOdds(p0.best_odds)}</span>
         </div>
-        <div class="teaser-teams">${cleanText(p0.home_team)} vs ${cleanText(p0.away_team)}</div>
+        <div class="teaser-teams">${esc(cleanText(p0.home_team))} vs ${esc(cleanText(p0.away_team))}</div>
         <div class="teaser-meta">
-          <span class="text-pos font-mono font-bold">${Math.round((p0.p_true || 0.85) * 100)}% True Win Prob</span>
-          <span class="text-secondary">${cleanText(p0.outcome_name || 'Moneyline Favorite')}</span>
+          <span class="text-pos font-mono font-bold">${fmtPct(p0.p_true, 0)} True Win Prob</span>
+          <span class="text-secondary">${esc(cleanText(p0.outcome_name || '—'))}</span>
         </div>
       </div>
 
       <div class="teaser-item">
         <div class="teaser-item-header">
-          <span class="teaser-sport-tag">${cleanText(p1.league_label || 'SOCCER')}</span>
+          <span class="teaser-sport-tag">${esc(cleanText(p1.league_label || p1.sport_key || 'Live'))}</span>
           <span class="teaser-tier-pill telegram">${isTg ? 'TELEGRAM UNLOCKED' : 'TELEGRAM UNLOCK'}</span>
-          <span class="teaser-odds-chip">Odds ${p1.best_odds ? p1.best_odds.toFixed(2) : '1.25'}</span>
+          <span class="teaser-odds-chip">Odds ${fmtOdds(p1.best_odds)}</span>
         </div>
         ${isTg ? `
-          <div class="teaser-teams" onclick="window.switchTab('picks')" style="cursor: pointer;">${cleanText(p1.home_team)} vs ${cleanText(p1.away_team)}</div>
+          <div class="teaser-teams" onclick="window.switchTab('picks')" style="cursor: pointer;">${esc(cleanText(p1.home_team))} vs ${esc(cleanText(p1.away_team))}</div>
           <div class="teaser-meta">
-            <span class="text-pos font-mono font-bold">${Math.round((p1.p_true || 0.84) * 100)}% True Win Prob</span>
-            <span class="text-secondary">${cleanText(p1.outcome_name || 'Value Selection')}</span>
+            <span class="text-pos font-mono font-bold">${fmtPct(p1.p_true, 0)} True Win Prob</span>
+            <span class="text-secondary">${esc(cleanText(p1.outcome_name || '—'))}</span>
           </div>
         ` : `
           <div class="teaser-blur-wrap">
-            <div class="teaser-teams blur-target">${cleanText(p1.home_team)} vs ${cleanText(p1.away_team)}</div>
+            <div class="teaser-teams blur-target">${esc(cleanText(p1.home_team))} vs ${esc(cleanText(p1.away_team))}</div>
             <div class="teaser-meta blur-target">
-              <span class="text-pos font-mono font-bold">${Math.round((p1.p_true || 0.84) * 100)}% True Win Prob</span>
-              <span class="text-secondary">${cleanText(p1.outcome_name || 'Value Selection')}</span>
+              <span class="text-pos font-mono font-bold">${fmtPct(p1.p_true, 0)} True Win Prob</span>
+              <span class="text-secondary">${esc(cleanText(p1.outcome_name || '—'))}</span>
             </div>
             <div class="teaser-lock-overlay">
               <button type="button" class="btn-teaser-unlock telegram" onclick="window.openTelegramModal()">
@@ -797,22 +817,22 @@ function renderTargetLandingData() {
 
       <div class="teaser-item">
         <div class="teaser-item-header">
-          <span class="teaser-sport-tag">${cleanText(p2.league_label || 'SOCCER')}</span>
+          <span class="teaser-sport-tag">${esc(cleanText(p2.league_label || p2.sport_key || 'Live'))}</span>
           <span class="teaser-tier-pill pro">${isPro ? 'PRO UNLOCKED' : 'PRO EXCLUSIVE'}</span>
-          <span class="teaser-odds-chip">Odds ${p2.best_odds ? p2.best_odds.toFixed(2) : '1.28'}</span>
+          <span class="teaser-odds-chip">Odds ${fmtOdds(p2.best_odds)}</span>
         </div>
         ${isPro ? `
-          <div class="teaser-teams" onclick="window.switchTab('picks')" style="cursor: pointer;">${cleanText(p2.home_team)} vs ${cleanText(p2.away_team)}</div>
+          <div class="teaser-teams" onclick="window.switchTab('picks')" style="cursor: pointer;">${esc(cleanText(p2.home_team))} vs ${esc(cleanText(p2.away_team))}</div>
           <div class="teaser-meta">
-            <span class="text-pos font-mono font-bold">${Math.round((p2.p_true || 0.85) * 100)}% True Win Prob</span>
-            <span class="text-secondary">${cleanText(p2.outcome_name || 'Double Chance Anchor')}</span>
+            <span class="text-pos font-mono font-bold">${fmtPct(p2.p_true, 0)} True Win Prob</span>
+            <span class="text-secondary">${esc(cleanText(p2.outcome_name || '—'))}</span>
           </div>
         ` : `
           <div class="teaser-blur-wrap">
-            <div class="teaser-teams blur-target">${cleanText(p2.home_team)} vs ${cleanText(p2.away_team)}</div>
+            <div class="teaser-teams blur-target">${esc(cleanText(p2.home_team))} vs ${esc(cleanText(p2.away_team))}</div>
             <div class="teaser-meta blur-target">
-              <span class="text-pos font-mono font-bold">${Math.round((p2.p_true || 0.85) * 100)}% True Win Prob</span>
-              <span class="text-secondary">${cleanText(p2.outcome_name || 'Double Chance Anchor')}</span>
+              <span class="text-pos font-mono font-bold">${fmtPct(p2.p_true, 0)} True Win Prob</span>
+              <span class="text-secondary">${esc(cleanText(p2.outcome_name || '—'))}</span>
             </div>
             <div class="teaser-lock-overlay">
               <button type="button" class="btn-teaser-unlock pro" onclick="window.handlePricingSelect('tier1')">
@@ -841,15 +861,19 @@ function renderKPIs() {
 
   const wonCount = settled.filter(r => r.result === 'WIN').length;
   const lostCount = settled.filter(r => r.result === 'LOSS').length;
-  const totalSettled = settled.length || s.settled_picks_count || 50;
-  const winRate = totalSettled > 0 && wonCount > 0 ? (wonCount / totalSettled) : (s.win_rate || 0.84);
-  const clvVal = s.mean_clv !== null && s.mean_clv !== undefined ? (s.mean_clv * 100) : 3.12;
+  // Counts come from the ledger. With no graded history every rate is n/a
+  // rather than a plausible-looking default.
+  const totalSettled = settled.length || Number(s.settled_picks_count) || 0;
+  const winRate = (typeof s.win_rate === 'number') ? s.win_rate
+    : (totalSettled > 0 ? (wonCount / totalSettled) : null);
+  const clvVal = (typeof s.mean_clv === 'number') ? s.mean_clv * 100 : null;
+  const fmtRate = (v) => (v === null || v === undefined) ? 'n/a' : `${(v * 100).toFixed(1)}%`;
 
   // Overview Hero KPI Cards (dynamically populated from data)
   const heroWinRate = document.getElementById('hero-kpi-winrate');
   const heroWinRateCap = document.getElementById('hero-kpi-winrate-caption');
   if (heroWinRate) {
-    heroWinRate.textContent = `${(winRate * 100).toFixed(1)}%`;
+    heroWinRate.textContent = fmtRate(winRate);
   }
   if (heroWinRateCap) {
     heroWinRateCap.textContent = `${wonCount} wins out of ${totalSettled} recent audited predictions`;
@@ -858,7 +882,8 @@ function renderKPIs() {
   const heroRecord = document.getElementById('hero-kpi-record');
   const heroRecordCap = document.getElementById('hero-kpi-record-caption');
   if (heroRecord) {
-    heroRecord.textContent = `${((s.positive_clv_share !== undefined ? s.positive_clv_share : 1.0) * 100).toFixed(0)}%`;
+    heroRecord.textContent = (s.positive_clv_share === null || s.positive_clv_share === undefined)
+      ? 'n/a' : `${(s.positive_clv_share * 100).toFixed(0)}%`;
   }
   if (heroRecordCap) {
     heroRecordCap.textContent = 'Every signal timestamped before kickoff';
@@ -867,7 +892,7 @@ function renderKPIs() {
   const heroClv = document.getElementById('hero-kpi-clv');
   const heroClvCap = document.getElementById('hero-kpi-clv-caption');
   if (heroClv) {
-    heroClv.textContent = `${clvVal >= 0 ? '+' : ''}${clvVal.toFixed(2)}%`;
+    heroClv.textContent = clvVal == null ? 'n/a' : `${clvVal >= 0 ? '+' : ''}${clvVal.toFixed(2)}%`;
   }
   if (heroClvCap) {
     heroClvCap.textContent = 'Consistently beats final closing sportsbook odds';
@@ -907,8 +932,9 @@ function renderKPIs() {
   if (ovTbody && settled.length > 0) {
     const preview4 = settled.slice(0, 4);
     ovTbody.innerHTML = preview4.map(r => {
-      const clv = r.clv !== null && r.clv !== undefined ? (r.clv * 100) : 0.0;
-      const clvStr = `${clv >= 0 ? '+' : ''}${clv.toFixed(1)}% CLV`;
+      const hasClv = r.clv !== null && r.clv !== undefined;
+      const clv = hasClv ? r.clv * 100 : null;
+      const clvStr = hasClv ? `${clv >= 0 ? '+' : ''}${clv.toFixed(1)}% CLV` : 'CLV n/a';
       const badgeClass = r.result === 'WIN' ? 'WIN' : (r.result === 'LOSS' ? 'LOSS' : 'VOID');
       const pnlStr = r.pnl !== undefined ? ` (${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(2)}u)` : '';
       const leagueName = (r.sport_key || '').replace(/_/g, ' ').toUpperCase();
@@ -919,9 +945,9 @@ function renderKPIs() {
           <td>
             <div class="matchup-cell">
               <div class="matchup-pairing">
-                <span class="matchup-team home-team">${r.home_team}</span>
+                <span class="matchup-team home-team">${esc(r.home_team)}</span>
                 <span class="matchup-vs-badge">VS</span>
-                <span class="matchup-team away-team">${r.away_team}</span>
+                <span class="matchup-team away-team">${esc(r.away_team)}</span>
               </div>
               <div class="matchup-meta">
                 <span class="matchup-league-badge">${leagueName}</span>
@@ -930,11 +956,11 @@ function renderKPIs() {
               </div>
             </div>
           </td>
-          <td><span class="selection-target-badge">${r.outcome_name}</span></td>
+          <td><span class="selection-target-badge">${esc(r.outcome_name)}</span></td>
           <td><span class="odds-val font-mono">${r.best_odds ? r.best_odds.toFixed(2) : '-'}</span> <span class="clv-micro-tag font-mono text-pos">(${clvStr})</span></td>
           <td><span class="certainty-pill font-mono font-bold">${(r.p_true * 100).toFixed(1)}%</span></td>
           <td><span class="badge-accent emerald">${edgeRating}</span></td>
-          <td><span class="result-badge ${badgeClass}">${r.result}${pnlStr}</span></td>
+          <td><span class="result-badge ${badgeClass}">${esc(r.result)}${pnlStr}</span></td>
         </tr>
       `;
     }).join('');
@@ -951,7 +977,7 @@ function renderKPIs() {
 
   const winRateEl = document.getElementById('kpi-win-rate');
   if (winRateEl) {
-    winRateEl.textContent = `${(winRate * 100).toFixed(1)}%`;
+    winRateEl.textContent = fmtRate(winRate);
   }
   const winRateSub = document.getElementById('kpi-win-rate-sub');
   if (winRateSub) {
@@ -960,8 +986,9 @@ function renderKPIs() {
 
   const brierEl = document.getElementById('kpi-brier');
   if (brierEl) {
+    // Brier is a loss score (lower is better), so it is shown as the score.
     brierEl.textContent = s.brier_score !== null && s.brier_score !== undefined
-      ? `${((1 - s.brier_score) * 100).toFixed(1)}%`
+      ? s.brier_score.toFixed(4)
       : '—';
   }
 
@@ -974,7 +1001,7 @@ function renderKPIs() {
 
   const clvEl = document.getElementById('kpi-clv');
   if (clvEl) {
-    clvEl.textContent = `${clvVal >= 0 ? '+' : ''}${clvVal.toFixed(2)}%`;
+    clvEl.textContent = clvVal == null ? '—' : `${clvVal >= 0 ? '+' : ''}${clvVal.toFixed(2)}%`;
   }
 
   const trapsEl = document.getElementById('kpi-traps');
@@ -1011,14 +1038,14 @@ function teamCrestSvg(name) {
 function matchupRowHtml(p) {
   return `
     <div class="matchup-row">
-      <div class="team-cell" title="${p.home_team}">
+      <div class="team-cell" title="${esc(p.home_team)}">
         ${teamCrestSvg(p.home_team)}
-        <span class="team-name">${p.home_team}</span>
+        <span class="team-name">${esc(p.home_team)}</span>
       </div>
       <span class="vs-mark">VS</span>
-      <div class="team-cell" title="${p.away_team}">
+      <div class="team-cell" title="${esc(p.away_team)}">
         ${teamCrestSvg(p.away_team)}
-        <span class="team-name">${p.away_team}</span>
+        <span class="team-name">${esc(p.away_team)}</span>
       </div>
     </div>
   `;
@@ -1329,13 +1356,13 @@ function renderPicks() {
     if (isLocked && lockType === 'telegram') {
       return `
         ${headerHtml}
-        <div class="pick-card locked-card" data-lock="telegram" id="pick-${p.match_id}">
+        <div class="pick-card locked-card" data-lock="telegram" id="pick-${esc(p.match_id)}">
           ${pickCardHeaderHtml(p, league, marketLabel, cd)}
           ${matchupRowHtml(p)}
           <div class="lock-blur">
             <div class="pick-selection">
               <div class="pick-main">
-                <div class="pick-name">${p.outcome_name}</div>
+                <div class="pick-name">${esc(p.outcome_name)}</div>
               </div>
               <div class="prob-val tabular-nums">${probPct}%</div>
             </div>
@@ -1355,13 +1382,13 @@ function renderPicks() {
     if (isLocked && lockType === 'tier1') {
       return `
         ${headerHtml}
-        <div class="pick-card locked-card" data-lock="tier1" id="pick-${p.match_id}">
+        <div class="pick-card locked-card" data-lock="tier1" id="pick-${esc(p.match_id)}">
           ${pickCardHeaderHtml(p, league, marketLabel, cd)}
           ${matchupRowHtml(p)}
           <div class="lock-blur">
             <div class="pick-selection">
               <div class="pick-main">
-                <div class="pick-name">${p.outcome_name}</div>
+                <div class="pick-name">${esc(p.outcome_name)}</div>
               </div>
               <div class="prob-val tabular-nums">${probPct}%</div>
             </div>
@@ -1382,16 +1409,16 @@ function renderPicks() {
       const lockTitle = p.is_pass_advisory ? `Match #${p.rank} · Pass Advisory` : `Match #${p.rank} · Tier 2 Pro`;
       const lockDesc = p.is_pass_advisory
         ? 'Unlock capital preservation advisory, hazard breakdown, and avoidance metrics.'
-        : 'Unlock all 12 Diamonds, Smart Pivots and Pass Advisories with 1-click slips.';
+        : 'Unlock the rest of the live board: ranked alternatives and pass advisories.';
       return `
         ${headerHtml}
-        <div class="pick-card locked-card" data-lock="tier2" id="pick-${p.match_id}">
+        <div class="pick-card locked-card" data-lock="tier2" id="pick-${esc(p.match_id)}">
           ${pickCardHeaderHtml(p, league, marketLabel, cd)}
           ${matchupRowHtml(p)}
           <div class="lock-blur">
             <div class="pick-selection">
               <div class="pick-main">
-                <div class="pick-name">${p.outcome_name}</div>
+                <div class="pick-name">${esc(p.outcome_name)}</div>
               </div>
               <div class="prob-val tabular-nums">${probPct}%</div>
             </div>
@@ -1412,7 +1439,7 @@ function renderPicks() {
       const vigTag = p.best_odds ? p.best_odds.toFixed(2) : '—';
       return `
         ${headerHtml}
-        <div class="pick-card pass-card" id="pick-${p.match_id}">
+        <div class="pick-card pass-card" id="pick-${esc(p.match_id)}">
           <div>
             <div class="card-header">
               <div class="card-header-tags">
@@ -1429,19 +1456,19 @@ function renderPicks() {
 
             <div class="pass-hazard-box">
               <div class="pass-hazard-title">
-                <span>Hazard detected:</span> ${cleanText(p.hazard_title) || 'Negative EV / Market Trap'}
+                <span>Hazard detected:</span> ${esc(cleanText(p.hazard_title) || 'Negative EV / Market Trap')}
               </div>
               <div class="pass-hazard-desc">
-                ${cleanText(p.hazard_reason) || 'Overpriced public favorite identified across sportsbook consensus.'}
+                ${esc(cleanText(p.hazard_reason) || 'Overpriced public favorite identified across sportsbook consensus.')}
               </div>
             </div>
 
             <div class="pass-preservation-box">
               <div class="pass-preservation-title">
-                <span>LISA capital preservation:</span> ${cleanText(p.pass_verdict) || 'DO NOT BET'}
+                <span>LISA capital preservation:</span> ${esc(cleanText(p.pass_verdict) || 'DO NOT BET')}
               </div>
               <div class="pass-preservation-desc">
-                ${cleanText(p.preservation_rationale) || 'Zero mathematical edge. Capital preserved for high-conviction Diamond picks.'}
+                ${esc(cleanText(p.preservation_rationale) || 'Zero mathematical edge. Capital preserved for high-conviction Diamond picks.')}
               </div>
             </div>
 
@@ -1489,10 +1516,10 @@ function renderPicks() {
         <div class="pivot-banner">
           <div class="pivot-title">
             <span class="pivot-tag">LISA Smart Market Pivot</span>
-            <span class="pivot-hazard">${cleanText(p.pivot.hazard_reason)}</span>
+            <span class="pivot-hazard">${esc(cleanText(p.pivot.hazard_reason))}</span>
           </div>
           <div class="pivot-body">
-            ${cleanText(p.pivot.pivot_rationale)}
+            ${esc(cleanText(p.pivot.pivot_rationale))}
           </div>
         </div>
       `;
@@ -1500,7 +1527,7 @@ function renderPicks() {
 
     return `
       ${headerHtml}
-      <div class="pick-card ${isDiamond ? 'diamond-pick' : ''}" id="pick-${p.match_id}">
+      <div class="pick-card ${isDiamond ? 'diamond-pick' : ''}" id="pick-${esc(p.match_id)}">
         <div>
           ${pickCardHeaderHtml(p, league, marketLabel, cd, socialBadge)}
 
@@ -1510,10 +1537,10 @@ function renderPicks() {
 
           <div class="pick-selection">
             <div class="pick-main">
-              <div class="pick-name">${p.outcome_name}</div>
+              <div class="pick-name">${esc(p.outcome_name)}</div>
               <div class="pick-cue pick-cue-${p.badge_color || 'emerald'}">
                 <span class="cue-dot"></span>
-                <span>${p.gauge_text}</span>
+                <span>${esc(p.gauge_text)}</span>
               </div>
             </div>
             <div class="pick-stats">
@@ -1529,7 +1556,7 @@ function renderPicks() {
           <div class="metrics-row">
             <div class="metric-item">
               <div class="metric-lbl">Best Book</div>
-              <div class="metric-num" style="text-transform: capitalize; color: var(--accent-cyan);">${p.best_book}</div>
+              <div class="metric-num" style="text-transform: capitalize; color: var(--accent-cyan);">${esc(p.best_book)}</div>
             </div>
             <div class="metric-item">
               <div class="metric-lbl">Odds</div>
@@ -1598,10 +1625,10 @@ function renderLedger() {
 
     return `
       <tr>
-        <td style="font-weight: 600; color: #ffffff;">${r.home_team} vs ${r.away_team}</td>
+        <td style="font-weight: 600; color: #ffffff;">${esc(r.home_team)} vs ${esc(r.away_team)}</td>
         <td class="tabular-nums" style="font-weight: 700; color: var(--accent-gold); letter-spacing: 0.5px;">${r.actual_score || '-'}</td>
         <td style="color: var(--text-secondary); text-transform: capitalize;">${r.sport_key.replace(/_/g, ' ')}</td>
-        <td style="color: var(--accent-cyan); font-weight: 600;">${r.outcome_name}</td>
+        <td style="color: var(--accent-cyan); font-weight: 600;">${esc(r.outcome_name)}</td>
         <td class="tabular-nums" style="font-weight: 600;">${(r.p_true * 100).toFixed(1)}%</td>
         <td class="tabular-nums">${r.best_odds ? r.best_odds.toFixed(2) : '-'}</td>
         <td class="tabular-nums">
@@ -1609,7 +1636,7 @@ function renderLedger() {
           <span class="${clvClass}" style="margin-left: 6px; font-size: 11px;">(${clvStr})</span>
         </td>
         <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 600;">${stakeUnits}</td>
-        <td><span class="result-badge ${resClass}">${r.result}</span></td>
+        <td><span class="result-badge ${resClass}">${esc(r.result)}</span></td>
       </tr>
     `;
   }).join('');
@@ -1679,7 +1706,7 @@ function renderTier3Alpha() {
       const cd = formatCountdown(m.commence_at);
       return `
       <tr>
-        <td style="font-weight: 600; color: #ffffff;">${cleanText(m.home)} vs ${cleanText(m.away)}</td>
+        <td style="font-weight: 600; color: #ffffff;">${esc(cleanText(m.home))} vs ${esc(cleanText(m.away))}</td>
         <td>
           <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_at || ''}">
             <span class="countdown-text tabular-nums">${cd.text}</span>
@@ -1730,7 +1757,7 @@ function renderTier3Alpha() {
       const edge = joint > 0 ? (odds * joint - 1) * 100 : 0;
       parlaysList.innerHTML = `<div class="parlay-item">
         <div class="parlay-title">Live ${legs.length}-leg consensus slip</div>
-        <ul class="parlay-legs">${legs.map(l => `<li>${cleanText(l.home_team)} vs ${cleanText(l.away_team)}: ${cleanText(l.outcome_name)} @ ${Number(l.best_odds).toFixed(2)} (${cleanText(l.best_book || 'best')})</li>`).join('')}</ul>
+        <ul class="parlay-legs">${legs.map(l => `<li>${esc(cleanText(l.home_team))} vs ${esc(cleanText(l.away_team))}: ${esc(cleanText(l.outcome_name))} @ ${Number(l.best_odds).toFixed(2)} (${esc(cleanText(l.best_book || 'best'))})</li>`).join('')}</ul>
         <div class="parlay-meta">
           <div>Joint prob: <strong>${(joint * 100).toFixed(1)}%</strong></div>
           <div>Combined odds: <strong>${odds.toFixed(2)}</strong></div>
@@ -1765,14 +1792,14 @@ async function renderBacktest() {
       return `
         <tr ${rowStyle}>
           <td>
-            <div style="font-weight: 700; color: #ffffff;">${cleanText(row.name)}</div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${cleanText(row.description)}</div>
+            <div style="font-weight: 700; color: #ffffff;">${esc(cleanText(row.name))}</div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${esc(cleanText(row.description))}</div>
           </td>
           <td class="tabular-nums" style="color: var(--accent-emerald); font-weight: 700;">${(row.win_rate * 100).toFixed(1)}%</td>
           <td class="tabular-nums" style="color: ${row.roi_pct >= 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)'}; font-weight: 700;">${row.roi_pct >= 0 ? '+' : ''}${row.roi_pct.toFixed(1)}%</td>
           <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 700;">${row.net_profit >= 0 ? '+' : '-'}$${Math.abs(row.net_profit).toFixed(2)}</td>
           <td class="tabular-nums" style="color: var(--accent-rose); font-weight: 600;">-${row.max_drawdown_pct.toFixed(2)}%</td>
-          <td><span class="pill-league" style="font-size: 11px;">${cleanText(row.best_for)}</span></td>
+          <td><span class="pill-league" style="font-size: 11px;">${esc(cleanText(row.best_for))}</span></td>
         </tr>
       `;
     }).join('');
@@ -1788,32 +1815,33 @@ async function renderBacktest() {
   if (descEl && s.description) descEl.textContent = cleanText(s.description);
 
   const winRateEl = document.getElementById('bkt-win-rate');
-  if (winRateEl && s.win_rate !== undefined) winRateEl.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
+  if (winRateEl) winRateEl.textContent = numOrDash(s.win_rate, (v) => `${(v * 100).toFixed(1)}%`);
 
   const ciEl = document.getElementById('bkt-ci');
-  if (ciEl && s.wilson_ci_lower !== undefined && s.wilson_ci_upper !== undefined) {
-    ciEl.textContent = `95% CI: [${(s.wilson_ci_lower * 100).toFixed(1)}%, ${(s.wilson_ci_upper * 100).toFixed(1)}%]`;
+  if (ciEl) {
+    ciEl.textContent = (typeof s.wilson_ci_lower === 'number' && typeof s.wilson_ci_upper === 'number')
+      ? `95% CI: [${(s.wilson_ci_lower * 100).toFixed(1)}%, ${(s.wilson_ci_upper * 100).toFixed(1)}%]`
+      : '95% CI: n/a';
   }
 
   const capSavedEl = document.getElementById('bkt-capital-saved');
-  if (capSavedEl && s.capital_preserved_dollars !== undefined) {
-    capSavedEl.textContent = `$${s.capital_preserved_dollars.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (capSavedEl) {
+    capSavedEl.textContent = numOrDash(s.capital_preserved_dollars, (v) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   }
 
   const netSavedEl = document.getElementById('bkt-net-saved');
-  if (netSavedEl && s.net_counterfactual_value !== undefined) {
-    const sign = s.net_counterfactual_value >= 0 ? '+' : '';
-    netSavedEl.textContent = `Net Adv: ${sign}$${s.net_counterfactual_value.toFixed(2)}`;
+  if (netSavedEl) {
+    netSavedEl.textContent = numOrDash(s.net_counterfactual_value, (v) => `Net Adv: ${v >= 0 ? '+' : ''}$${v.toFixed(2)}`);
   }
 
   const mddEl = document.getElementById('bkt-mdd');
-  if (mddEl && s.max_drawdown_pct !== undefined) mddEl.textContent = `-${s.max_drawdown_pct.toFixed(2)}%`;
+  if (mddEl) mddEl.textContent = numOrDash(s.max_drawdown_pct, (v) => `-${v.toFixed(2)}%`);
 
   const mddDollarsEl = document.getElementById('bkt-mdd-dollars');
-  if (mddDollarsEl && s.max_drawdown_dollars !== undefined) mddDollarsEl.textContent = `-$${s.max_drawdown_dollars.toFixed(2)} Peak Drop`;
+  if (mddDollarsEl) mddDollarsEl.textContent = numOrDash(s.max_drawdown_dollars, (v) => `-$${v.toFixed(2)} Peak Drop`);
 
   const roiEl = document.getElementById('bkt-roi');
-  if (roiEl && s.roi_pct !== undefined) roiEl.textContent = `${s.roi_pct >= 0 ? '+' : ''}${s.roi_pct.toFixed(2)}%`;
+  if (roiEl) roiEl.textContent = numOrDash(s.roi_pct, (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
 
   const profitEl = document.getElementById('bkt-profit');
   if (profitEl && s.net_profit !== undefined) {
@@ -1869,14 +1897,14 @@ async function renderBacktest() {
     return `
       <tr>
         <td>
-          <strong style="color: #fff;">${r.home_team} vs ${r.away_team}</strong>
+          <strong style="color: #fff;">${esc(r.home_team)} vs ${esc(r.away_team)}</strong>
           ${r.hazard_warning ? `<div style="font-size: 11px; color: var(--accent-amber); margin-top: 2px;">${r.hazard_warning}</div>` : ''}
         </td>
         <td><span class="pill-league">${sportLabel}</span></td>
-        <td>${gradeBadge} <div style="font-size: 12px; color: #fff; margin-top: 3px;">${r.outcome_name}</div></td>
+        <td>${gradeBadge} <div style="font-size: 12px; color: #fff; margin-top: 3px;">${esc(r.outcome_name)}</div></td>
         <td><span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">${r.market.replace('_', ' ')}</span></td>
         <td class="tabular-nums" style="font-weight: 600;">${(r.p_true * 100).toFixed(1)}%</td>
-        <td class="tabular-nums">${r.best_odds.toFixed(2)} <span style="font-size: 11px; color: var(--text-muted);">(${r.best_book})</span></td>
+        <td class="tabular-nums">${r.best_odds.toFixed(2)} <span style="font-size: 11px; color: var(--text-muted);">(${esc(r.best_book)})</span></td>
         <td class="tabular-nums" style="font-weight: 700; color: #fff;">${r.actual_score}</td>
         <td>${resultBadge}</td>
         <td class="tabular-nums">${pnlDisplay}</td>
@@ -1969,9 +1997,9 @@ function renderTicker() {
       <div class="ticker-match-card" onclick="window.switchTab('forecast')">
         <span class="tm-league-chip">${leagueShort}</span>
         ${m.marquee ? `<span class="tm-marquee-chip">★ POPULAR</span>` : ''}
-        <span class="tm-team home">${cleanText(m.home)}</span>
+        <span class="tm-team home">${esc(cleanText(m.home))}</span>
         <span class="tm-vs">VS</span>
-        <span class="tm-team away">${cleanText(m.away)}</span>
+        <span class="tm-team away">${esc(cleanText(m.away))}</span>
         <span class="tm-prob-chip">
           <span class="tm-lean">${lean}</span>
           <span class="tm-pct">${(topProb * 100).toFixed(0)}%</span>
@@ -2035,12 +2063,12 @@ function renderForecastBoard() {
         <div class="fc-hero-body">
           <div class="fc-hero-matchup">
             <div class="fc-hero-team home">
-              <span class="team-name">${cleanText(topPick.home)}</span>
+              <span class="team-name">${esc(cleanText(topPick.home))}</span>
               <span class="team-sub">Home</span>
             </div>
             <div class="fc-hero-vs-badge">VS</div>
             <div class="fc-hero-team away">
-              <span class="team-name">${cleanText(topPick.away)}</span>
+              <span class="team-name">${esc(cleanText(topPick.away))}</span>
               <span class="team-sub">Away</span>
             </div>
           </div>
@@ -2108,11 +2136,11 @@ function renderForecastBoard() {
 
         <div class="fc-matchup-container">
           <div class="fc-team-box home">
-            <span class="fc-team-name">${cleanText(m.home)}</span>
+            <span class="fc-team-name">${esc(cleanText(m.home))}</span>
           </div>
           <div class="fc-vs-chip">VS</div>
           <div class="fc-team-box away">
-            <span class="fc-team-name">${cleanText(m.away)}</span>
+            <span class="fc-team-name">${esc(cleanText(m.away))}</span>
           </div>
         </div>
 
@@ -2237,7 +2265,7 @@ function renderTierMatrix() {
     diamond_picks: 'Strict certainty-gated signals with optimal fractional Kelly sizing',
     micro_pack: 'Both Teams to Score & Over/Under 2.5 goal probability distributions',
     traps: 'Signals misleading odds with sharp model vs market discrepancies',
-    booking_codes: '1-click slip transfer across 6 tier-1 global sportsbooks',
+    booking_codes: 'Best available price and book for every live selection',
     parlay: 'Correlation-filtered multi-leg accumulators minimizing joint risk',
     ah_ou_picks: 'Handicap spreads & goal totals with push protection',
     steam_radar: 'Real-time alert engine for rapid institutional line movements',
@@ -2367,7 +2395,7 @@ function renderTierMatrix() {
         <td class="matrix-feature-cell col-capability">
           <div class="matrix-feature-name">
             <span class="matrix-feature-dot" style="background:${CAT_DOT_COLORS[f.key] || '#64748B'};"></span>
-            <span>${cleanText(f.label)}</span>
+            <span>${esc(cleanText(f.label))}</span>
           </div>
           <div class="matrix-feature-blurb">${microDesc}</div>
         </td>
@@ -2530,53 +2558,117 @@ window.relockTelegram = function () {
 };
 
 // Interactive Model Inference Scenarios
-const visualizerScenarios = {
-  nba: {
-    matchName: "Oklahoma City Thunder vs Washington Wizards",
-    league: "NBA · Game Winner (Moneyline)",
-    quotes: "Bet365 1.17 · Pinnacle 1.16 · DraftKings 1.15",
-    overround: "4.8% hidden bookie margin",
-    shinZ: "Strong backing on the favorite",
-    probTrue: "88.7%",
-    fairPrice: "1.13 or better",
-    evDelta: "+2.9% Edge over bookie",
-    kellyStake: "2.4% of bankroll",
-    verdictType: "diamond",
-    verdictBadge: "HIGH-CONFIDENCE PICK",
-    verdictDesc: "Strong advantage found. Bookmakers set generous odds compared to Oklahoma City's actual chance of winning."
-  },
-  laliga: {
-    matchName: "FC Barcelona vs Getafe CF",
-    league: "La Liga · Smart Safety Pick (Barcelona or Draw)",
-    quotes: "Bet365 1.24 · Pinnacle 1.25 · DraftKings 1.26",
-    overround: "5.2% hidden bookie margin",
-    shinZ: "High-probability safety option",
-    probTrue: "84.5%",
-    fairPrice: "1.18 or better",
-    evDelta: "+5.6% Edge over bookie",
-    kellyStake: "3.1% of bankroll",
-    verdictType: "pivot",
-    verdictBadge: "SMART SAFETY PICK",
-    verdictDesc: "Instead of a risky straight bet, LISA recommends Double Chance to give you an 84.5% safety margin."
-  },
-  trap: {
-    matchName: "Arsenal FC vs Chelsea FC",
-    league: "Premier League · Trap Game (Do Not Bet)",
-    quotes: "Bet365 1.40 · Pinnacle 1.44 · DraftKings 1.42",
-    overround: "6.5% high fee · Coin-flip trap",
-    shinZ: "Dangerous public hype detected",
-    probTrue: "61.2%",
-    fairPrice: "1.63 or better",
-    evDelta: "-13.2% Bad Value (Negative Return)",
-    kellyStake: "0.0% (Do Not Bet)",
-    verdictType: "trap",
-    verdictBadge: "TRAP GAME: DO NOT BET",
-    verdictDesc: "Bookmakers have overpriced Arsenal due to public hype. The risk far outweighs the reward. LISA advises passing."
-  }
+// Interactive Model Inference Scenarios
+// Built from the live ledger: the two strongest live selections and the most
+// recent recorded trap. Nothing here is a canned example.
+const EMPTY_SCENARIO = {
+  matchName: '—',
+  league: '—',
+  quotes: 'No cached prices for this fixture',
+  overround: 'n/a',
+  shinZ: 'n/a',
+  probTrue: 'n/a',
+  fairPrice: 'n/a',
+  evDelta: 'n/a',
+  kellyStake: 'n/a',
+  outlook: 'n/a',
+  confidence: 'n/a',
+  verdictType: '',
+  verdictBadge: 'NO LIVE SELECTION',
+  verdictDesc: 'Waiting for the odds poller to record a real selection.'
+};
+
+function numOrDash(v, format) {
+  return (typeof v === 'number' && isFinite(v)) ? format(v) : 'n/a';
+}
+function fmtOdds(v) {
+  return (typeof v === 'number' && isFinite(v)) ? v.toFixed(2) : 'n/a';
+}
+function fmtPct(v, digits) {
+  return (typeof v === 'number' && isFinite(v)) ? (v * 100).toFixed(digits == null ? 1 : digits) + '%' : 'n/a';
+}
+function fmtMoney(v) {
+  return (typeof v === 'number' && isFinite(v)) ? v.toFixed(2) : 'n/a';
+}
+
+function scenarioFromPick(pick) {
+  if (!pick) return Object.assign({}, EMPTY_SCENARIO);
+  const quotes = pick.quotes || {};
+  const outcome = pick.outcome_name;
+  const bookLines = (quotes.books || []).map((b) => {
+    const price = b.prices ? b.prices[outcome] : null;
+    return typeof price === 'number' ? `${esc(b.book_title)} ${price.toFixed(2)}` : null;
+  }).filter(Boolean);
+
+  const ev = typeof pick.best_ev === 'number' ? pick.best_ev : null;
+  const evText = ev == null ? 'n/a'
+    : `${ev >= 0 ? '+' : ''}${(ev * 100).toFixed(1)}% ${ev >= 0 ? 'edge over' : 'bad value at'} ${pick.best_book || 'best book'}`;
+  const confidence = typeof pick.cv === 'number' ? pick.cv : null;
+
+  return {
+    matchName: `${esc(pick.home_team)} vs ${esc(pick.away_team)}`,
+    league: `${(pick.league_label || pick.sport_key || '—')} · ${pick.outcome_name || ''}`,
+    quotes: bookLines.length ? bookLines.join(' · ')
+      : (pick.best_odds ? `${pick.best_book || 'best book'} ${fmtOdds(pick.best_odds)}` : 'No cached prices'),
+    overround: quotes.margin == null ? 'n/a' : `${(quotes.margin * 100).toFixed(1)}% bookmaker margin (${quotes.n_books} books)`,
+    shinZ: pick.freshness || 'n/a',
+    probTrue: fmtPct(pick.p_true, 1),
+    fairPrice: `${fmtOdds(pick.fair_odds)} fair`,
+    evDelta: evText,
+    kellyStake: `${fmtMoney(pick.recommended_stake_pct)}% of bankroll (${fmtMoney(pick.recommended_units)}u)`,
+    outlook: pick.gauge_text || 'n/a',
+    confidence: confidence == null ? 'n/a' : `${(confidence * 100).toFixed(1)}% cross-book spread`,
+    conviction: pick.conviction_score,
+    verdictType: ev != null && ev > 0.03 ? 'diamond' : 'pivot',
+    verdictBadge: `${fmtMoney(pick.conviction_score)}/10 conviction · ${fmtOdds(pick.best_odds)} at ${pick.best_book || 'best book'}`,
+    verdictDesc: `Model fair price ${fmtOdds(pick.fair_odds)} against a ${fmtOdds(pick.best_odds)} quote across ${pick.n_books || 'n/a'} books.`
+  };
+}
+
+function scenarioFromTrap(trap) {
+  if (!trap) return Object.assign({}, EMPTY_SCENARIO);
+  const fav = trap.public_favorite;
+  return {
+    matchName: `${esc(trap.home_team)} vs ${esc(trap.away_team)}`,
+    league: 'Recorded trap advisory',
+    quotes: trap.public_odds ? `Public ${fmtOdds(trap.public_odds)}` : 'No cached prices',
+    overround: 'n/a',
+    shinZ: fav ? `Public backed ${fav}` : 'Public backing recorded',
+    probTrue: 'n/a',
+    fairPrice: trap.fair_odds ? `${fmtOdds(trap.fair_odds)} fair` : 'n/a',
+    evDelta: trap.cv == null ? 'n/a' : `${(trap.cv * 100).toFixed(1)}% cross-book spread`,
+    kellyStake: '0.00% (do not bet)',
+    outlook: 'Trap logged by the variance monitor',
+    confidence: trap.cv == null ? 'n/a' : `${(trap.cv * 100).toFixed(1)}%`,
+    verdictType: 'trap',
+    verdictBadge: 'TRAP GAME: NO BET',
+    verdictDesc: trap.detected_at
+      ? `Book prices diverged from the consensus at ${esc(trap.detected_at)}. The ledger logged a pass, not a selection.`
+      : 'Book prices diverged from the consensus. The ledger logged a pass, not a selection.'
+  };
+}
+
+function visualizerScenarios() {
+  const d = (window.state && window.state.dashboard) || {};
+  const picks = Array.isArray(d.active_picks) ? d.active_picks.slice() : [];
+  picks.sort((a, b) => (b.conviction_score || 0) - (a.conviction_score || 0));
+  const traps = Array.isArray(d.traps) ? d.traps : [];
+  return {
+    diamond: scenarioFromPick(picks[0]),
+    pivot: scenarioFromPick(picks[1] || picks[0]),
+    trap: scenarioFromTrap(traps[0])
+  };
+}
+
+// Re-render the pipeline explainer from the freshest ledger state.
+window.refreshVisualizer = function () {
+  const active = document.querySelector('.vis-scenario-btn.active');
+  const id = active ? active.getAttribute('data-scenario') : 'diamond';
+  window.switchVisualizerScenario(id);
 };
 
 window.switchVisualizerScenario = function (id) {
-  const s = visualizerScenarios[id];
+  const s = visualizerScenarios()[id];
   if (!s) return;
 
   document.querySelectorAll('.vis-scenario-btn, .visualizer-scenario-btn').forEach(b => {
@@ -2593,6 +2685,8 @@ window.switchVisualizerScenario = function (id) {
   const mEvDelta = document.getElementById('vis-ev-delta');
   const mKellyStake = document.getElementById('vis-kelly-stake');
   const mVerdictBar = document.getElementById('vis-verdict-bar');
+  const mOutlook = document.getElementById('vis-outlook');
+  const mConfidence = document.getElementById('vis-confidence');
   const mVerdictBadge = document.getElementById('vis-verdict-badge');
   const mVerdictDesc = document.getElementById('vis-verdict-desc');
 
@@ -2605,6 +2699,8 @@ window.switchVisualizerScenario = function (id) {
   if (mFairPrice) mFairPrice.textContent = s.fairPrice;
   if (mEvDelta) mEvDelta.textContent = s.evDelta;
   if (mKellyStake) mKellyStake.textContent = s.kellyStake;
+  if (mOutlook) mOutlook.textContent = s.outlook;
+  if (mConfidence) mConfidence.textContent = s.confidence;
   if (mVerdictBadge) mVerdictBadge.textContent = s.verdictBadge;
   if (mVerdictDesc) mVerdictDesc.textContent = s.verdictDesc;
 
@@ -3335,15 +3431,15 @@ const TIER_PRICING = {
     name: 'Tier 1 Sharp Starter',
     price: '$19.00 / mo',
     title: 'Upgrade to Tier 1: Sharp Starter',
-    sub: 'Unlock Flagship Diamonds 1-5, automated Kelly sizing, and Telegram kickoff alerts.',
-    desc: 'Flagship Diamonds with strict consensus (P_true ≥ 82%), 1-click booking codes across 6 books, and instant alerts.'
+    sub: 'Unlock the top-ranked selections, automated Kelly sizing, and Telegram kickoff alerts.',
+    desc: 'The engine\'s strongest live selections, with the measured edge and best price on each one.'
   },
   tier2: {
     name: 'Tier 2 Pro Trader',
     price: '$49.00 / mo',
     title: 'Upgrade to Tier 2: Pro Trader',
-    sub: 'Unlock all 12 daily predictions, Smart Market Pivots, and 5-Fold Diamond Parlays.',
-    desc: 'Full commercial access to the daily algorithmic slate with 1-click booking codes across 6 sportsbooks.'
+    sub: 'Unlock the complete live board, ranked alternatives, and priced accumulators.',
+    desc: 'Every live selection with its measured price, edge, and Kelly sizing.'
   },
   tier3: {
     name: 'Tier 3 VIP Syndicate',

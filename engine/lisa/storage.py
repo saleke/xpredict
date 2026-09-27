@@ -15,11 +15,15 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from .gate import Pick
 
 PENDING_STATES = ("TRIGGER_ALERT", "CONFIRMED", "PENDING_SETTLEMENT")
+
+#: A row counts as settled only once it carries a grade. Deriving "settled" as
+#: "not pending" would let any unrecognised state inflate the win rate.
+SETTLED_STATES = ("SETTLED", "VOID", "SETTLED_VOID")
 
 
 def pick_key(match_id: str, market: str, outcome: str) -> str:
@@ -63,13 +67,13 @@ class Storage:
     """Interface — the pipeline depends on this, not on concrete drivers."""
 
     # hot layer
-    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
+    def upsert_live(self, key: str, data: Any, ttl_seconds: int) -> None:
         raise NotImplementedError
 
-    def get_live(self, key: str) -> Optional[dict]:
+    def get_live(self, key: str) -> Optional[Any]:
         raise NotImplementedError
 
-    def get_live_stale(self, key: str) -> Optional[dict]:
+    def get_live_stale(self, key: str) -> Optional[Any]:
         """Return a cached payload even after its TTL, so the UI can show the
         last real observation (with its age) instead of nothing. Returns None
         only when the key was never written."""
@@ -142,10 +146,12 @@ class InMemoryStorage(Storage):
 
     # -- hot layer -----------------------------------------------------------
 
-    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
-        self._live[key] = (time.monotonic() + ttl_seconds, dict(data))
+    def upsert_live(self, key: str, data: Any, ttl_seconds: int) -> None:
+        # The hot layer is a general JSON cache: dicts, lists and scalars all
+        # round-trip, matching the SQLite driver.
+        self._live[key] = (time.monotonic() + ttl_seconds, data)
 
-    def get_live(self, key: str) -> Optional[dict]:
+    def get_live(self, key: str) -> Optional[Any]:
         entry = self._live.get(key)
         if entry is None:
             return None
@@ -155,7 +161,7 @@ class InMemoryStorage(Storage):
             return None
         return data
 
-    def get_live_stale(self, key: str) -> Optional[dict]:
+    def get_live_stale(self, key: str) -> Optional[Any]:
         return self._live.get(key, (0.0, None))[1]
 
     def scan_live_keys(self) -> Iterable[str]:
@@ -179,7 +185,10 @@ class InMemoryStorage(Storage):
         return [r for r in self._picks.values() if r["state"] in PENDING_STATES]
 
     def list_settled_picks(self) -> list[dict]:
-        return [r for r in self._picks.values() if r["state"] not in PENDING_STATES]
+        return [
+            r for r in self._picks.values()
+            if r["state"] in SETTLED_STATES or r.get("result")
+        ]
 
     def settle_pick(self, dedupe_key: str, result: str,
                     settled_at: datetime, state: str = "SETTLED") -> bool:
@@ -469,7 +478,7 @@ class SqliteStorage(Storage):
 
     # -- hot layer -----------------------------------------------------------
 
-    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
+    def upsert_live(self, key: str, data: Any, ttl_seconds: int) -> None:
         expires_at = time.time() + ttl_seconds
         with self._connect() as conn:
             conn.execute(
@@ -578,10 +587,13 @@ class SqliteStorage(Storage):
             return [dict(r) for r in cur.fetchall()]
 
     def list_settled_picks(self) -> list[dict]:
-        placeholders = ",".join("?" for _ in PENDING_STATES)
-        sql = f"SELECT * FROM picks WHERE state NOT IN ({placeholders}) ORDER BY settled_at DESC, created_at DESC"
+        placeholders = ",".join("?" for _ in SETTLED_STATES)
+        sql = (
+            f"SELECT * FROM picks WHERE state IN ({placeholders}) "
+            "OR result IS NOT NULL ORDER BY settled_at DESC, created_at DESC"
+        )
         with self._connect() as conn:
-            cur = conn.execute(sql, list(PENDING_STATES))
+            cur = conn.execute(sql, list(SETTLED_STATES))
             return [dict(r) for r in cur.fetchall()]
 
     def settle_pick(self, dedupe_key: str, result: str,
@@ -649,7 +661,8 @@ class SqliteStorage(Storage):
                 SELECT
                     count(*) as total,
                     sum(case when state in ('TRIGGER_ALERT', 'CONFIRMED', 'PENDING_SETTLEMENT') then 1 else 0 end) as pending,
-                    sum(case when state not in ('TRIGGER_ALERT', 'CONFIRMED', 'PENDING_SETTLEMENT') then 1 else 0 end) as settled,
+                    sum(case when state in ('SETTLED', 'VOID', 'SETTLED_VOID')
+                              or result is not null then 1 else 0 end) as settled,
                     sum(case when result = 'WIN' then 1 else 0 end) as won,
                     sum(case when result = 'LOSS' then 1 else 0 end) as lost,
                     sum(case when result = 'VOID' then 1 else 0 end) as void
@@ -784,7 +797,7 @@ class RedisStorage(Storage):
 
     # -- hot layer -----------------------------------------------------------
 
-    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
+    def upsert_live(self, key: str, data: Any, ttl_seconds: int) -> None:
         self.r.set(self.LIVE_PREFIX + key, json.dumps(data), ex=ttl_seconds)
         self.r.sadd(self.LIVE_INDEX, key)
 
@@ -838,7 +851,7 @@ class RedisStorage(Storage):
             if not raw:
                 continue
             row = json.loads(raw)
-            if row["state"] not in PENDING_STATES:
+            if row["state"] in SETTLED_STATES or row.get("result"):
                 out.append(row)
         return out
 
