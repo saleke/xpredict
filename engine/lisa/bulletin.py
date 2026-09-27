@@ -23,13 +23,13 @@ what makes the refund-on-integrity pledge enforceable.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Iterable, Optional
 
-from .consensus import refine
+from .consensus import Consensus, refine
 from .history import HISTORICAL_ODDS
 from .model import EloPoissonModel
-from .odds import Book, Match
+from .odds import H2H, Book, Match
 from .tiers import lock_state
 from .walkforward import build_matches
 
@@ -190,24 +190,159 @@ def trained_model() -> EloPoissonModel:
     return model
 
 
-def _row_from_match(match: Match, model: EloPoissonModel) -> Optional[dict[str, Any]]:
-    """One forecast row for a real (live) fixture."""
-    league = str(getattr(match, "sport_key", "") or "unknown")
-    home, away = match.home_team, match.away_team
-    consensus = refine(match, min_books=2)
-    market: Optional[dict[str, Any]] = None
-    if consensus:
-        market = {
-            "present": True,
-            "top_outcome": consensus.top_outcome,
-            "p_top": consensus.p_top,
-            "p_home": consensus.p.get("home", 0.0),
-            "p_draw": consensus.p.get("draw", 0.0),
-            "p_away": consensus.p.get("away", 0.0),
-            "fair_odds": consensus.fair_odds,
-            "cv": consensus.cv,
-            "n_books": consensus.n_books,
-        }
+def _opportunity(consensus: Consensus) -> dict[str, Any]:
+    """One priced, per-market opportunity derived from a real consensus.
+
+    Works for any market ``refine`` understands: point-less 1X2 (``h2h``) and
+    line markets (``spreads``/``totals``) where the quoted line is carried on
+    the consensus. The best price is taken across every book that quoted the
+    winning outcome, so the EV shown is achievable rather than a consensus
+    average nobody can bet.
+    """
+    best_odds: Optional[float] = None
+    best_book: Optional[str] = None
+    for book in consensus.books:
+        price = book.prices.get(consensus.top_outcome)
+        if price is None or price <= 1.0:
+            continue
+        if best_odds is None or price > best_odds:
+            best_odds, best_book = float(price), book.book_key
+
+    ev: Optional[float] = None
+    if best_odds is not None:
+        # EV per unit staked: what the fair price pays versus the best quote.
+        ev = round((consensus.p_top * best_odds) - 1.0, 4)
+
+    return {
+        "market": consensus.match.market,
+        "line": consensus.line,
+        "top_outcome": consensus.top_outcome,
+        "p_top": round(consensus.p_top, 4),
+        "fair_odds": round(consensus.fair_odds, 3),
+        "cv": round(consensus.cv, 4),
+        "n_books": consensus.n_books,
+        "best_odds": round(best_odds, 3) if best_odds is not None else None,
+        "best_book": best_book,
+        "ev": ev,
+    }
+
+
+def _poisson_tail(home_goals: float, away_goals: float, line: float,
+                  *, over: bool) -> Optional[float]:
+    """P(total goals over/under ``line``) from two independent Poissons.
+
+    This is what turns the goal model into an actual micro market rather than a
+    decorative number: a real totals line can be priced against a probability
+    the books never published.
+    """
+    if home_goals <= 0 or away_goals <= 0 or line < 0:
+        return None
+    target = int(line) + 1  # "over 2.5" means 3+ goals
+    # Sum of two Poissons is Poisson with the summed mean.
+    total = home_goals + away_goals
+    cumulative = 0.0
+    term = pow(2.718281828459045, -total)  # e ** -total
+    for k in range(0, target):
+        cumulative += term
+        term = term * (total / (k + 1))
+    over_p = max(0.0, min(1.0, 1.0 - cumulative))
+    return over_p if over else 1.0 - over_p
+
+
+def _btts_probability(home_goals: float, away_goals: float) -> Optional[float]:
+    """P(both teams score at least once) from the model goal rates."""
+    if home_goals <= 0 or away_goals <= 0:
+        return None
+    e = 2.718281828459045
+    return (1.0 - pow(e, -home_goals)) * (1.0 - pow(e, -away_goals))
+
+
+def _micro_opportunities(match_id: str, matrix: dict[str, Any],
+                         totals: list[dict[str, Any]],
+                         btts_price: Optional[tuple[float, str]] = None
+                         ) -> list[dict[str, Any]]:
+    """Goal-market (micro) opportunities priced against the real book lines.
+
+    ``totals`` holds the priced totals opportunities already derived from the
+    books. Where the model and a real line exist together the edge is genuine;
+    with no book price the entry is still shown but flagged as unpriced, so the
+    UI never implies an edge it cannot back.
+    """
+    exp = (matrix.get("expected_goals") or {})
+    home_goals, away_goals = exp.get("home"), exp.get("away")
+    if home_goals is None or away_goals is None:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for opp in totals:
+        line = opp.get("line")
+        if line is None:
+            continue
+        for side, over in (("Over", True), ("Under", False)):
+            # The consensus top outcome for a totals market is the priced side.
+            if opp.get("top_outcome", "").lower().startswith(side.lower()) is not over:
+                continue
+            p = _poisson_tail(home_goals, away_goals, line, over=over)
+            if p is None or p <= 0 or p >= 1:
+                continue
+            fair = round(1.0 / p, 3)
+            best_odds = opp.get("best_odds")
+            ev = round((p * best_odds) - 1.0, 4) if best_odds else None
+            out.append({
+                "market": "model_totals",
+                "line": line,
+                "side": side,
+                "p_model": round(p, 4),
+                "fair_odds": fair,
+                "best_odds": best_odds,
+                "best_book": opp.get("best_book"),
+                "ev": ev,
+                "match_id": match_id,
+            })
+
+    p_btts = _btts_probability(home_goals, away_goals)
+    if p_btts is not None and 0 < p_btts < 1:
+        for side, p in (("Yes", p_btts), ("No", 1.0 - p_btts)):
+            best_odds, best_book = btts_price if btts_price else (None, None)
+            out.append({
+                "market": "model_btts",
+                "line": None,
+                "side": side,
+                "p_model": round(p, 4),
+                "fair_odds": round(1.0 / p, 3),
+                "best_odds": round(best_odds, 3) if best_odds else None,
+                "best_book": best_book,
+                "ev": round((p * best_odds) - 1.0, 4) if best_odds else None,
+                "match_id": match_id,
+            })
+    return out
+
+
+def _row_from_matches(matches: list[Match], model: EloPoissonModel, *,
+                      in_play: bool = False) -> Optional[dict[str, Any]]:
+    """One forecast row for a real fixture, covering every market priced for it.
+
+    The odds parser emits one ``Match`` per market, so a fixture can arrive with
+    1X2, a handicap and a total. Grouping them here keeps one row per fixture
+    while still surfacing every market as its own priced opportunity.
+    """
+    anchor = matches[0]
+    league = str(getattr(anchor, "sport_key", "") or "unknown")
+    home, away = anchor.home_team, anchor.away_team
+
+    opportunities: list[dict[str, Any]] = []
+    by_market: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        consensus = refine(m, min_books=2)
+        if not consensus:
+            continue
+        opp = _opportunity(consensus)
+        opportunities.append(opp)
+        by_market[opp["market"]] = opp
+
+    # Keep the historical top-level shape: 1X2 when present, else the first
+    # market that did resolve, so existing consumers keep working.
+    market = by_market.get(H2H) or (opportunities[0] if opportunities else None)
 
     matrix = model.predict_score_matrix(league, home, away)
     pred = model.predict_log(league, home, away)
@@ -225,16 +360,32 @@ def _row_from_match(match: Match, model: EloPoissonModel) -> Optional[dict[str, 
         "most_likely_scores": matrix.get("most_likely_scores", []),
     }
 
+    totals = [o for o in opportunities if o.get("market") == "totals"]
+    btts_price = None
+    b = by_market.get("btts")
+    if b and b.get("best_odds"):
+        btts_price = (float(b["best_odds"]), str(b.get("best_book")))
+    micro_opps = _micro_opportunities(anchor.id, matrix, totals, btts_price)
+
     reasons = _uncertainty_flags(market, model_view)
+    if in_play:
+        reasons = reasons + [{
+            "key": "in_play",
+            "label": "Match already under way: prices move continuously, "
+                     "so this quote can be stale within seconds.",
+        }]
     return {
-        "match_id": match.id,
+        "match_id": anchor.id,
         "league": league,
         "home": home,
         "away": away,
-        "commence_at": (match.commence_time.isoformat() if match.commence_time else None),
+        "commence_at": (anchor.commence_time.isoformat() if anchor.commence_time else None),
+        "in_play": in_play,
         "market": market,
+        "markets": opportunities,
         "model": model_view,
         "micro": micro,
+        "micro_markets": micro_opps,
         "movement": None,
         "uncertainty": {
             "level": _uncertainty_level(reasons),
@@ -244,6 +395,7 @@ def _row_from_match(match: Match, model: EloPoissonModel) -> Optional[dict[str, 
         "marquee": False,
         "locks": _locks(["micro_pack", "top_pick", "diamond_picks", "steam_radar"]),
     }
+
 
 
 def _finalize(rows: list[dict[str, Any]], *, mode: str, disclaimer: str,
@@ -299,6 +451,8 @@ NO_LIVE_DATA = {
     "top_pick": None,
     "marquee_count": 0,
     "high_uncertainty_count": 0,
+    "in_play_count": 0,
+    "in_play": [],
     "disclaimer": (
         "No live fixture snapshot is available yet, so no board is shown. "
         "The odds poller has not completed a cycle, or the feed is out of quota."
@@ -307,42 +461,137 @@ NO_LIVE_DATA = {
 }
 
 
-def build_live_bulletin(matches: list[Match], *, max_matches: int = 40) -> dict[str, Any]:
-    """Forecast board for real upcoming fixtures from the live feed."""
-    if not matches:
-        return dict(NO_LIVE_DATA)
+#: The board is a short-horizon product: everything on it must be playable
+#: within this window. Padding the board with fixtures weeks out to hit a
+#: volume target is worse than showing fewer matches, so the cap is absolute.
+FORECAST_HORIZON_HOURS = 24.0
+
+#: Volume promise the board aims for inside the horizon. Reported honestly as a
+#: shortfall when the day's real fixtures cannot supply it.
+FORECAST_MIN_MATCHES = 12
+
+
+def _group_by_fixture(matches: list[Match]) -> list[list[Match]]:
+    """Group the parser's per-market ``Match`` objects back into fixtures.
+
+    ``parse_odds_payload`` emits one ``Match`` per market, so a fixture priced
+    on 1X2, handicap and total arrives as three objects sharing an id. Without
+    this the board would list the same match three times and inflate its count.
+    """
+    grouped: dict[str, list[Match]] = {}
+    order: list[str] = []
+    for m in matches:
+        key = f"{m.sport_key}:{m.id}"
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(m)
+    # 1X2 first so the anchor row object is the one the top-level block uses.
+    return [sorted(grouped[k], key=lambda m: (m.market != H2H, m.market)) for k in order]
+
+
+def build_live_bulletin(matches: list[Match], *, max_matches: int = 40,
+                        horizon_hours: float = FORECAST_HORIZON_HOURS,
+                        min_matches: int = FORECAST_MIN_MATCHES,
+                        include_micro_markets: bool = False,
+                        include_in_play: bool = False,
+                        now: Optional[datetime] = None) -> dict[str, Any]:
+    """Forecast board for real fixtures inside the horizon window.
+
+    ``horizon_hours`` is a hard ceiling: a fixture further out than that is
+    excluded rather than used to pad the board to ``max_matches``.
+    """
+    now = now or datetime.now(timezone.utc)
     model = trained_model()
-    rows: list[dict[str, Any]] = []
-    for match in matches[:max_matches]:
-        try:
-            row = _row_from_match(match, model)
-        except Exception:  # a single bad fixture must not blank the board
+
+    window_end = now + timedelta(hours=horizon_hours)
+    upcoming: list[list[Match]] = []
+    in_play: list[list[Match]] = []
+    for group in _group_by_fixture(matches):
+        anchor = group[0]
+        if anchor.commence_time is None:
             continue
-        if row is not None:
-            rows.append(row)
-    return _finalize(rows, mode="live", disclaimer=LIVE_DISCLAIMER)
+        if anchor.commence_time <= now:
+            in_play.append(group)     # already under way
+        elif anchor.commence_time <= window_end:
+            upcoming.append(group)
+
+    upcoming.sort(key=lambda g: (g[0].commence_time, g[0].id))
+    in_play.sort(key=lambda g: (g[0].commence_time, g[0].id))
+
+    def _rows(groups: list[list[Match]], *, playing: bool) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for group in groups[:max_matches]:
+            try:
+                row = _row_from_matches(group, model, in_play=playing)
+            except Exception:  # a single bad fixture must not blank the board
+                continue
+            if row is not None:
+                out.append(row)
+        return out
+
+    rows = _rows(upcoming, playing=False)
+    if include_in_play:
+        live_rows = _rows(in_play, playing=True)
+    else:
+        # Without live polling the cached prices for a started match are the
+        # pre-match quote, so presenting them as an in-play opportunity would be
+        # showing a stale price as if it were tradeable now.
+        live_rows = []
+
+    if not rows and not live_rows:
+        empty = dict(NO_LIVE_DATA)
+        empty["horizon_hours"] = horizon_hours
+        empty["window_end"] = window_end.isoformat()
+        return empty
+
+    board = _finalize(rows, mode="live", disclaimer=LIVE_DISCLAIMER)
+    board["horizon_hours"] = horizon_hours
+    board["window_end"] = window_end.isoformat()
+    board["min_matches"] = min_matches
+    board["shortfall"] = max(0, min_matches - len(rows))
+    board["in_play_count"] = len(live_rows)
+    board["in_play"] = live_rows
+    if not include_micro_markets:
+        # Priced micro bets need real totals lines, which cost extra credits.
+        # Strip them rather than showing an edge with no price behind it.
+        for row in rows + live_rows:
+            row.pop("micro_markets", None)
+    return board
 
 
 def build_live_bulletin_from_payloads(payloads: list[tuple[str, list[dict[str, Any]]]],
                                       *, now: Optional[datetime] = None,
-                                      max_matches: int = 40) -> dict[str, Any]:
+                                      max_matches: int = 40,
+                                      horizon_hours: float = FORECAST_HORIZON_HOURS,
+                                      min_matches: int = FORECAST_MIN_MATCHES,
+                                      include_micro_markets: bool = False,
+                                      include_in_play: bool = False,
+                                      market_keys: Optional[Iterable[str]] = None
+                                      ) -> dict[str, Any]:
     """Build the live board from cached raw odds payloads ``(sport_key, data)``."""
     from .parsing import parse_odds_payload
 
     now = now or datetime.now(timezone.utc)
+    keys = tuple(market_keys) if market_keys else (H2H,)
     matches: list[Match] = []
     for sport_key, data in payloads:
         if not data:
             continue
         try:
-            for m in parse_odds_payload(data):
-                if m.commence_time is not None and m.commence_time <= now:
-                    continue  # already kicked off: not an upcoming fixture
-                matches.append(m)
+            matches.extend(parse_odds_payload(data, market_keys=keys))
         except Exception:
             continue
-    matches.sort(key=lambda m: (m.commence_time or datetime.max.replace(tzinfo=timezone.utc), m.id))
-    return build_live_bulletin(matches, max_matches=max_matches)
+    return build_live_bulletin(
+        matches,
+        max_matches=max_matches,
+        horizon_hours=horizon_hours,
+        min_matches=min_matches,
+        include_micro_markets=include_micro_markets,
+        include_in_play=include_in_play,
+        now=now,
+    )
+
 
 
 def build_bulletin(*, mode: str = "archive", min_matches: int = 8,

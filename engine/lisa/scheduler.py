@@ -155,7 +155,17 @@ class Scheduler:
         return self._now_fn()
 
     def _live_now(self, now: datetime) -> bool:
-        window = timedelta(hours=self.settings.live_window_hours)
+        """True when a match is under way *and* in-play polling is switched on.
+
+        Live cadence costs roughly five times a pre-match poll, so it must never
+        engage just because a match happens to be running. With in-play disabled
+        a started match is left on the ordinary schedule: the value of an
+        in-play price is that it is current, and nothing is refreshing it.
+        """
+        if not getattr(self.settings, "enable_inplay", False):
+            return False
+        window = timedelta(hours=getattr(
+            self.settings, "inplay_tail_hours", 2.0))
         return any_live(self._commences, now, window)
 
     def _decide(self, now: datetime) -> CadenceDecision:

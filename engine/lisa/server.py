@@ -759,7 +759,22 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            board = build_live_bulletin_from_payloads(payloads)
+            st = getattr(self, "settings", None)
+            markets = tuple(
+                m.strip() for m in (getattr(st, "markets", "") or "").split(",")
+                if m.strip()
+            ) or ("h2h",)
+            board = build_live_bulletin_from_payloads(
+                payloads,
+                max_matches=int(getattr(st, "forecast_max_matches", 40) or 40),
+                horizon_hours=float(
+                    getattr(st, "forecast_horizon_hours", 24.0) or 24.0),
+                min_matches=int(getattr(st, "forecast_min_matches", 12) or 12),
+                include_micro_markets=bool(
+                    getattr(st, "enable_extra_markets", False)),
+                include_in_play=bool(getattr(st, "enable_inplay", False)),
+                market_keys=markets,
+            )
         except Exception as exc:
             logger.warning("live bulletin failed: %r", exc)
             self._send_json(dict(NO_LIVE_DATA))
