@@ -827,9 +827,6 @@ def main(argv: list[str] | None = None) -> int:
     cal.add_argument("--json", action="store_true",
                      help="output JSON instead of formatted text table")
 
-    exp.add_argument("--fixtures", action="store_true",
-                     help="use bundled fixture data instead of live API")
-
     srv = sub.add_parser("serve", help="launch local HTTP server for the web dashboard")
     srv.add_argument("--port", type=int, default=8080,
                      help="port number (default: 8080)")

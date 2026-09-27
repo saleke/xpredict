@@ -458,3 +458,34 @@ def test_start_does_not_seed_the_operational_ledger_from_backtest():
     )
     assert "best_odds * 0.96" not in source
     assert "insert_pick_row" not in source
+
+
+def test_cli_parser_builds():
+    """`lisa --help` must work.
+
+    A stray `exp.add_argument(...)` referenced an undefined name while the
+    parser was being built, so *every* subcommand — including the `start` the
+    container runs — died with NameError before doing any work. Nothing else
+    covered parser construction.
+    """
+    import pytest
+    from lisa import cli
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--help"])
+    assert exc.value.code == 0
+
+
+def test_every_dispatch_target_exists():
+    """Each `args.cmd` branch in main() must name a real handler."""
+    import inspect
+    import re
+    from lisa import cli
+
+    source = inspect.getsource(cli.main)
+    targets = set(re.findall(r'args\.cmd == "([a-z-]+)":\s*return _cmd_(\w+)', source))
+    assert targets, "no dispatch branches found; the parser shape changed"
+    for cmd, handler in sorted(targets):
+        assert hasattr(cli, f"_cmd_{handler}"), (
+            f"`lisa {cmd}` dispatches to _cmd_{handler}, which does not exist"
+        )

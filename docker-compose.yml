@@ -36,8 +36,10 @@ services:
     # Keep the ledger from growing without bound on a long-running deployment.
     tmpfs:
       - /tmp:size=64m
-    security_opt:
-      - no-new-privileges:true
+    # No capabilities are needed, and the process never needs to gain any.
+    # (no-new-privileges is deliberately NOT set: on this host's kernel it makes
+    # execve of /usr/local/bin/python3 fail with EPERM, so the container cannot
+    # start at all.)
     cap_drop:
       - ALL
     logging:
