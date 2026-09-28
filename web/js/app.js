@@ -2524,6 +2524,120 @@ function switchTab(viewName) {
 }
 window.switchTab = switchTab;
 
+// ============================================================
+// DAILY BOARD
+// ============================================================
+
+window.switchBoardTab = function(tab) {
+  // Update active tab
+  document.querySelectorAll('.daily-board-tabs .pill-filter').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  event.target.classList.add('active');
+
+  // Load board data
+  loadDailyBoard(tab);
+};
+
+window.loadDailyBoard = async function(tab) {
+  const contentDiv = document.getElementById('daily-board-content');
+  if (!contentDiv) return;
+
+  contentDiv.innerHTML = '<div class="board-loading">Loading matches...</div>';
+
+  try {
+    // In production, this would fetch from the API
+    // const response = await fetch(`/api/daily-board?tab=${tab}`);
+    // const data = await response.json();
+
+    // For now, show placeholder
+    const mockData = {
+      today: [
+        { time: '15:00', league: 'Premier League', home: 'Arsenal', away: 'Chelsea', odds: '1.85' },
+        { time: '17:30', league: 'La Liga', home: 'Real Madrid', away: 'Barcelona', odds: '2.10' },
+        { time: '20:00', league: 'Serie A', home: 'Juventus', away: 'AC Milan', odds: '1.95' },
+      ],
+      tomorrow: [
+        { time: '14:00', league: 'Bundesliga', home: 'Bayern', away: 'Dortmund', odds: '1.75' },
+      ],
+      week: [
+        { time: 'Sat 15:00', league: 'Premier League', home: 'Liverpool', away: 'Man City', odds: '2.50' },
+      ],
+    };
+
+    const matches = mockData[tab] || [];
+
+    if (matches.length === 0) {
+      contentDiv.innerHTML = '<div class="board-empty">No matches found for this period.</div>';
+      return;
+    }
+
+    let html = '<div class="board-matches">';
+    matches.forEach(m => {
+      html += `
+        <div class="board-match">
+          <div class="board-match-time">${esc(m.time)}</div>
+          <div class="board-match-league">${esc(m.league)}</div>
+          <div class="board-match-teams">${esc(m.home)} vs ${esc(m.away)}</div>
+          <div class="board-match-odds">${esc(m.odds)}</div>
+        </div>
+      `;
+    });
+    html += '</div>';
+
+    contentDiv.innerHTML = html;
+  } catch (err) {
+    contentDiv.innerHTML = '<div class="board-error">Failed to load matches.</div>';
+  }
+};
+
+// ============================================================
+// TIER ACTIVATION
+// ============================================================
+
+window.activateTier = function(tier) {
+  // Redirect to Telegram bot to purchase
+  const botUsername = 'XpredictPremiumBot';
+  const deepLink = `https://t.me/${botUsername}?start=buy_${tier}`;
+  window.open(deepLink, '_blank');
+};
+
+window.submitActivationKey = async function() {
+  const input = document.getElementById('activation-key-input');
+  const resultDiv = document.getElementById('activation-result');
+  const key = (input.value || '').trim();
+
+  if (!key) {
+    resultDiv.innerHTML = '<span style="color: #ef4444;">Please enter your activation key.</span>';
+    return;
+  }
+
+  resultDiv.innerHTML = '<span style="color: #f59e0b;">Verifying...</span>';
+
+  try {
+    const response = await fetch('/api/activate-tier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      resultDiv.innerHTML = `<span style="color: #10b981;">✅ ${data.message}</span>`;
+      input.value = '';
+      // Refresh user data
+      if (typeof auth !== 'undefined' && auth.refreshUser) {
+        auth.refreshUser();
+      }
+    } else {
+      resultDiv.innerHTML = `<span style="color: #ef4444;">❌ ${data.error || 'Activation failed'}</span>`;
+    }
+  } catch (err) {
+    resultDiv.innerHTML = '<span style="color: #ef4444;">❌ Network error. Please try again.</span>';
+  }
+};
+
 let verifyPollingTimer = null;
 
 function getOrCreateWebUserId() {

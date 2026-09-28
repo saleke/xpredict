@@ -64,6 +64,12 @@
         <button class="nav-rail-item" id="tab-btn-calibration" data-view="view-calibration" onclick="window.switchTab('calibration')">
           <span>HOW IT WORKS</span>
         </button>
+        <button class="nav-rail-item" id="tab-btn-daily-board" data-view="view-daily-board" onclick="window.switchTab('daily-board')">
+          <span>DAILY BOARD</span>
+        </button>
+        <button class="nav-rail-item" id="tab-btn-tiers" data-view="view-tiers" onclick="window.switchTab('tiers')">
+          <span>SUBSCRIPTION</span>
+        </button>
       </nav>
 
       <!-- Right: Action Buttons & Auth -->
@@ -1848,6 +1854,102 @@
             </div>
           </div>
         </details>
+      </div>
+    </section>
+
+    <!-- VIEW 9: Daily Board -->
+    <section class="view-panel" id="view-daily-board">
+      <div class="view-head">
+        <div class="view-head-main">
+          <div class="view-head-kicker">DAILY BOARD</div>
+          <h2 class="view-head-title">Today's Matches</h2>
+          <p class="view-head-sub">
+            All matches for today, organized by league and time.
+            Picks are curated per tier and revealed at tier-specific times.
+          </p>
+        </div>
+      </div>
+
+      <div class="daily-board-tabs">
+        <button class="pill-filter active" onclick="window.switchBoardTab('today')">Today</button>
+        <button class="pill-filter" onclick="window.switchBoardTab('tomorrow')">Tomorrow</button>
+        <button class="pill-filter" onclick="window.switchBoardTab('week')">This Week</button>
+      </div>
+
+      <div id="daily-board-content" class="daily-board-content">
+        <div class="board-loading">Loading matches...</div>
+      </div>
+    </section>
+
+    <!-- VIEW 8: Subscription Tiers & Activation -->
+    <section class="view-panel" id="view-tiers">
+      <div class="view-head">
+        <div class="view-head-main">
+          <div class="view-head-kicker">SUBSCRIPTION</div>
+          <h2 class="view-head-title">Subscription Tiers</h2>
+          <p class="view-head-sub">
+            Upgrade to unlock better picks, earlier alerts, and premium packages.
+            All tiers include access to the public Telegram channel.
+          </p>
+        </div>
+      </div>
+
+      <div class="tiers-grid">
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-name">TIER 1</div>
+            <div class="tier-price">₦14,999</div>
+          </div>
+          <ul class="tier-features">
+            <li>✅ Access to public Telegram channel</li>
+            <li>✅ Basic daily picks</li>
+            <li>✅ Standard alert timing</li>
+            <li>✅ Email support</li>
+          </ul>
+          <button class="tier-btn" onclick="window.activateTier('tier1')">Get Tier 1</button>
+        </div>
+
+        <div class="tier-card tier-card-popular">
+          <div class="tier-badge">MOST POPULAR</div>
+          <div class="tier-header">
+            <div class="tier-name">TIER 2</div>
+            <div class="tier-price">₦29,999</div>
+          </div>
+          <ul class="tier-features">
+            <li>✅ Everything in Tier 1</li>
+            <li>✅ Better picks & more markets</li>
+            <li>✅ Priority alerts (earlier timing)</li>
+            <li>✅ Premium packages</li>
+            <li>✅ Priority support</li>
+          </ul>
+          <button class="tier-btn" onclick="window.activateTier('tier2')">Get Tier 2</button>
+        </div>
+
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-name">TIER 3</div>
+            <div class="tier-price">₦49,888</div>
+          </div>
+          <ul class="tier-features">
+            <li>✅ Everything in Tier 2</li>
+            <li>✅ Best picks & all markets</li>
+            <li>✅ Earliest alerts (30 min before)</li>
+            <li>✅ All premium packages</li>
+            <li>✅ Dedicated support</li>
+          </ul>
+          <button class="tier-btn" onclick="window.activateTier('tier3')">Get Tier 3</button>
+        </div>
+      </div>
+
+      <!-- Activation Section -->
+      <div class="activation-section">
+        <h3>🔑 Activate Your Tier</h3>
+        <p>Paste your one-time activation key from the Telegram bot:</p>
+        <div class="activation-form">
+          <input type="text" id="activation-key-input" placeholder="LISA-T1-XXXX-XXXX-XXXX" class="activation-input">
+          <button onclick="window.submitActivationKey()" class="activation-btn">Activate</button>
+        </div>
+        <div id="activation-result" class="activation-result"></div>
       </div>
     </section>
 

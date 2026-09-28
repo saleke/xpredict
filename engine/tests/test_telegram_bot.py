@@ -141,16 +141,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("84.0%", html)
         self.assertIn("0.1305", html)
         self.assertIn("3.61%", html)
-<<<<<<< HEAD
-        self.assertIn("3.12%", html)
-        self.assertIn("50 fully audited real matches", html)
-        self.assertIn("42/50", html)
-
-    def test_format_stats_html_empty_is_honest(self):
-        html = format_stats_html({"settled_picks_count": 0})
-        self.assertIn("No settled picks yet", html)
-        self.assertNotIn("84.0%", html)
-=======
         self.assertIn("+3.12%", html)
         self.assertIn("50 fully audited real matches", html)
 
@@ -188,7 +178,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("-1.81%", html)
         self.assertIn("did <b>not</b> beat the closing line", html)
         self.assertNotIn("+3.12%", html)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_format_free_picks_html(self):
         picks = [
@@ -399,11 +388,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("📊 Active Top Picks", buttons)
         self.assertIn("🏦 My Bankroll", buttons)
         self.assertIn("📈 Accuracy Ledger", buttons)
-<<<<<<< HEAD
-        self.assertIn("⚡ Live Accumulator", buttons)
-        self.assertIn("🎟️ Execution Guide", buttons)
-=======
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         self.assertIn("🛡️ Trap Advisories", buttons)
         # Parlay and booking codes are paid-tier features, so they must NOT be
         # advertised on the free keyboard.
@@ -987,11 +971,13 @@ class TestTelegramBot(unittest.TestCase):
         for q in ["win rate", "accuracy", "track record"]:
             upd = TelegramUpdate(109, 209, "chat_conv", "user_free", "trader_joe", text=q)
             reply = self.bot.process_one_update(upd)
-<<<<<<< HEAD
-            # The conversational answer is the real ledger page, never a
-            # hardcoded headline number.
-            self.assertIn("LISA PERFORMANCE LEDGER", reply)
+            self.assertIn("AUDITED PERFORMANCE", reply)
+            # Figures must come from the measured summary, never a hardcoded
+            # marketing number.
             self.assertNotIn("84.0%", reply)
+            self.assertNotIn("0.089", reply)
+            self.assertNotIn("+4.18%", reply)
+            self.assertIn("no configuration is claimed to be profitable", reply)
 
     def test_conversational_faq_accuracy_reports_graded_rows(self):
         storage = InMemoryStorage()
@@ -1005,15 +991,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
         self.assertIn("100.0%", reply)
         self.assertIn("1/1", reply)
-=======
-            self.assertIn("AUDITED PERFORMANCE", reply)
-            # Figures must come from the measured summary, never a hardcoded
-            # marketing number.
-            self.assertNotIn("84.0%", reply)
-            self.assertNotIn("0.089", reply)
-            self.assertNotIn("+4.18%", reply)
-            self.assertIn("no configuration is claimed to be profitable", reply)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")
