@@ -175,15 +175,108 @@ class VerificationRegistry:
 # Global shared registry instance
 registry = VerificationRegistry()
 
-MAIN_REPLY_KEYBOARD = {
+# ── Role-Based Persistent Reply Keyboards ─────────────────────────────────────
+# Every button text below MUST also resolve through the router in
+# ``TelegramBot.handle_message`` (see ``_BUTTON_ROUTES``), otherwise the button
+# silently falls through to the conversational/fallback handler.
+_ADMIN_ROW_NAV = [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}]
+_PAID_ROW_NAV = [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}]
+_ROW_LEDGER = [{"text": "📈 Accuracy Ledger"}, {"text": "🛡️ Trap Advisories"}]
+_ROW_CODES = [{"text": "🎟️ Bookmaker Codes"}, {"text": "⚡ 5-Fold Parlay"}]
+
+ADMIN_REPLY_KEYBOARD = {
     "keyboard": [
+<<<<<<< HEAD
         [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
         [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ Live Accumulator"}],
         [{"text": "🎟️ Execution Guide"}, {"text": "🛡️ Trap Advisories"}],
+=======
+        [{"text": "🛠️ Admin Console"}, {"text": "👤 Grant Access"}],
+        [{"text": "📣 Broadcast"}, {"text": "🟢 Settle Match"}],
+        _ADMIN_ROW_NAV,
+        [{"text": "⏸️ Pause System"}, {"text": "📜 Audit Trail"}],
+        _ROW_LEDGER,
+        _ROW_CODES,
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
     ],
     "resize_keyboard": True,
     "is_persistent": True,
 }
+
+PAID_REPLY_KEYBOARD = {
+    "keyboard": [
+        _PAID_ROW_NAV,
+        _ROW_LEDGER,
+        _ROW_CODES,
+        [{"text": "👑 My Subscription"}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+
+FREE_REPLY_KEYBOARD = {
+    "keyboard": [
+        [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
+        [{"text": "📈 Accuracy Ledger"}, {"text": "🛡️ Trap Advisories"}],
+        [{"text": "👑 Upgrade to Unlock Full Slate"}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+
+# Retained for backward compatibility: the default (lowest-privilege) keyboard.
+MAIN_REPLY_KEYBOARD = FREE_REPLY_KEYBOARD
+
+# Substrings used by the persistent-keyboard router. Keyed by a stable slug so the
+# button label and its matcher cannot drift apart.
+BUTTON_SLUGS: dict[str, str] = {
+    "📊 Active Top Picks": "picks",
+    "🏦 My Bankroll": "bankroll",
+    "📈 Accuracy Ledger": "ledger",
+    "🛡️ Trap Advisories": "traps",
+    "🎟️ Bookmaker Codes": "codes",
+    "⚡ 5-Fold Parlay": "parlay",
+    "👑 Upgrade to Unlock Full Slate": "upgrade",
+    "👑 My Subscription": "subscription",
+    "🛠️ Admin Console": "admin_console",
+    "👤 Grant Access": "admin_grant",
+    "📣 Broadcast": "admin_broadcast",
+    "🟢 Settle Match": "admin_settle",
+    "⏸️ Pause System": "admin_pause",
+    "📜 Audit Trail": "admin_logs",
+}
+
+# Lowercased label -> slug, for exact-match routing of a tapped button.
+_NORMALIZED_BUTTON_SLUGS: dict[str, str] = {
+    label.lower(): slug for label, slug in BUTTON_SLUGS.items()
+}
+
+# Slugs that must never execute for a non-admin, even if the text is typed by hand.
+ADMIN_ONLY_SLUGS: frozenset[str] = frozenset({
+    "admin_console", "admin_grant", "admin_broadcast",
+    "admin_settle", "admin_pause", "admin_logs",
+})
+
+# A ledger needs a meaningful sample before win-rate / CLV claims are meaningful.
+MIN_SETTLED_FOR_STATS = 20
+
+_PAID_TIERS: frozenset[str] = frozenset({"tier1", "tier2", "tier3"})
+
+
+def get_main_menu_for_user(bot: "TelegramBot", user_id: str) -> dict[str, Any]:
+    """Return the persistent reply keyboard appropriate to ``user_id``'s role.
+
+    Precedence is admin > paid subscriber > free. Any failure to resolve a role
+    degrades to the free keyboard, so an unknown user never sees operator tools.
+    """
+    try:
+        if bot.is_admin(user_id):
+            return ADMIN_REPLY_KEYBOARD
+        if bot.get_user_tier(user_id) in _PAID_TIERS:
+            return PAID_REPLY_KEYBOARD
+    except Exception:
+        logger.exception("Role resolution failed for user %s; defaulting to free menu", user_id)
+    return FREE_REPLY_KEYBOARD
 
 
 SYSTEM_LIVE_STATUS: bool = True
@@ -520,6 +613,7 @@ def format_settlement_alert_html(pick_data: dict[str, Any]) -> str:
     )
 
 
+<<<<<<< HEAD
 def format_stats_html(summary: dict[str, Any]) -> str:
     """Format the audited track record. Missing history renders as n/a."""
 
@@ -554,6 +648,85 @@ def format_stats_html(summary: dict[str, Any]) -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🌐 <i>View live ledger: http://localhost:8080/#ledger</i>"
     )
+=======
+def _fmt_metric(summary: dict[str, Any], *keys: str) -> Optional[float]:
+    """Return the first present numeric value among ``keys``, else ``None``.
+
+    Deliberately has no default: a missing metric must render as "not yet
+    measured" rather than as a plausible-looking invented number.
+    """
+    for key in keys:
+        raw = summary.get(key)
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def format_stats_html(summary: dict[str, Any]) -> str:
+    """Format the audited track record from measured values only.
+
+    Every figure here is read from ``summary``. If the settled sample is missing
+    or below ``MIN_SETTLED_FOR_STATS`` we say so explicitly instead of falling
+    back to placeholder numbers, because this surface is the paid tier's primary
+    proof point and a fabricated win rate is worse than no win rate.
+    """
+    summary = summary or {}
+    settled = _fmt_metric(summary, "settled_picks_count", "total_bets", "bets")
+    win_rate = _fmt_metric(summary, "win_rate", "grade_a_win_rate")
+    brier = _fmt_metric(summary, "brier_score")
+    ece = _fmt_metric(summary, "ece")
+    clv = _fmt_metric(summary, "mean_clv")
+    pos_clv = _fmt_metric(summary, "positive_clv_share", "positive_clv_rate")
+    roi = _fmt_metric(summary, "roi_pct", "flat_roi_pct")
+    wins = _fmt_metric(summary, "wins", "grade_a_wins")
+
+    header = "📈 <b>LISA AUDITED PERFORMANCE AUDIT</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
+
+    if settled is None or settled < MIN_SETTLED_FOR_STATS:
+        have = int(settled) if settled is not None else 0
+        return (
+            f"{header}"
+            f"ℹ️ <b>Insufficient settled sample to publish a track record.</b>\n\n"
+            f"📊 <b>Settled picks audited:</b> <code>{have}</code>\n"
+            f"🎯 <b>Required for a meaningful ledger:</b> <code>{MIN_SETTLED_FOR_STATS}</code>\n\n"
+            f"<i>Win rate, Brier score and CLV are only published once enough matches have\n"
+            f"been graded against official score feeds. Until then LISA reports nothing\n"
+            f"rather than an unverified figure. No configuration is claimed to be\n"
+            f"profitable — see the published backtest for the current honest verdict.</i>"
+        )
+
+    lines = [header]
+    if win_rate is not None:
+        wr = f"<code>{win_rate*100:.1f}%</code>"
+        if wins is not None:
+            wr += f" ({int(wins)}/{int(settled)} graded)"
+        lines.append(f"✅ <b>Verified Win Rate:</b> {wr}")
+    if brier is not None:
+        lines.append(f"🎯 <b>Brier Calibration Score:</b> <code>{brier:.4f}</code>")
+    if ece is not None:
+        lines.append(f"⚖️ <b>Expected Calibration Error:</b> <code>{ece*100:.2f}%</code>")
+    if clv is not None:
+        lines.append(f"💎 <b>Mean Closing Line Value (CLV):</b> <code>{clv*100:+.2f}%</code>")
+    if pos_clv is not None:
+        lines.append(f"📊 <b>Bets Beating The Close:</b> <code>{pos_clv*100:.1f}%</code>")
+    if roi is not None:
+        lines.append(f"📉 <b>Backtest ROI:</b> <code>{roi:+.2f}%</code>")
+    lines.append(f"📊 <b>Sample Size:</b> <code>{int(settled)} fully audited real matches</code>")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    if clv is not None and clv < 0:
+        lines.append(
+            "🛡️ <i>Negative CLV means the early line did <b>not</b> beat the closing line on\n"
+            "this sample. Reported openly; no profitability is claimed.</i>"
+        )
+    else:
+        lines.append("🛡️ <i>Audited into the verified mathematical ledger. Zero post-hoc manipulation.</i>")
+    lines.append("🌐 <i>View live ledger: http://localhost:8080/#ledger</i>")
+    return "\n".join(lines)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
 
 def format_free_picks_html(picks: list[dict[str, Any]]) -> str:
@@ -1337,18 +1510,59 @@ class TelegramBot:
                 )
 
             code = generate_unlock_token(user_id)
-            return (
-                f"🤖 <b>Welcome to LISA Gatekeeper</b>\n\n"
-                f"Institutional sports prediction refinery powered by proprietary multi-market consensus and real-time efficiency analytics.\n\n"
-                f"🔑 <b>Your Backup Unlock Code:</b> <code>{code}</code>\n\n"
-                f"<b>Available Commands:</b>\n"
-                f"• /picks — View today's free and unlocked selections\n"
-                f"• /stats — View audited 84.0% win rate and Brier calibration\n"
-                f"• /traps — View avoided bookmaker traps\n"
-                f"• /unlock — Get or verify your web unlock code\n"
-                f"• /vip — Details on Tier 2 Pro & Tier 3 Syndicate alpha",
-                None,
-            )
+            menu = get_main_menu_for_user(self, user_id)
+
+            if self.is_admin(user_id):
+                welcome_text = (
+                    f"🤖 <b>Welcome, Operator.</b>\n\n"
+                    f"🛠️ <b>ADMIN CONSOLE ACTIVE</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔑 Your unlock code: <code>{code}</code>\n\n"
+                    f"<b>Operator Commands:</b>\n"
+                    f"• /admin — Executive Override Console\n"
+                    f"• /settle &lt;match_id&gt; &lt;status&gt; — Manual settlement\n"
+                    f"• /grant &lt;email&gt; &lt;tier&gt; — Provision user access\n"
+                    f"• /broadcast &lt;msg&gt; — Push to channels\n"
+                    f"• /sys_pause / /sys_resume — Emergency kill-switch\n"
+                    f"• /admin_logs — Audit trail\n\n"
+                    f"<b>Standard Commands:</b>\n"
+                    f"• /picks — View today's selections\n"
+                    f"• /bankroll — Configure Kelly profile\n"
+                    f"• /parlay — 5-fold accumulator\n"
+                    f"• /stats — Audited track record"
+                )
+            elif self.get_user_tier(user_id) in _PAID_TIERS:
+                tier = self.get_user_tier(user_id)
+                welcome_text = (
+                    f"🤖 <b>Welcome back, {tier.upper()} subscriber.</b>\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔑 Your unlock code: <code>{code}</code>\n\n"
+                    f"<b>Your Unlocked Commands:</b>\n"
+                    f"• /picks — Your full daily slate\n"
+                    f"• /bankroll — Personalized Kelly sizing\n"
+                    f"• /parlay — 5-fold accumulator\n"
+                    f"• /codes — Bookmaker booking codes\n"
+                    f"• /stats — Audited track record\n"
+                    f"• /vip — Manage your subscription\n\n"
+                    f"⚠️ <i>Betting carries loss risk. LISA publishes its measured record\n"
+                    f"openly, including negative results. No tier is a guarantee of profit.</i>"
+                )
+            else:
+                welcome_text = (
+                    f"🤖 <b>Welcome to LISA Gatekeeper</b>\n\n"
+                    f"Multi-market odds consensus with an openly published, audited\n"
+                    f"settlement record.\n\n"
+                    f"🔑 <b>Your Backup Unlock Code:</b> <code>{code}</code>\n\n"
+                    f"<b>Free Commands:</b>\n"
+                    f"• /picks — Today's free selections\n"
+                    f"• /bankroll — Configure Kelly profile\n"
+                    f"• /stats — Audited track record\n"
+                    f"• /traps — Pass-advisory counts\n"
+                    f"• /vip — Subscription tiers\n\n"
+                    f"⚠️ <i>Betting carries loss risk. Past results do not guarantee future\n"
+                    f"outcomes, and no tier is a promise of profit.</i>"
+                )
+            return (welcome_text, menu)
 
         if cmd in ("/picks", "/today"):
             return self._handle_active_top_picks(user_id)
@@ -1413,6 +1627,7 @@ class TelegramBot:
             )
 
         if cmd == "/help":
+<<<<<<< HEAD
             help_lines = [
                 "📖 <b>LISA Bot Help Desk</b>\n",
                 "/picks — View today's free picks",
@@ -1425,15 +1640,53 @@ class TelegramBot:
                 "/vip — Subscription tier information",
                 "/help — Show this help message",
             ]
+=======
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             if self.is_admin(user_id):
-                help_lines.append("\n🛠️ <b>Administrative Overrides:</b>")
-                help_lines.append("/admin — Mobile Executive Override Console")
-                help_lines.append("/settle <match_id> <status> — Manual settlement sync")
-                help_lines.append("/grant <email> <tier> — Manual user provisioning")
-                help_lines.append("/broadcast <msg> — Push announcement to channels")
-                help_lines.append("/sys_pause — Emergency alert kill-switch")
-                help_lines.append("/sys_resume — Re-enable automated pipeline")
-            return ("\n".join(help_lines), None)
+                help_lines = [
+                    "📖 <b>LISA Admin Help Desk</b>\n",
+                    "🛠️ <b>Operator Commands:</b>",
+                    "/admin — Executive Override Console",
+                    "/settle <match_id> <status> — Manual settlement sync",
+                    "/grant <email> <tier> — Manual user provisioning",
+                    "/broadcast <msg> — Push announcement to channels",
+                    "/sys_pause — Emergency alert kill-switch",
+                    "/sys_resume — Re-enable automated pipeline",
+                    "/admin_logs — Audit trail",
+                    "\n📊 <b>Standard Commands:</b>",
+                    "/picks — View today's selections",
+                    "/bankroll — Configure your Kelly bankroll profile",
+                    "/parlay — 5-fold accumulator with booking codes",
+                    "/codes — Bookmaker platform booking codes",
+                    "/stats — Audited track record",
+                    "/traps — Pass-advisory counts",
+                    "/vip — Subscription tier information",
+                    "/help — Show this help message",
+                ]
+            elif self.get_user_tier(user_id) in _PAID_TIERS:
+                help_lines = [
+                    "📖 <b>LISA Subscriber Help Desk</b>\n",
+                    "/picks — Your full daily slate",
+                    "/bankroll — Configure your Kelly bankroll profile",
+                    "/parlay — 5-fold accumulator with booking codes",
+                    "/codes — Bookmaker platform booking codes",
+                    "/stats — Audited track record",
+                    "/traps — Pass-advisory counts",
+                    "/vip — Manage your subscription",
+                    "/help — Show this help message",
+                ]
+            else:
+                help_lines = [
+                    "📖 <b>LISA Bot Help Desk</b>\n",
+                    "/picks — View today's free picks",
+                    "/bankroll — Configure your personalized Kelly bankroll profile",
+                    "/stats — Audited track record",
+                    "/traps — Pass-advisory counts",
+                    "/unlock — Get your free web terminal unlock code",
+                    "/vip — Subscription tier information",
+                    "/help — Show this help message",
+                ]
+            return ("\n".join(help_lines), get_main_menu_for_user(self, user_id))
 
         admin_prefixes = ("/admin", "/settle", "/grant", "/sys_", "/broadcast")
         if any(cmd.startswith(p) for p in admin_prefixes):
@@ -2022,6 +2275,86 @@ class TelegramBot:
         }
         return (text, markup)
 
+    def _dispatch_button_slug(
+        self, slug: str, user_id: str, username: str = ""
+    ) -> Optional[tuple[str, Optional[dict[str, Any]]]]:
+        """Invoke the handler for a persistent-keyboard slug.
+
+        Each branch adapts to the target handler's real signature — several take
+        no arguments and the admin ones need an args list — so a uniform call
+        signature cannot raise ``TypeError`` here.
+        """
+        if slug == "picks":
+            return self._handle_active_top_picks(user_id)
+        if slug == "bankroll":
+            return self._handle_bankroll_menu(user_id, username)
+        if slug == "ledger":
+            return self._handle_accuracy_ledger()
+        if slug == "traps":
+            return self._handle_traps()
+        if slug == "codes":
+            return self._handle_booking_codes()
+        if slug == "parlay":
+            return self._handle_parlay(user_id)
+        if slug in ("upgrade", "subscription"):
+            return self._handle_subscription_status(user_id)
+        if slug == "admin_console":
+            return self._handle_admin_dashboard(user_id)
+        if slug == "admin_grant":
+            return self._handle_admin_grant_menu(user_id)
+        if slug == "admin_broadcast":
+            return self._handle_admin_broadcast_menu(user_id)
+        if slug == "admin_settle":
+            return self._handle_admin_settle_menu(user_id)
+        if slug == "admin_pause":
+            return self._handle_admin_toggle_status(user_id)
+        if slug == "admin_logs":
+            return self._handle_admin_logs(user_id)
+        return None
+
+    def _handle_subscription_status(
+        self, user_id: str
+    ) -> tuple[str, Optional[dict[str, Any]]]:
+        """Show the caller's resolved tier and what the next tier would add."""
+        tier = self.get_user_tier(user_id)
+
+        tier_info = {
+            "free": ("Free Tier", "$0", "2 picks in-bot"),
+            "tier1": ("Tier 1 · Sharp Starter", "$19/mo", "Top 5 picks"),
+            "tier2": ("Tier 2 · Pro Trader", "$49/mo", "All 12 picks + parlay"),
+            "tier3": ("Tier 3 · Syndicate VIP", "$149/mo", "Full slate + API feed"),
+            "admin": ("Operator", "N/A", "Full access"),
+        }
+        name, price, picks = tier_info.get(tier, tier_info["free"])
+
+        text = (
+            f"👑 <b>SUBSCRIPTION STATUS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Current Plan: <b>{name}</b>\n"
+            f"Price: <code>{price}</code>\n"
+            f"Unlocked: <code>{picks}</code>\n"
+        )
+
+        upgrades = {
+            "free": (
+                "• Tier 1 ($19/mo) — Top 5 daily picks\n"
+                "• Tier 2 ($49/mo) — All 12 picks + 5-fold parlay\n"
+                "• Tier 3 ($149/mo) — Full slate + REST/webhook feed"
+            ),
+            "tier1": "• Tier 2 ($49/mo) — All 12 picks + 5-fold parlay",
+            "tier2": "• Tier 3 ($149/mo) — Full slate + REST/webhook feed",
+        }
+        if tier in upgrades:
+            text += f"\n<b>Available upgrades:</b>\n{upgrades[tier]}\n"
+        elif tier == "tier3":
+            text += "\n👑 <i>You are on the highest published tier.</i>\n"
+
+        text += (
+            "\n⚠️ <i>Subscription unlocks data access, not profit. LISA's published\n"
+            "backtest shows negative ROI and negative CLV; no tier is a guarantee.</i>"
+        )
+        return (text, get_main_menu_for_user(self, user_id))
+
     def _handle_parlay(self, user_id: str = "") -> tuple[str, Optional[dict[str, Any]]]:
         """Accumulator built from the current live ledger."""
         tier = self.get_user_tier(user_id) if user_id else "free"
@@ -2042,6 +2375,7 @@ class TelegramBot:
         return data if isinstance(data, list) else []
 
     def _handle_traps(self) -> tuple[str, Optional[dict[str, Any]]]:
+<<<<<<< HEAD
         """Recent trap advisories, straight from the ingestion daemon."""
         traps = self._recent_traps()
         if not traps:
@@ -2070,6 +2404,65 @@ class TelegramBot:
                 "graded matches.</i>"
             )
             text = "\n".join(lines)
+=======
+        """Display measured pass-advisory / trap counts from the honest summary.
+
+        Reports the gross and net counterfactual together. Showing only the gross
+        "capital preserved" figure would be misleading: most avoided traps would
+        in fact have won, so avoidance is not free money.
+        """
+        summary = self._load_dashboard_summary() or {}
+        traps = _fmt_metric(summary, "grade_c_traps_avoided", "traps_avoided_month")
+        traps_won = _fmt_metric(summary, "grade_c_traps_that_won")
+        traps_lost = _fmt_metric(summary, "grade_c_traps_that_lost")
+        passes = _fmt_metric(summary, "pass_advisories_count")
+        evaluated = _fmt_metric(summary, "total_matches_evaluated", "total_matches")
+        gross = _fmt_metric(summary, "capital_preserved_dollars")
+        net_cfv = _fmt_metric(summary, "net_counterfactual_value")
+
+        lines = [
+            "🛡️ <b>LISA CAPITAL PRESERVATION DESK</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+        if traps is None and evaluated is None:
+            lines.append(
+                "ℹ️ <b>No measured pass-advisory data yet.</b>\n\n"
+                "<i>Trap counts are published only once matches have been evaluated and\n"
+                "graded. LISA reports nothing rather than an illustrative figure.</i>"
+            )
+        else:
+            if evaluated is not None:
+                lines.append(f"🔍 <b>Matches Evaluated:</b> <code>{int(evaluated)}</code>")
+            if passes is not None:
+                lines.append(f"🛡️ <b>Pass Advisories Issued:</b> <code>{int(passes)}</code>")
+            if traps is not None:
+                lines.append(f"🚫 <b>Traps Avoided:</b> <code>{int(traps)}</code>")
+
+            if traps_won is not None and traps_lost is not None and traps:
+                lines.append(
+                    f"↔️ <b>Of those avoided, would have:</b> "
+                    f"<code>{int(traps_won)} won</code> / <code>{int(traps_lost)} lost</code>"
+                )
+            if gross is not None:
+                lines.append(f"💵 <b>Gross Stake Avoided:</b> <code>${gross:,.0f}</code>")
+            if net_cfv is not None:
+                lines.append(
+                    f"⚖️ <b>Net Counterfactual Value:</b> <code>${net_cfv:+,.0f}</code>"
+                )
+            if gross is not None and net_cfv is not None:
+                lines.append(
+                    "\n<i>Read the two figures together: the gross stake avoided is not a\n"
+                    "profit, because a majority of avoided traps would have won. The net\n"
+                    "counterfactual is the defensible number, and it assumes a flat stake\n"
+                    "on every executed bet.</i>"
+                )
+        lines.append(
+            "\n<i>LISA only executes when dispersion across books is near zero. "
+            "Verify every line at the price shown before staking.</i>"
+        )
+
+        text = "\n".join(lines)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         markup = {
             "inline_keyboard": [
                 [{"text": "\U0001f4ca View Active Value Picks", "callback_data": "menu:picks"}],
@@ -2326,19 +2719,34 @@ class TelegramBot:
                         callback_data=f"fsm:book:{b}",
                     ))
 
-        norm = raw_text.lower()
-        if "active top picks" in norm:
-            return self._handle_active_top_picks(user_id)
-        if "my bankroll" in norm:
-            return self._handle_bankroll_menu(user_id, username)
-        if "accuracy ledger" in norm:
-            return self._handle_accuracy_ledger()
-        if "5-fold parlay" in norm:
-            return self._handle_parlay(user_id)
-        if "bookmaker codes" in norm:
-            return self._handle_booking_codes()
-        if "trap advisories" in norm:
-            return self._handle_traps()
+        # ── Persistent Keyboard Button Routing ─────────────────────────────────
+        # Resolves both an exact button label and a looser typed phrase to the
+        # same slug, so labels and matchers cannot drift apart. Note the handler
+        # signatures differ (some take no args, some take args), so each slug
+        # gets an explicit adapter rather than a uniform call.
+        norm = raw_text.lower().strip()
+        slug: Optional[str] = None
+        if norm in _NORMALIZED_BUTTON_SLUGS:
+            slug = _NORMALIZED_BUTTON_SLUGS[norm]
+        else:
+            for label, candidate in BUTTON_SLUGS.items():
+                if label.lower() in norm:
+                    slug = candidate
+                    break
+
+        if slug is not None:
+            if slug in ADMIN_ONLY_SLUGS and not self.is_admin(user_id):
+                return (
+                    "⛔ <b>Admin access required.</b>\n\n"
+                    "That control is restricted to the operator whitelist.",
+                    get_main_menu_for_user(self, user_id),
+                )
+            handler = self._dispatch_button_slug(slug, user_id, username)
+            if handler is not None:
+                reply_text, reply_markup = handler
+                if reply_markup is None:
+                    reply_markup = get_main_menu_for_user(self, user_id)
+                return (reply_text, reply_markup)
 
         if raw_text.startswith("/"):
             return self.handle_command(raw_text, user_id, update.chat_id, username=username)
@@ -2378,7 +2786,7 @@ class TelegramBot:
             f"• Ask an <b>analytical question</b> (e.g. <i>'How does it work?'</i>, <i>'What are units?'</i>, <i>'My tier'</i>)\n"
             f"• Tap any action from the persistent menu below"
         )
-        return (fallback_text, MAIN_REPLY_KEYBOARD)
+        return (fallback_text, get_main_menu_for_user(self, user_id))
 
     def _handle_conversational_query(
         self, raw_text: str, user_id: str, username: str, chat_id: str = ""
@@ -2549,8 +2957,48 @@ class TelegramBot:
 
         accuracy_phrases = ["win rate", "winrate", "accuracy", "track record", "how accurate", "are you profitable", "past results", "performance", "audit", "ledger"]
         if any(p in clean for p in accuracy_phrases) or ("win" in tokens and "rate" in tokens) or ("accurate" in tokens and "how" in tokens):
+<<<<<<< HEAD
             # Metrics come from the graded ledger or the page says it has none.
             return (format_stats_html(self._load_dashboard_summary()), quick_nav_markup)
+=======
+            stats = self._load_dashboard_summary() or {}
+            settled = _fmt_metric(stats, "settled_picks_count", "total_bets")
+            win_rate = _fmt_metric(stats, "win_rate")
+            brier = _fmt_metric(stats, "brier_score")
+            clv = _fmt_metric(stats, "mean_clv")
+
+            body = [
+                "📈 <b>AUDITED PERFORMANCE & LEDGER</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Every figure below is measured from graded matches. Nothing here is\n"
+                "projected, and no configuration is claimed to be profitable.\n",
+            ]
+            if settled is None or settled < MIN_SETTLED_FOR_STATS:
+                have = int(settled) if settled is not None else 0
+                body.append(
+                    f"ℹ️ <b>Insufficient settled sample:</b> <code>{have}</code> graded "
+                    f"(need <code>{MIN_SETTLED_FOR_STATS}</code>).\n"
+                    "<i>No win-rate or CLV figure is published until then.</i>"
+                )
+            else:
+                if win_rate is not None:
+                    body.append(f"🎯 <b>Audited Win Rate:</b> <b>{win_rate*100:.1f}%</b>")
+                if brier is not None:
+                    body.append(f"📐 <b>Brier Calibration Score:</b> <b>{brier:.4f}</b>")
+                if clv is not None:
+                    direction = "beat" if clv > 0 else "did NOT beat"
+                    body.append(
+                        f"📈 <b>Mean Closing Line Value:</b> <b>{clv*100:+.2f}%</b> "
+                        f"({direction} the close)"
+                    )
+                body.append(
+                    "\n🛡️ <i>On this sample the early line did not reliably beat the closing "
+                    "line. Reported openly rather than curated — treat any edge as a "
+                    "hypothesis to re-validate on fresh matches.</i>"
+                )
+            body.append("\nAudit the full settled ledger anytime with <b>/stats</b>.")
+            return ("\n".join(body), quick_nav_markup)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         tier_check_phrases = ["my tier", "my plan", "my subscription", "my status", "my account", "what is my tier", "what tier am i", "check tier", "current tier"]
         if any(p in clean for p in tier_check_phrases):
@@ -2669,9 +3117,116 @@ class TelegramBot:
         picks = self._dashboard_payload().get("active_picks") or []
         return list(picks)
 
+    def _summary_from_settled_picks(self) -> dict[str, Any]:
+        """Compute the audited summary from live graded picks in storage."""
+        if not (self.storage and hasattr(self.storage, "list_settled_picks")):
+            return {}
+        try:
+            rows = self.storage.list_settled_picks() or []
+        except Exception:
+            return {}
+        graded = [r for r in rows if str(r.get("result") or "").upper() in ("WIN", "LOSS")]
+        if not graded:
+            return {}
+
+        wins = sum(1 for r in graded if str(r.get("result")).upper() == "WIN")
+        summary: dict[str, Any] = {
+            "settled_picks_count": len(graded),
+            "wins": wins,
+            "win_rate": wins / len(graded),
+        }
+
+        clvs: list[float] = []
+        for r in graded:
+            try:
+                clv = r.get("clv")
+                if clv is not None:
+                    clvs.append(float(clv))
+            except (TypeError, ValueError):
+                continue
+        if clvs:
+            summary["mean_clv"] = sum(clvs) / len(clvs)
+            summary["positive_clv_share"] = sum(1 for c in clvs if c > 0) / len(clvs)
+
+        # Brier score needs an outcome probability and a binary realised result.
+        brier_terms: list[float] = []
+        for r in graded:
+            try:
+                p = r.get("p_true")
+                if p is None:
+                    continue
+                p = float(p)
+                actual = 1.0 if str(r.get("result")).upper() == "WIN" else 0.0
+                brier_terms.append((p - actual) ** 2)
+            except (TypeError, ValueError):
+                continue
+        if brier_terms:
+            summary["brier_score"] = sum(brier_terms) / len(brier_terms)
+        return summary
+
     def _load_dashboard_summary(self) -> dict[str, Any]:
+<<<<<<< HEAD
         """Real performance summary. Uncomputed metrics stay ``None``."""
         return dict(self._dashboard_payload().get("summary") or {})
+=======
+        """Return measured performance metrics, or ``{}`` when none exist.
+
+        Resolution order, most authoritative first:
+
+        1. live graded picks in storage;
+        2. the committed ``backtest_report.json`` backtest summary.
+
+        ``dashboard.json``'s ``summary`` block is deliberately NOT used here: the
+        checked-in copy reports win_rate 0.84, Brier 0.1305 and mean CLV
+        +0.0312 with a 100% positive-CLV share, which directly contradicts the
+        backtest artifact shipped beside it (0.7974 / 0.1584 / -0.0111 / 37.9%).
+        Publishing those figures as an audited track record would misstate the
+        system's measured performance.
+        """
+        now = time.time()
+        if self._summary_cache[0] and now < self._summary_cache[1]:
+            return self._summary_cache[0]
+
+        summary = self._summary_from_settled_picks()
+        if not summary:
+            summary = self._summary_from_backtest_report()
+        if not summary:
+            logger.info("No measured performance data available; ledger will report none.")
+        self._summary_cache = (summary, now + 30.0)
+        return summary
+
+    def _summary_from_backtest_report(self) -> dict[str, Any]:
+        """Read the committed backtest report's summary block, if present.
+
+        Keys are normalised onto the display contract used by
+        ``format_stats_html``. The graded sample size is recovered from
+        ``wins / win_rate`` when the report does not state it outright.
+        """
+        try:
+            for path in (
+                "web/data/backtest_report.json",
+                "../web/data/backtest_report.json",
+            ):
+                if not os.path.exists(path):
+                    continue
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f).get("summary")
+                if not isinstance(raw, dict) or not raw:
+                    continue
+
+                summary = dict(raw)
+                if "positive_clv_share" not in summary and "positive_clv_rate" in summary:
+                    summary["positive_clv_share"] = summary["positive_clv_rate"]
+                if "settled_picks_count" not in summary:
+                    wins = _fmt_metric(summary, "wins", "grade_a_wins")
+                    rate = _fmt_metric(summary, "win_rate", "grade_a_win_rate")
+                    if wins is not None and rate:
+                        summary["settled_picks_count"] = int(round(wins / rate))
+                return summary
+        except Exception:
+            logger.debug("backtest_report.json unreadable", exc_info=True)
+        return {}
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def poll_updates(self) -> list[TelegramUpdate]:
         """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""
@@ -2742,7 +3297,11 @@ class TelegramBot:
                 return reply_text
 
             reply_text, reply_markup = self.handle_message(update)
-            effective_markup = reply_markup if reply_markup is not None else MAIN_REPLY_KEYBOARD
+            effective_markup = (
+                reply_markup
+                if reply_markup is not None
+                else get_main_menu_for_user(self, update.user_id)
+            )
             self.send_message(update.chat_id, reply_text, reply_markup=effective_markup)
             return reply_text
         except Exception as exc:
@@ -2756,7 +3315,11 @@ class TelegramBot:
             )
             if update.chat_id:
                 try:
-                    self.send_message(update.chat_id, fallback_msg, reply_markup=MAIN_REPLY_KEYBOARD)
+                    self.send_message(
+                        update.chat_id,
+                        fallback_msg,
+                        reply_markup=get_main_menu_for_user(self, update.user_id),
+                    )
                 except Exception:
                     pass
             return fallback_msg

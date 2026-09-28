@@ -168,7 +168,7 @@ LISA features an integrated, asynchronous Telegram engine (`engine/lisa/telegram
 ### Executive Mobile Admin Console
 Instead of requiring an admin web panel with security overhead, the system owner's mobile Telegram app serves as the **Executive Control Terminal**.
 
-Whitelisted Telegram IDs (`ADMIN_TELEGRAM_IDS=8720543490`) unlock executive commands:
+Whitelisted Telegram IDs (set `ADMIN_TELEGRAM_IDS` in your untracked `.env`; message `@userinfobot` to find yours) unlock executive commands. There is no default operator ID — if the variable is unset the bot runs with no admin at all, and `telegram-bot --interactive` exits with an error rather than assuming an identity:
 
 | Admin Command | Syntax | Operational Function |
 | :--- | :--- | :--- |

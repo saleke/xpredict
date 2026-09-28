@@ -10,6 +10,8 @@ Features:
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -36,6 +38,7 @@ FAILED_SIGNIN_ATTEMPTS: dict[str, list[float]] = {}
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_SECONDS = 900
 
+<<<<<<< HEAD
 #: Per-IP budget for unlock-code redemption attempts.
 MAX_VERIFY_TOKEN_ATTEMPTS = 10
 VERIFY_TOKEN_LOCKOUT_SECONDS = 900
@@ -65,6 +68,30 @@ def _allowed_origins() -> tuple:
         for o in os.environ.get(ALLOWED_ORIGINS_ENV, "").split(",")
         if o.strip()
     )
+=======
+# Refuse short or placeholder webhook secrets outright. The previous hardcoded
+# default ("lisa_internal_secret_2026") shipped in this file, so anybody who read
+# the repository could provision any tier for any email address.
+_MIN_WEBHOOK_SECRET_LEN = 32
+_PLACEHOLDER_SECRETS = frozenset({
+    "lisa_internal_secret_2026",
+    "secret",
+    "changeme",
+    "password",
+})
+
+
+def _webhook_secret() -> str:
+    """Return a usable LISA_WEBHOOK_SECRET, or "" when none is configured.
+
+    Returning "" forces callers to fail closed rather than compare against a
+    guessable default.
+    """
+    raw = (os.environ.get("LISA_WEBHOOK_SECRET") or "").strip()
+    if not raw or raw.lower() in _PLACEHOLDER_SECRETS or len(raw) < _MIN_WEBHOOK_SECRET_LEN:
+        return ""
+    return raw
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
 
 class LISAProductionHandler(SimpleHTTPRequestHandler):
@@ -364,6 +391,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         email = str(data.get("email", "")).strip()
         password = str(data.get("password", ""))
         name = str(data.get("display_name", "")).strip()
+<<<<<<< HEAD
         # Signup always provisions the free tier. Paid tiers are only granted by
         # a verified payment webhook or an admin, never by the request body.
         requested_tier = str(data.get("tier", "")).strip().lower()
@@ -373,6 +401,13 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 requested_tier,
                 email,
             )
+=======
+        # Self-service signup always provisions the free tier. A caller-supplied
+        # "tier" in the request body used to be honoured, which let anyone claim
+        # tier3 with one unauthenticated POST. Tier is now only ever raised by
+        # the payment webhook or an authenticated admin (see
+        # _handle_auth_update_tier), never by the signup payload.
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         try:
             user = self.auth.register_user(email=email, password=password, display_name=name, tier="free")
@@ -468,8 +503,17 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
     def _handle_auth_update_tier(self):
         user, _ = self._get_current_user_and_session()
         data = self._read_json_body() or {}
+<<<<<<< HEAD
         is_authorized = self._webhook_authorized(data)
         if not is_authorized and user:
+=======
+        webhook_sec = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
+        env_secret = _webhook_secret()
+        is_authorized = False
+        if env_secret and webhook_sec and hmac.compare_digest(str(webhook_sec), env_secret):
+            is_authorized = True
+        elif user:
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             user_tg = str(user.get("telegram_id", "")).strip()
             if (self.bot and self.bot.is_admin(user_tg)) or user.get("tier") == "admin":
                 is_authorized = True
@@ -503,6 +547,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "JSON payload required"}, status=400)
             return
 
+<<<<<<< HEAD
         if not self._expected_webhook_secret():
             self._send_json({
                 "success": False,
@@ -510,6 +555,23 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             }, status=503)
             return
         if not self._webhook_authorized(data):
+=======
+        webhook_secret = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
+        env_secret = _webhook_secret()
+        if not env_secret:
+            # Fail closed: with no secret configured this endpoint would accept
+            # an unauthenticated caller and provision any tier for any email.
+            logger.error(
+                "LISA_WEBHOOK_SECRET is not set; refusing payment webhook. "
+                "Set it in .env to a high-entropy value shared with your payment provider."
+            )
+            self._send_json(
+                {"success": False, "error": "Payment webhook is not configured on this server"},
+                status=503,
+            )
+            return
+        if not webhook_secret or not hmac.compare_digest(str(webhook_secret), env_secret):
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             self._send_json({"success": False, "error": "Invalid webhook secret signature"}, status=401)
             return
 
@@ -642,6 +704,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "telegram_id required"}, status=400)
             return
 
+<<<<<<< HEAD
         # A self-declared Telegram ID is not evidence. Unlocking requires either
         # a valid unlock code (issued after payment) or a live bot-side
         # getChatMember check against the official channel.
@@ -663,6 +726,37 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return
 
         self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username, verified=proven)
+=======
+        # Possession of a Telegram account must be proven, not asserted. The
+        # claimed id is only honoured when the bot has already recorded a
+        # /start verify_<user_id> handshake for THIS web user that named the same
+        # Telegram id. Without this check anyone could claim the operator's
+        # Telegram id and inherit admin authority via is_admin().
+        verified = registry.get_session(str(user["id"])) or {}
+        verified_tg_id = str(verified.get("telegram_user_id", "")).strip()
+        if not verified_tg_id:
+            self._send_json({
+                "success": False,
+                "error": (
+                    "Telegram link requires verification. Open "
+                    f"https://t.me/{self._bot_username()}?start=verify_{user['id']} "
+                    "from the Telegram account you are linking, then retry."
+                ),
+            }, status=403)
+            return
+        if verified_tg_id != tg_id:
+            logger.warning(
+                "Rejected Telegram link for user %s: claimed %s but verified as %s",
+                user["id"], tg_id, verified_tg_id,
+            )
+            self._send_json({
+                "success": False,
+                "error": "telegram_id does not match the verified Telegram account for this user",
+            }, status=403)
+            return
+
+        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         updated = self.auth.get_user_by_id(user["id"])
         if proven:
             self._clear_rate_limit("link_telegram")
@@ -733,6 +827,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"error": "dashboard unavailable", "detail": str(exc)}, status=503)
             return
         self._send_json(payload)
+
+    def _bot_username(self) -> str:
+        settings = self.settings or cfg.load_settings()
+        return settings.telegram_bot_username or "your_bot"
 
     def _handle_status(self):
         start_time = getattr(self.server, "start_time", time.time())

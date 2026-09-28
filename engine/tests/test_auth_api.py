@@ -35,6 +35,14 @@ def _make_sample_pick(match_id: str, outcome: str) -> Pick:
 
 
 def test_auth_api_flow(tmp_path, monkeypatch):
+<<<<<<< HEAD
+=======
+    # A real, high-entropy webhook secret. The old literal
+    # "lisa_internal_secret_2026" shipped in server.py and is now rejected.
+    webhook_secret = "test-secret-4f8a2c9e1b7d6035ae94c8f2b16d7e30"
+    monkeypatch.setenv("LISA_WEBHOOK_SECRET", webhook_secret)
+
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
     port = _get_free_port()
     db_file = str(tmp_path / "auth_api_test.db")
     storage = SqliteStorage(db_file)
@@ -71,6 +79,9 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             assert data["user"] is None
 
         # 2. Signup /api/auth/signup
+        # NOTE: the payload asks for tier2, but self-service signup must always
+        # provision the free tier. A caller-supplied tier used to be honoured,
+        # which let anyone claim a paid tier with one unauthenticated POST.
         signup_payload = {
             "email": "sarah@xpredict.ai",
             "password": "SecurePassword2026!",
@@ -92,6 +103,7 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             data = json.loads(resp.read().decode())
             assert data["success"] is True
             assert data["user"]["email"] == "sarah@xpredict.ai"
+<<<<<<< HEAD
             # A client-declared paid tier must never be honoured at signup.
             assert data["user"]["tier"] == "free"
             session_id = data["session_id"]
@@ -106,6 +118,26 @@ def test_auth_api_flow(tmp_path, monkeypatch):
         )
         with urllib.request.urlopen(promote_req) as resp:
             assert json.loads(resp.read().decode())["tier"] == "tier2"
+=======
+            assert data["user"]["tier"] == "free", "signup must not honour a requested tier"
+            session_id = data["session_id"]
+            user_id = data["user"]["id"]
+
+        # 2b. Paid access is granted by an authorized actor, never by signup.
+        elevate_req = urllib.request.Request(
+            f"{base_url}/api/auth/update-tier",
+            data=json.dumps({"user_id": user_id, "tier": "tier2"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": webhook_secret,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(elevate_req) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["success"] is True
+            assert data["tier"] == "tier2"
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         # 3. /api/auth/me using Cookie
         req = urllib.request.Request(
@@ -142,7 +174,34 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             assert picks[3]["is_locked"] is False
             assert picks[3]["outcome_name"] == "Outcome-3"
 
+<<<<<<< HEAD
         # 6. /api/auth/link-telegram — a bare claim must not grant verification
+=======
+        # 6. /api/auth/link-telegram
+        # Possession must be proven by a bot-side /start verify_<user_id>
+        # handshake that named the same Telegram id. Self-asserting an id is
+        # rejected, otherwise anyone could claim the operator's account.
+        unverified_link = urllib.request.Request(
+            f"{base_url}/api/auth/link-telegram",
+            data=json.dumps({"telegram_id": "778899"}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": f"lisa_session={session_id}",
+            },
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(unverified_link)
+            raise AssertionError("link-telegram accepted an unproven telegram_id")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
+            assert b"verification" in exc.read().lower()
+
+        # Record the handshake the way the bot does, then linking succeeds.
+        from lisa import telegram_bot as tb_mod
+        tb_mod.registry.verify(user_id, telegram_user_id="778899", username="SarahTelegram")
+
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         link_req = urllib.request.Request(
             f"{base_url}/api/auth/link-telegram",
             data=json.dumps({"telegram_id": "778899", "telegram_username": "SarahTelegram"}).encode(),
@@ -324,5 +383,185 @@ def test_auth_api_flow(tmp_path, monkeypatch):
         churned_user = auth.get_user_by_email("pro_trader@xpredict.ai")
         assert churned_user["tier"] == "free"
 
+    finally:
+        server.shutdown()
+
+
+def _serve(tmp_path, monkeypatch, secret=None):
+    """Boot a server on a free port; returns (base_url, auth, server)."""
+    if secret is None:
+        monkeypatch.delenv("LISA_WEBHOOK_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("LISA_WEBHOOK_SECRET", secret)
+    storage = SqliteStorage(str(tmp_path / "sec.db"))
+    auth = AuthManager(storage=storage)
+    port = _get_free_port()
+    server = make_production_server(
+        host="127.0.0.1", port=port, web_dir=str(tmp_path),
+        storage=storage, auth=auth,
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    time.sleep(0.15)
+    return f"http://127.0.0.1:{port}", auth, server
+
+
+def test_signup_cannot_self_assign_a_paid_tier(tmp_path, monkeypatch):
+    """Regression: signup must never honour a caller-supplied tier.
+
+    Previously POSTing {"tier": "tier3"} to /api/auth/signup created a tier3
+    account with no payment and no admin approval.
+    """
+    base_url, auth, server = _serve(tmp_path, monkeypatch, secret="x" * 40)
+    try:
+        for tier in ("tier1", "tier2", "tier3"):
+            email = f"greedy-{tier}@evil.example"
+            req = urllib.request.Request(
+                f"{base_url}/api/auth/signup",
+                data=json.dumps({
+                    "email": email,
+                    "password": "Password123!",
+                    "display_name": "Greedy",
+                    "tier": tier,
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read().decode())
+            assert data["user"]["tier"] == "free", f"{tier} was granted via signup"
+            stored = auth.get_user_by_email(email)
+            assert stored["tier"] == "free"
+    finally:
+        server.shutdown()
+
+
+def test_payment_webhook_fails_closed_without_secret(tmp_path, monkeypatch):
+    """Regression: with no secret set, the webhook must refuse, not accept.
+
+    The old hardcoded default "lisa_internal_secret_2026" meant anyone who read
+    the repository could provision any tier for any address.
+    """
+    base_url, auth, server = _serve(tmp_path, monkeypatch, secret=None)
+    try:
+        for headers in (
+            {},
+            {"X-Webhook-Secret": "lisa_internal_secret_2026"},
+            {"X-Webhook-Secret": "anything"},
+        ):
+            req = urllib.request.Request(
+                f"{base_url}/api/v1/webhook/payment",
+                data=json.dumps({
+                    "event": "checkout.session.completed",
+                    "customer_email": "victim@target.example",
+                    "tier": "tier3",
+                }).encode(),
+                headers={"Content-Type": "application/json", **headers},
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(req)
+                raise AssertionError(f"webhook accepted unauthenticated call {headers}")
+            except urllib.error.HTTPError as exc:
+                assert exc.code in (401, 503), exc.code
+
+        # Nothing was provisioned.
+        assert auth.get_user_by_email("victim@target.example") is None
+    finally:
+        server.shutdown()
+
+
+def test_link_telegram_requires_proven_possession(tmp_path, monkeypatch):
+    """Regression: a caller must not be able to claim someone else's Telegram id.
+
+    Previously /api/auth/link-telegram trusted the request body, so signing up
+    and posting the operator's real Telegram id granted admin authority through
+    is_admin() and unlocked self-service tier escalation.
+    """
+    from lisa.telegram_bot import TelegramBot
+
+    monkeypatch.setenv("LISA_WEBHOOK_SECRET", "y" * 40)
+    storage = SqliteStorage(str(tmp_path / "link.db"))
+    auth = AuthManager(storage=storage)
+    bot = TelegramBot(token="", channel_chat_id="@t", mock=True,
+                      admin_telegram_ids=["8720543490"])
+    port = _get_free_port()
+    server = make_production_server(
+        host="127.0.0.1", port=port, web_dir=str(tmp_path),
+        storage=storage, auth=auth, bot=bot,
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    time.sleep(0.15)
+    base_url = f"http://127.0.0.1:{port}"
+
+    def call(path, body=None, cookie=None):
+        headers = {"Content-Type": "application/json"}
+        if cookie:
+            headers["Cookie"] = cookie
+        req = urllib.request.Request(
+            f"{base_url}{path}",
+            data=json.dumps(body).encode() if body else None,
+            headers=headers, method="POST",
+        )
+        try:
+            resp = urllib.request.urlopen(req)
+            return resp.status, json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read().decode())
+
+    try:
+        _, res = call("/api/auth/signup", {
+            "email": "mallory@evil.example", "password": "Password123!",
+        })
+        session_id = res["session_id"]
+        attacker_id = res["user"]["id"]
+        cookie = f"lisa_session={session_id}"
+
+        # Claiming the operator's id without a handshake is refused.
+        code, res = call("/api/auth/link-telegram",
+                         {"telegram_id": "8720543490"}, cookie=cookie)
+        assert code == 403, res
+        assert auth.get_user_by_id(attacker_id)["telegram_id"] is None
+
+        # And that leaves no route to escalate.
+        code, _ = call("/api/auth/update-tier",
+                       {"user_id": attacker_id, "tier": "tier3"}, cookie=cookie)
+        assert code == 403
+        assert auth.get_user_by_id(attacker_id)["tier"] == "free"
+
+        # A handshake recorded for a *different* id must not satisfy the claim.
+        from lisa import telegram_bot as tb_mod
+        tb_mod.registry.verify(attacker_id, telegram_user_id="111111", username="mallory")
+        code, res = call("/api/auth/link-telegram",
+                         {"telegram_id": "8720543490"}, cookie=cookie)
+        assert code == 403, res
+        assert auth.get_user_by_id(attacker_id)["telegram_id"] is None
+    finally:
+        server.shutdown()
+
+
+def test_payment_webhook_rejects_placeholder_secret(tmp_path, monkeypatch):
+    base_url, auth, server = _serve(
+        tmp_path, monkeypatch, secret="lisa_internal_secret_2026"
+    )
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/v1/webhook/payment",
+            data=json.dumps({
+                "event": "checkout.session.completed",
+                "customer_email": "victim2@target.example",
+                "tier": "tier3",
+            }).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": "lisa_internal_secret_2026",
+            },
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req)
+            raise AssertionError("placeholder secret was accepted")
+        except urllib.error.HTTPError as exc:
+            assert exc.code in (401, 503), exc.code
+        assert auth.get_user_by_email("victim2@target.example") is None
     finally:
         server.shutdown()

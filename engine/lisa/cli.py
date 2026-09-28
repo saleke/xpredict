@@ -1059,7 +1059,18 @@ def _cmd_telegram_bot(args: argparse.Namespace) -> int:
         return 0
 
     if getattr(args, "interactive", False):
-        active_user_id = str(args.user_id or (list(bot.admin_telegram_ids)[0] if bot.admin_telegram_ids else "8720543490"))
+        # No implicit operator identity: an unset ADMIN_TELEGRAM_IDS must fail
+        # loudly rather than silently acting as some hard-coded account.
+        active_user_id = str(
+            args.user_id
+            or (sorted(bot.admin_telegram_ids)[0] if bot.admin_telegram_ids else "")
+        ).strip()
+        if not active_user_id:
+            print(
+                "Error: no operator identity configured for interactive mode.\n"
+                "       Set ADMIN_TELEGRAM_IDS in .env, or pass --user-id <id>."
+            )
+            return 2
         is_admin_user = bot.is_admin(active_user_id)
         role = "ADMIN" if is_admin_user else "USER"
         print(f"\n[telegram-bot] Interactive Console active. Acting as {role} (ID: {active_user_id}).")
