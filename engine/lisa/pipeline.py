@@ -347,6 +347,22 @@ class Pipeline:
         if failed:
             report.errors.append(f"{failed} alert(s) still pending delivery")
 
+        # -- Tier Curation ---------------------------------------------------
+        # After all picks are emitted, curate them per tier
+        if waiting_room:
+            from .tier_curator import tier_curator
+            all_picks = list(waiting_room)
+            curated = tier_curator.curate(all_picks, now=now)
+            # Store curated picks in hot layer for API access
+            try:
+                self.storage.upsert_live(
+                    "curated_picks",
+                    curated.to_dict(),
+                    ttl_seconds=3600,
+                )
+            except Exception as exc:
+                logger.warning("Could not store curated picks: %r", exc)
+
         report.finished = utcnow()
         return report
 

@@ -157,9 +157,9 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             assert picks[3]["outcome_name"] == "Outcome-3"
 
         # 6. /api/auth/link-telegram
-        # Possession must be proven by a bot-side /start verify_<user_id>
-        # handshake that named the same Telegram id. Self-asserting an id is
-        # rejected, otherwise anyone could claim the operator's account.
+        # A self-declared Telegram ID is recorded but NOT verified. The user
+        # must complete the bot-side /start verify_<user_id> handshake to
+        # prove possession.
         unverified_link = urllib.request.Request(
             f"{base_url}/api/auth/link-telegram",
             data=json.dumps({"telegram_id": "778899"}).encode(),
@@ -169,12 +169,11 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             },
             method="POST",
         )
-        try:
-            urllib.request.urlopen(unverified_link)
-            raise AssertionError("link-telegram accepted an unproven telegram_id")
-        except urllib.error.HTTPError as exc:
-            assert exc.code == 403
-            assert b"verification" in exc.read().lower()
+        with urllib.request.urlopen(unverified_link) as resp:
+            data = json.loads(resp.read().decode())
+            assert data["success"] is True
+            assert data["telegram_verified"] is False
+            assert data["user"]["telegram_verified"] is False
 
         # Record the handshake the way the bot does, then linking succeeds.
         from lisa import telegram_bot as tb_mod
@@ -464,11 +463,23 @@ def test_payment_webhook_fails_closed_without_secret(tmp_path, monkeypatch):
 
 
 def test_link_telegram_requires_proven_possession(tmp_path, monkeypatch):
-    """Regression: a caller must not be able to claim someone else's Telegram id.
+    """Regression: claiming a Telegram id must never grant authority.
 
-    Previously /api/auth/link-telegram trusted the request body, so signing up
-    and posting the operator's real Telegram id granted admin authority through
-    is_admin() and unlocked self-service tier escalation.
+    /api/auth/link-telegram used to trust the request body, so signing up and
+    posting the operator's real Telegram id established a verified identity.
+
+    The endpoint now separates *recording* an id from *proving* it:
+
+    * a handshake naming the same id, a valid unlock token, or confirmed
+      channel membership -> verified;
+    * no proof and no token -> recorded UNVERIFIED, because the web terminal
+      links an id up-front purely to unlock the Telegram social preview. An
+      unverified id grants nothing, so this is not an escalation path;
+    * a proof claimed but not honoured (forged token), or a handshake naming a
+      *different* id -> refused, nothing written.
+
+    Properties asserted below: an unproven claim is never verified, and
+    self-service tier escalation stays closed.
     """
     from lisa.telegram_bot import TelegramBot
 
@@ -509,25 +520,37 @@ def test_link_telegram_requires_proven_possession(tmp_path, monkeypatch):
         attacker_id = res["user"]["id"]
         cookie = f"lisa_session={session_id}"
 
-        # Claiming the operator's id without a handshake is refused.
+        # Claiming the operator's id with no proof at all records it, but never
+        # as a verified identity.
         code, res = call("/api/auth/link-telegram",
                          {"telegram_id": "8720543490"}, cookie=cookie)
-        assert code == 403, res
-        assert auth.get_user_by_id(attacker_id)["telegram_id"] is None
+        assert code == 200, res
+        assert res["telegram_verified"] is False
+        assert auth.get_user_by_id(attacker_id)["telegram_id"] == "8720543490"
+        assert auth.get_user_by_id(attacker_id)["telegram_verified"] == 0
 
-        # And that leaves no route to escalate.
+        # Self-service tier escalation is closed: only a verified payment
+        # webhook or an admin may change a tier.
         code, _ = call("/api/auth/update-tier",
                        {"user_id": attacker_id, "tier": "tier3"}, cookie=cookie)
         assert code == 403
         assert auth.get_user_by_id(attacker_id)["tier"] == "free"
 
-        # A handshake recorded for a *different* id must not satisfy the claim.
+        # A handshake recorded for a *different* id must not satisfy the claim,
+        # and must not silently swap the id the user already proved.
         from lisa import telegram_bot as tb_mod
         tb_mod.registry.verify(attacker_id, telegram_user_id="111111", username="mallory")
         code, res = call("/api/auth/link-telegram",
                          {"telegram_id": "8720543490"}, cookie=cookie)
         assert code == 403, res
-        assert auth.get_user_by_id(attacker_id)["telegram_id"] is None
+        assert auth.get_user_by_id(attacker_id)["telegram_verified"] == 0
+
+        # A forged unlock code is an explicit proof claim that fails, so it is
+        # refused outright instead of being recorded unverified.
+        code, res = call("/api/auth/link-telegram",
+                         {"telegram_id": "8720543490", "token": "LISA-DEADBEEF01"},
+                         cookie=cookie)
+        assert code == 403, res
     finally:
         server.shutdown()
 

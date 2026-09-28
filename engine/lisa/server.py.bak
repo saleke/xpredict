@@ -25,7 +25,6 @@ from typing import Any, Optional
 
 from . import __version__
 from . import config as cfg
-from .admin_api import AdminAPI
 from .auth import AuthManager
 from .dashboard import LIVE_ODDS_PREFIX
 from .gate import Pick
@@ -38,6 +37,7 @@ FAILED_SIGNIN_ATTEMPTS: dict[str, list[float]] = {}
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_WINDOW_SECONDS = 900
 
+<<<<<<< HEAD
 #: Per-IP budget for unlock-code redemption attempts.
 MAX_VERIFY_TOKEN_ATTEMPTS = 10
 VERIFY_TOKEN_LOCKOUT_SECONDS = 900
@@ -60,6 +60,14 @@ STATIC_DENY_DIRS = ("data",)
 #: browser traffic never needs CORS, so this stays empty by default.
 ALLOWED_ORIGINS_ENV = "LISA_ALLOWED_ORIGINS"
 
+
+def _allowed_origins() -> tuple:
+    return tuple(
+        o.strip().rstrip("/")
+        for o in os.environ.get(ALLOWED_ORIGINS_ENV, "").split(",")
+        if o.strip()
+    )
+=======
 # Refuse short or placeholder webhook secrets outright. The previous hardcoded
 # default ("lisa_internal_secret_2026") shipped in this file, so anybody who read
 # the repository could provision any tier for any email address.
@@ -71,39 +79,6 @@ _PLACEHOLDER_SECRETS = frozenset({
     "password",
 })
 
-#: A secret passes the entropy gate only if it has at least this many distinct
-#: characters. Length alone is not entropy: "x" * 64 satisfies a 32-character
-#: minimum while offering roughly four bits of guessable structure, and it is
-#: exactly the kind of padding an operator reaches for when a tool demands a
-#: minimum length. Requiring real character variety means a padded secret fails
-#: closed (503) instead of being treated as a real shared secret.
-_MIN_SECRET_DISTINCT_CHARS = 12
-
-
-def _secret_is_high_entropy(raw: str) -> bool:
-    """True when ``raw`` is plausibly a real shared secret.
-
-    Three cheap, high-signal checks: not a known placeholder, at least
-    ``_MIN_WEBHOOK_SECRET_LEN`` characters, and at least
-    ``_MIN_SECRET_DISTINCT_CHARS`` distinct characters. A dictionary word
-    repeated, or a single character padded out, fails the last one.
-    """
-    if not raw or raw.lower() in _PLACEHOLDER_SECRETS:
-        return False
-    if len(raw) < _MIN_WEBHOOK_SECRET_LEN:
-        return False
-    if len(set(raw)) < _MIN_SECRET_DISTINCT_CHARS:
-        return False
-    return True
-
-
-def _allowed_origins() -> tuple:
-    return tuple(
-        o.strip().rstrip("/")
-        for o in os.environ.get(ALLOWED_ORIGINS_ENV, "").split(",")
-        if o.strip()
-    )
-
 
 def _webhook_secret() -> str:
     """Return a usable LISA_WEBHOOK_SECRET, or "" when none is configured.
@@ -112,9 +87,10 @@ def _webhook_secret() -> str:
     guessable default.
     """
     raw = (os.environ.get("LISA_WEBHOOK_SECRET") or "").strip()
-    if not _secret_is_high_entropy(raw):
+    if not raw or raw.lower() in _PLACEHOLDER_SECRETS or len(raw) < _MIN_WEBHOOK_SECRET_LEN:
         return ""
     return raw
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
 
 class LISAProductionHandler(SimpleHTTPRequestHandler):
@@ -125,18 +101,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         server = kwargs.get("server") or (args[2] if len(args) > 2 else None)
         web_dir = getattr(server, "web_dir", Path("web").resolve())
         super().__init__(*args, directory=str(web_dir), **kwargs)
-
-    def list_directory(self, path):
-        """Refuse directory listings.
-
-        A production dashboard serves explicit files, never inventories. A
-        stray directory that happens to be mounted as the web root (for
-        example a ``web`` data dir resolved from the wrong CWD) must 404, not
-        render a browsable tree; index.html is still served at ``/`` via the
-        handler's normal index lookup, so this only affects listings.
-        """
-        self.send_error(404, "Directory listing is disabled")
-        return None
 
     @property
     def storage(self) -> Storage:
@@ -185,12 +149,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        # Handlers that need to set a cookie queue it here rather than writing
-        # headers directly, so there is exactly one place that ends the header
-        # block and no chance of sending a body after the headers are done.
-        for cookie in getattr(self, "_pending_cookies", ()) or ():
-            self.send_header("Set-Cookie", cookie)
-        self._pending_cookies = []
         self._send_cors_headers()
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
@@ -283,31 +241,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
-    def _try_admin(self, method: str) -> bool:
-        """Hand an /api/admin request to the console API. True if answered."""
-        admin = getattr(self.server, "admin", None)
-        parsed = urllib.parse.urlparse(self.path)
-        if admin is None or not parsed.path.startswith("/api/admin"):
-            return False
-        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-        body = self._read_json_body() if method in ("POST", "PUT", "PATCH", "DELETE") else None
-        return admin.handle(self, method, parsed.path, query, body)
-
-    def do_PUT(self):
-        if self._try_admin("PUT"):
-            return
-        self._send_json({"error": "Endpoint not found"}, status=404)
-
-    def do_PATCH(self):
-        if self._try_admin("PATCH"):
-            return
-        self._send_json({"error": "Endpoint not found"}, status=404)
-
-    def do_DELETE(self):
-        if self._try_admin("DELETE"):
-            return
-        self._send_json({"error": "Endpoint not found"}, status=404)
-
     def _is_denied_static_path(self, path: str) -> bool:
         """Block static access to non-public directories under ``web/``."""
         parts = [p for p in urllib.parse.urlparse(path).path.split("/") if p]
@@ -316,9 +249,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-
-        if self._try_admin("GET"):
-            return
 
         if self._is_denied_static_path(path):
             self._send_json({"error": "Not found"}, status=404)
@@ -360,25 +290,11 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._handle_ledger(parsed)
             return
 
-        # Extensionless console URL, so the operator types /admin rather than
-        # /admin.html. The page is a single self-contained file, so this is a
-        # rewrite of the request path rather than a directory index or a
-        # redirect: a 302 would make the browser resolve the page's
-        # root-relative asset URLs against /admin.html and re-request the
-        # document. /admin.html keeps working unchanged.
-        if path in ("/admin", "/admin/"):
-            self.path = "/admin.html" + (f"?{parsed.query}" if parsed.query else "")
-            super().do_GET()
-            return
-
         super().do_GET()
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
-
-        if self._try_admin("POST"):
-            return
 
         if path in ("/api/v1/webhook/payment", "/api/webhook/payment", "/api/webhook/stripe"):
             self._handle_payment_webhook()
@@ -398,18 +314,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if path in ("/api/auth/update-tier", "/api/auth/tier"):
             self._handle_auth_update_tier()
-            return
-
-        if path == "/api/activate-tier":
-            self._handle_activate_tier()
-            return
-
-        if path == "/api/daily-board":
-            self._handle_daily_board()
-            return
-
-        if path == "/api/curated-picks":
-            self._handle_curated_picks()
             return
 
         if path == "/api/auth/link-telegram":
@@ -449,11 +353,9 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         email = str(data.get("email", "")).strip()
         password = str(data.get("password", ""))
         name = str(data.get("display_name", "")).strip()
-        # Self-service signup always provisions the free tier. A caller-supplied
-        # "tier" in the request body used to be honoured, which let anyone claim
-        # tier3 with one unauthenticated POST. Tier is now only ever raised by
-        # a verified payment webhook or an authenticated admin (see
-        # _handle_auth_update_tier), never by the signup payload.
+<<<<<<< HEAD
+        # Signup always provisions the free tier. Paid tiers are only granted by
+        # a verified payment webhook or an admin, never by the request body.
         requested_tier = str(data.get("tier", "")).strip().lower()
         if requested_tier and requested_tier != "free":
             logger.warning(
@@ -461,6 +363,13 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 requested_tier,
                 email,
             )
+=======
+        # Self-service signup always provisions the free tier. A caller-supplied
+        # "tier" in the request body used to be honoured, which let anyone claim
+        # tier3 with one unauthenticated POST. Tier is now only ever raised by
+        # the payment webhook or an authenticated admin (see
+        # _handle_auth_update_tier), never by the signup payload.
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         try:
             user = self.auth.register_user(email=email, password=password, display_name=name, tier="free")
@@ -533,17 +442,14 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         )
 
     def _expected_webhook_secret(self) -> str:
-        # Goes through _webhook_secret() rather than reading the environment
-        # directly, so a missing, short or placeholder secret fails closed at
-        # every call site instead of being compared as if it were real.
-        return _webhook_secret()
+        return os.environ.get("LISA_WEBHOOK_SECRET", "").strip()
 
     def _webhook_authorized(self, data: dict) -> bool:
         """Constant-time check of the shared payment/webhook secret.
 
-        With no usable ``LISA_WEBHOOK_SECRET`` configured there is no way to tell
-        a real payment event from a forged one, so the endpoint fails closed
-        instead of accepting unsigned (or hardcoded-secret) requests.
+        With no ``LISA_WEBHOOK_SECRET`` configured there is no way to tell a real
+        payment event from a forged one, so the endpoint fails closed instead of
+        accepting unsigned (or hardcoded-secret) requests.
         """
         expected = self._expected_webhook_secret()
         if not expected:
@@ -554,21 +460,24 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         provided = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
         if not provided:
             return False
-        return hmac.compare_digest(str(provided), expected)
+        return secrets.compare_digest(str(provided), expected)
 
     def _handle_auth_update_tier(self):
         user, _ = self._get_current_user_and_session()
         data = self._read_json_body() or {}
+<<<<<<< HEAD
         is_authorized = self._webhook_authorized(data)
         if not is_authorized and user:
-            # A stored Telegram id is only evidence of operator status once the
-            # bot has PROVEN possession of it. Without the verified check, any
-            # account could link the operator's id (linking is allowed before
-            # proof so the web terminal can unlock the social preview) and then
-            # self-serve a paid tier through this endpoint.
+=======
+        webhook_sec = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
+        env_secret = _webhook_secret()
+        is_authorized = False
+        if env_secret and webhook_sec and hmac.compare_digest(str(webhook_sec), env_secret):
+            is_authorized = True
+        elif user:
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             user_tg = str(user.get("telegram_id", "")).strip()
-            linked_proven = bool(user.get("telegram_verified")) and bool(user_tg)
-            if user.get("tier") == "admin" or (linked_proven and self.bot and self.bot.is_admin(user_tg)):
+            if (self.bot and self.bot.is_admin(user_tg)) or user.get("tier") == "admin":
                 is_authorized = True
 
         if not is_authorized:
@@ -594,132 +503,37 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self._send_json({"success": False, "error": str(exc)}, status=500)
 
-    def _handle_activate_tier(self):
-        """Activate a tier using a one-time payment key from the Telegram bot."""
-        data = self._read_json_body() or {}
-        key = str(data.get("key", "")).strip()
-        if not key:
-            self._send_json({"success": False, "error": "Payment key required"}, status=400)
-            return
-
-        from .payments import key_store, verify_key
-
-        # Look up the key
-        payment_key = key_store.get(key)
-        if not payment_key:
-            self._send_json({"success": False, "error": "Invalid or unknown payment key"}, status=404)
-            return
-
-        # Check if already used
-        if payment_key.used:
-            self._send_json({"success": False, "error": "This key has already been used"}, status=410)
-            return
-
-        # Check expiry
-        if payment_key.is_expired():
-            self._send_json({"success": False, "error": "This key has expired (1-hour limit). Please purchase again."}, status=410)
-            return
-
-        # Get the current user (must be logged in)
-        user, _ = self._get_current_user_and_session()
-        if not user:
-            self._send_json({"success": False, "error": "You must be logged in to activate a tier"}, status=401)
-            return
-
-        # Verify the Telegram ID matches the purchaser
-        user_tg = str(user.get("telegram_id", "")).strip()
-        if user_tg and user_tg != payment_key.telegram_id:
-            self._send_json({
-                "success": False,
-                "error": "This key was issued to a different Telegram account. Contact support."
-            }, status=403)
-            return
-
-        # If user has no Telegram ID yet, bind it now
-        if not user_tg and self.bot:
-            user_tg = payment_key.telegram_id
-            try:
-                self.auth.link_telegram(user["id"], telegram_id=user_tg)
-            except Exception:
-                pass
-
-        # Mark key as used
-        key_store.mark_used(key, user["id"])
-
-        # Activate the tier
-        tier = payment_key.tier
-        try:
-            if self.auth:
-                self.auth.update_user_tier(user["id"], tier)
-            if self.bot:
-                self.bot.invalidate_user_cache(user["id"])
-            self._send_json({
-                "success": True,
-                "tier": tier,
-                "message": f"Successfully activated {tier.upper()}! Enjoy your premium picks."
-            })
-        except Exception as exc:
-            self._send_json({"success": False, "error": str(exc)}, status=500)
-
-    def _handle_daily_board(self):
-        """Return the daily board with matches grouped by date."""
-        from .daily_board import daily_board_builder
-        from .match_router import match_router
-
-        try:
-            # Get matches from all leagues
-            sport_keys = [
-                "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
-                "soccer_italy_serie_a", "soccer_france_ligue_one",
-                "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
-                "basketball_nba",
-            ]
-            board = daily_board_builder.build_from_leagues(sport_keys, days_ahead=7)
-            self._send_json({
-                "success": True,
-                "board": board.to_dict(),
-            })
-        except Exception as exc:
-            self._send_json({"success": False, "error": str(exc)}, status=500)
-
-    def _handle_curated_picks(self):
-        """Return curated picks for each tier."""
-        try:
-            curated = self.storage.get_live_stale("curated_picks")
-            if not curated:
-                self._send_json({
-                    "success": True,
-                    "picks": {"tier1": [], "tier2": [], "tier3": []},
-                    "message": "No curated picks available yet. Run a pipeline cycle first.",
-                })
-                return
-            self._send_json({
-                "success": True,
-                "picks": curated,
-            })
-        except Exception as exc:
-            self._send_json({"success": False, "error": str(exc)}, status=500)
-
     def _handle_payment_webhook(self):
         data = self._read_json_body()
         if not data:
             self._send_json({"success": False, "error": "JSON payload required"}, status=400)
             return
 
+<<<<<<< HEAD
         if not self._expected_webhook_secret():
-            # Fail closed: with no usable secret configured this endpoint would
-            # accept an unauthenticated caller and provision any tier for any
-            # email address.
-            logger.error(
-                "LISA_WEBHOOK_SECRET is not set to a high-entropy value; refusing "
-                "payment webhook."
-            )
             self._send_json({
                 "success": False,
-                "error": "Payment webhook is not configured on this server",
+                "error": "Payment webhook disabled: LISA_WEBHOOK_SECRET is not configured",
             }, status=503)
             return
         if not self._webhook_authorized(data):
+=======
+        webhook_secret = self.headers.get("X-Webhook-Secret") or self.headers.get("X-Admin-Secret") or data.get("secret")
+        env_secret = _webhook_secret()
+        if not env_secret:
+            # Fail closed: with no secret configured this endpoint would accept
+            # an unauthenticated caller and provision any tier for any email.
+            logger.error(
+                "LISA_WEBHOOK_SECRET is not set; refusing payment webhook. "
+                "Set it in .env to a high-entropy value shared with your payment provider."
+            )
+            self._send_json(
+                {"success": False, "error": "Payment webhook is not configured on this server"},
+                status=503,
+            )
+            return
+        if not webhook_secret or not hmac.compare_digest(str(webhook_secret), env_secret):
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             self._send_json({"success": False, "error": "Invalid webhook secret signature"}, status=401)
             return
 
@@ -852,81 +666,59 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "telegram_id required"}, status=400)
             return
 
-        # Rate-limit first: the proofs below can cost a Telegram API round trip,
-        # so this guard must run before any of that work, not after it.
+<<<<<<< HEAD
+        # A self-declared Telegram ID is not evidence. Unlocking requires either
+        # a valid unlock code (issued after payment) or a live bot-side
+        # getChatMember check against the official channel.
+        seeds = self._unlock_seed_candidates(user["id"])
+        token = str(data.get("token", "")).strip()
+        proven = bool(token) and verify_unlock_token(token, seeds)
+
+        proof_source = "unlock_code"
+        if not proven:
+            proof_source = "channel_membership"
+            proven = bool(
+                self.bot
+                and getattr(self.bot, "token", "")
+                and self.bot.is_channel_member(self.bot.channel_chat_id, tg_id)
+            )
+
         if self._rate_limited("link_telegram", MAX_LINK_ATTEMPTS, LINK_LOCKOUT_SECONDS):
             self._send_json({"success": False, "error": "Too many link attempts. Try again later."}, status=429)
             return
 
-        # Possession of a Telegram account must be proven, not asserted: a
-        # self-declared id is not evidence. Three bot-side proofs are accepted,
-        # and every one of them is a fact the bot can vouch for rather than a
-        # client claim:
-        #   1. the /start verify_<user_id> handshake already recorded for THIS
-        #      web user, which must name this same Telegram id,
-        #   2. an unlock token issued after payment, or
-        #   3. a live getChatMember check against the official channel.
-        #
-        # When nothing is proven the outcome depends on intent, because the web
-        # terminal links an id up-front purely to unlock the Telegram social
-        # preview and has no proof to present yet:
-        #   * no token supplied  -> record the id UNVERIFIED (200). It grants
-        #     nothing: it cannot unlock paid content and cannot be used for
-        #     admin, which is config-driven off the inbound Telegram user id.
-        #   * a token supplied  -> the caller is explicitly claiming proof, so
-        #     an unusable token is refused outright (403) and nothing is
-        #     written. A forged code must never leave a row behind.
-        proven = False
-        proof_source = "none"
-        token = str(data.get("token", "")).strip()
-
+        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username, verified=proven)
+=======
+        # Possession of a Telegram account must be proven, not asserted. The
+        # claimed id is only honoured when the bot has already recorded a
+        # /start verify_<user_id> handshake for THIS web user that named the same
+        # Telegram id. Without this check anyone could claim the operator's
+        # Telegram id and inherit admin authority via is_admin().
         verified = registry.get_session(str(user["id"])) or {}
         verified_tg_id = str(verified.get("telegram_user_id", "")).strip()
-        if verified_tg_id:
-            if verified_tg_id != tg_id:
-                # A proven handshake for a DIFFERENT id: reject the claim rather
-                # than silently downgrading an id the user does own.
-                logger.warning(
-                    "Rejected Telegram link for user %s: claimed %s but verified as %s",
-                    user["id"], tg_id, verified_tg_id,
-                )
-                self._send_json({
-                    "success": False,
-                    "error": "telegram_id does not match the verified Telegram account for this user",
-                }, status=403)
-                return
-            # The bot vouched for this exact pairing, so the link is verified.
-            proven = True
-            proof_source = "handshake"
-        else:
-            seeds = self._unlock_seed_candidates(user["id"])
-            if token and verify_unlock_token(token, seeds):
-                proven = True
-                proof_source = "unlock_code"
-            elif (
-                self.bot
-                and getattr(self.bot, "token", "")
-                and self.bot.is_channel_member(self.bot.channel_chat_id, tg_id)
-            ):
-                proven = True
-                proof_source = "channel_membership"
-        if not proven and token:
-            # A proof was claimed and could not be honoured. Refuse instead of
-            # silently downgrading to an unverified link, so a forged unlock
-            # code never leaves a row claiming the id.
+        if not verified_tg_id:
+            self._send_json({
+                "success": False,
+                "error": (
+                    "Telegram link requires verification. Open "
+                    f"https://t.me/{self._bot_username()}?start=verify_{user['id']} "
+                    "from the Telegram account you are linking, then retry."
+                ),
+            }, status=403)
+            return
+        if verified_tg_id != tg_id:
             logger.warning(
-                "Rejected Telegram link for user %s: unusable unlock token (proof not established)",
-                user["id"],
+                "Rejected Telegram link for user %s: claimed %s but verified as %s",
+                user["id"], tg_id, verified_tg_id,
             )
             self._send_json({
                 "success": False,
-                "error": "Telegram link requires verification. Send "
-                         f"/start from https://t.me/{self._bot_username()}?start=verify_{user['id']} "
-                         "from the Telegram account you are linking, then retry.",
+                "error": "telegram_id does not match the verified Telegram account for this user",
             }, status=403)
             return
 
-        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username, verified=proven)
+        self.auth.link_telegram(user["id"], telegram_id=tg_id, telegram_username=tg_username)
+>>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         updated = self.auth.get_user_by_id(user["id"])
         if proven:
             self._clear_rate_limit("link_telegram")
@@ -940,10 +732,8 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             "message": (
                 "Telegram identity verified."
                 if proven
-                else "Telegram ID recorded but not verified. Send /start from "
-                f"https://t.me/{self._bot_username()} on the account you are linking, "
-                "or complete the unlock-code flow (or join the channel), to unlock "
-                "premium content."
+                else "Telegram ID recorded but not verified. Complete the unlock-code "
+                     "flow in Telegram (or join the channel) to unlock premium content."
             ),
         })
 
@@ -1067,24 +857,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return
 
         try:
-            st = getattr(self, "settings", None)
-            markets = tuple(
-                m.strip() for m in (getattr(st, "markets", "") or "").split(",")
-                if m.strip()
-            ) or ("h2h",)
-            board = build_live_bulletin_from_payloads(
-                payloads,
-                max_matches=int(getattr(st, "forecast_max_matches", 40) or 40),
-                horizon_hours=float(
-                    getattr(st, "forecast_horizon_hours", 48.0) or 48.0),
-                min_matches=int(getattr(st, "forecast_min_matches", 12) or 12),
-                include_micro_markets=bool(
-                    getattr(st, "enable_extra_markets", False)),
-                include_micro_predictions=bool(
-                    getattr(st, "enable_micro_predictions", False)),
-                include_in_play=bool(getattr(st, "enable_inplay", False)),
-                market_keys=markets,
-            )
+            board = build_live_bulletin_from_payloads(payloads)
         except Exception as exc:
             logger.warning("live bulletin failed: %r", exc)
             self._send_json(dict(NO_LIVE_DATA))
@@ -1200,12 +973,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             else:
                 tier = auth_user.get("tier", "free")
         elif user_id.startswith("user_seed_") or user_id.startswith("test_"):
-            # Seed and test rows are a fixture convenience, not an entitlement.
-            # Honouring a `tier` parameter on them let any anonymous caller
-            # request `?user_id=test_x&tier=tier3` and receive every masked pick
-            # unmasked, which defeated the tiering entirely. They stay on the
-            # free view; the tests that need a paid view authenticate instead.
-            tier = "free"
+            tier = requested_tier
         else:
             tier = "free"
 
@@ -1290,24 +1058,9 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             except Exception:
                 settled = []
 
-        # The settled table grows without bound, so an unfiltered response grows
-        # with it: every anonymous visitor re-read and re-serialised the entire
-        # history on each request. Cap it at the most recent slice, newest
-        # first, and say so explicitly rather than silently truncating.
-        try:
-            limit = int(urllib.parse.parse_qs(parsed.query).get("limit", ["200"])[0])
-        except (TypeError, ValueError):
-            limit = 200
-        limit = max(1, min(limit, 1000))
-        total = len(settled)
-        page = settled[:limit]
-
         self._send_json({
-            "settled_ledger": page,
-            "count": len(page),
-            "total": total,
-            "truncated": total > len(page),
-            "limit": limit,
+            "settled_ledger": settled,
+            "count": len(settled),
         })
 
 
@@ -1325,15 +1078,8 @@ def make_production_server(
     settings: Optional[cfg.Settings] = None,
     bot: Optional[TelegramBot] = None,
     auth: Optional[AuthManager] = None,
-    control: Optional[Any] = None,
 ) -> ReusableThreadingHTTPServer:
-    """Factory creating and configuring the multi-threaded production server.
-
-    ``control`` is the process-wide handle the admin console drives: it owns the
-    runtime settings, the scheduler and the odds client, so the console can act
-    on the same objects the ingestion loop is using rather than on a second,
-    disconnected instance of them.
-    """
+    """Factory creating and configuring the multi-threaded production server."""
     server = ReusableThreadingHTTPServer((host, port), LISAProductionHandler)
     server.web_dir = Path(web_dir).resolve()
     server.storage = storage or SqliteStorage()
@@ -1341,10 +1087,4 @@ def make_production_server(
     server.settings = settings or cfg.load_settings()
     server.bot = bot
     server.start_time = time.time()
-    server.control = control
-    if control is not None:
-        # The control object is the authority for settings once it exists, so
-        # the handler must read through it or it would see a stale snapshot.
-        control.bind_server(server)
-    server.admin = AdminAPI(control) if control is not None else None
     return server

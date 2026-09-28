@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from lisa import config as cfg
@@ -1027,6 +1028,47 @@ class TestTelegramBot(unittest.TestCase):
             self.assertNotIn("0.089", reply)
             self.assertNotIn("+4.18%", reply)
             self.assertIn("no configuration is claimed to be profitable", reply)
+
+    def test_conversational_faq_accuracy_reports_graded_rows(self):
+        """Graded rows are reported, but only once the sample is meaningful.
+
+        MIN_SETTLED_FOR_STATS exists so a handful of graded picks can never be
+        published as a "100.0% win rate". Both halves are asserted here: the
+        thin sample is refused, and a real sample is published from measurement.
+        """
+        def seed(storage, n):
+            for i in range(n):
+                pick = replace(
+                    self.sample_pick,
+                    match_id=f"graded-{i}",
+                    outcome_name=f"Outcome-{i}",
+                )
+                storage.insert_pick(pick)
+                storage.settle_pick(
+                    f"{pick.match_id}::{pick.market}::{pick.outcome_name}", "WIN", self.now)
+
+        upd = TelegramUpdate(119, 219, "chat_conv", "user_free", "trader_joe", text="win rate")
+
+        # 1. One graded pick: the thin sample is refused, not dressed up.
+        thin = InMemoryStorage()
+        seed(thin, 1)
+        bot_thin = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=thin)
+        reply_thin = bot_thin.process_one_update(upd)
+        self.assertNotIn("100.0%", reply_thin)
+        self.assertIn("AUDITED PERFORMANCE", reply_thin)
+
+        # 2. A meaningful sample is published, and matches the graded rows.
+        from lisa.telegram_bot import MIN_SETTLED_FOR_STATS
+
+        enough = InMemoryStorage()
+        seed(enough, MIN_SETTLED_FOR_STATS)
+        bot_enough = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=enough)
+        reply = bot_enough.process_one_update(upd)
+        # A chat question is answered by the conversational formatter, which
+        # publishes the measured figures once the sample clears the threshold.
+        self.assertIn("AUDITED PERFORMANCE", reply)
+        self.assertIn("Audited Win Rate", reply)
+        self.assertIn("100.0%", reply)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")

@@ -154,6 +154,20 @@ class Settings:
     credit_budget_daily: int = 50          # hard cap on requests per key per UTC day
     metrics_path: str = "data/metrics.jsonl"
 
+    # -- Payment & Tiers -------------------------------------------------------
+    tier1_price_ngn: int = 14_999
+    tier2_price_ngn: int = 29_999
+    tier3_price_ngn: int = 49_888
+    paystack_secret_key: str = ""
+    paystack_public_key: str = ""
+    usdt_trc20_address: str = "TKWFRpQgZRJxhHarM6etoQ2KSeWVK7QXBs"
+    sol_address: str = "FKky47wNt2viC1mvKurTqhSAdUe6GZeVcuCJHw1ZKxNn"
+    ton_address: str = "UQCJ9UyJzyAwWZhdulzB8K0veAqkjBhaP6v2exhyYWwTmar8"
+    # Bank transfer (uncomment when virtual account is ready)
+    # bank_name: str = ""
+    # bank_account_name: str = ""
+    # bank_account_number: str = ""
+
     # -- forecast board window ------------------------------------------------
     # The board is a short-horizon product (the LISA product promise is 48h).
     # Everything on it must be playable inside this window; fixtures further
@@ -320,4 +334,12 @@ def load_settings() -> Settings:
         inplay_tail_hours=_float(
             "LISA_INPLAY_TAIL_HOURS", Settings.inplay_tail_hours),
         metrics_path=os.environ.get("LISA_METRICS_PATH", Settings.metrics_path),
+        tier1_price_ngn=_int("LISA_TIER1_PRICE_NGN", Settings.tier1_price_ngn),
+        tier2_price_ngn=_int("LISA_TIER2_PRICE_NGN", Settings.tier2_price_ngn),
+        tier3_price_ngn=_int("LISA_TIER3_PRICE_NGN", Settings.tier3_price_ngn),
+        paystack_secret_key=os.environ.get("PAYSTACK_SECRET_KEY", ""),
+        paystack_public_key=os.environ.get("PAYSTACK_PUBLIC_KEY", ""),
+        usdt_trc20_address=os.environ.get("LISA_USDT_TRC20_ADDRESS", Settings.usdt_trc20_address),
+        sol_address=os.environ.get("LISA_SOL_ADDRESS", Settings.sol_address),
+        ton_address=os.environ.get("LISA_TON_ADDRESS", Settings.ton_address),
     )

@@ -186,6 +186,9 @@ _ROW_CODES = [{"text": "🎟️ Bookmaker Codes"}, {"text": "⚡ 5-Fold Parlay"}
 
 ADMIN_REPLY_KEYBOARD = {
     "keyboard": [
+        [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
+        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ Live Accumulator"}],
+        [{"text": "🎟️ Execution Guide"}, {"text": "🛡️ Trap Advisories"}],
         [{"text": "🛠️ Admin Console"}, {"text": "👤 Grant Access"}],
         [{"text": "📣 Broadcast"}, {"text": "🟢 Settle Match"}],
         _ADMIN_ROW_NAV,
@@ -229,7 +232,9 @@ BUTTON_SLUGS: dict[str, str] = {
     "📈 Accuracy Ledger": "ledger",
     "🛡️ Trap Advisories": "traps",
     "🎟️ Bookmaker Codes": "codes",
+    "🎟️ Execution Guide": "codes",
     "⚡ 5-Fold Parlay": "parlay",
+    "⚡ Live Accumulator": "parlay",
     "👑 Upgrade to Unlock Full Slate": "upgrade",
     "👑 My Subscription": "subscription",
     "🛠️ Admin Console": "admin_console",
@@ -1597,6 +1602,18 @@ class TelegramBot:
                 None,
             )
 
+        if cmd == "/buy":
+            return self._handle_buy_command(user_id)
+
+        if cmd == "/wallet" and self.is_admin(user_id):
+            return self._handle_wallet_command()
+
+        if cmd == "/picks":
+            return self._handle_picks_command(user_id)
+
+        if cmd == "/acca":
+            return self._handle_acca_command(user_id)
+
         if cmd == "/help":
             if self.is_admin(user_id):
                 help_lines = [
@@ -2331,7 +2348,8 @@ class TelegramBot:
         return data if isinstance(data, list) else []
 
     def _handle_traps(self) -> tuple[str, Optional[dict[str, Any]]]:
-        """Display the trap advisories actually recorded by the odds poller.
+        """Display measured pass-advisory / trap counts from the recorded
+        poller history (the honest summary of real suppressions).
 
         The poller writes one row per suppressed (pass-advisory) fixture to
         ``live:traps``. That recorded history is the primary source here:
@@ -2429,6 +2447,20 @@ class TelegramBot:
         data = (update.callback_data or "").strip()
         user_id = update.user_id
         username = update.username or "user"
+
+        if data.startswith("buy:"):
+            tier = data.split(":", 1)[1]
+            return self._handle_payment_method_selection(tier, user_id)
+
+        if data.startswith("confirm:"):
+            parts = data.split(":")
+            method = parts[1] if len(parts) > 1 else ""
+            tier = parts[2] if len(parts) > 2 else "tier1"
+            return self._handle_payment_confirmation(method, tier, user_id)
+
+        if data.startswith("pay:"):
+            method = data.split(":", 1)[1]
+            return self._handle_payment_processing(method, user_id)
 
         if data == "fsm:cancel":
             self.fsm.clear_temp(user_id)
@@ -2567,6 +2599,230 @@ class TelegramBot:
                 return self._execute_settlement(m_id, res, user_id)
 
         return ("Action completed.", None)
+
+    def _handle_picks_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle /picks command — show tier-specific picks for the user."""
+        from .tier_curator import tier_curator, TIER_RULES
+
+        # Get the user's tier (default to free)
+        tier = "free"
+        if self.auth:
+            user = self.auth.get_user_by_telegram_id(user_id)
+            if user:
+                tier = user.get("tier", "free")
+
+        # Get curated picks for the user's tier
+        # For now, show a placeholder — in production this would query the curator
+        rule = TIER_RULES.get(tier)
+        if not rule:
+            return ("❌ Invalid tier. Please contact support.", None)
+
+        text = (
+            f"🎯 <b>YOUR {tier.upper()} PICKS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Odds range: <code>{rule.min_odds:.2f} - {rule.max_odds:.2f}</code>\n"
+            f"Picks per week: <code>{rule.picks_per_week}</code>\n"
+            f"Min conviction: <code>{rule.min_conviction:.2f}</n\n"
+            f"<i>Your curated picks will appear here once the daily board is generated.</i>"
+        )
+        return (text, None)
+
+    def _handle_acca_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle /acca command — show accumulator tips."""
+        text = (
+            "🎰 <b>ACCUMULATOR TIPS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Daily curated parlays from our best picks.\n\n"
+            "📊 <b>Today's Acca:</b>\n"
+            "<i>Will be available once today's picks are finalized.</i>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 <i>Accumulators combine multiple picks into one bet for higher odds.</i>"
+        )
+        return (text, None)
+
+    def _handle_payment_method_selection(self, tier: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Show payment method options for a selected tier."""
+        from .payments import get_tier_price
+
+        price = get_tier_price(tier)
+        text = (
+            f"💠 <b>{tier.upper()}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Price: <code>₦{price.ngn:,}</code> (${price.usd:.2f})\n\n"
+            f"Select your payment method:"
+        )
+        markup = {
+            "inline_keyboard": [
+                [{"text": "💲 USDT (TRC20)", "callback_data": f"pay:usdt_trc20:{tier}"}],
+                [{"text": "◎ SOL", "callback_data": f"pay:sol:{tier}"}],
+                [{"text": "💎 TON (Gram)", "callback_data": f"pay:ton:{tier}"}],
+                # [{"text": "💳 Card (Paystack)", "callback_data": f"pay:card:{tier}"}],  # Future
+                # [{"text": "🏦 Local Transfer", "callback_data": f"pay:bank:{tier}"}],    # Future: uncomment when virtual account is ready
+            ]
+        }
+        return (text, markup)
+
+    def _handle_payment_processing(self, method: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Process payment based on selected method."""
+        from .payments import (
+            generate_payment_key, get_tier_price, get_crypto_address,
+            key_store, CRYPTO_WALLETS,
+        )
+
+        parts = method.split(":")
+        payment_method = parts[0]
+        tier = parts[1] if len(parts) > 1 else "tier1"
+
+        price = get_tier_price(tier)
+
+        if payment_method in ("usdt_trc20", "sol", "ton"):
+            # Crypto payment
+            address, network = get_crypto_address(payment_method)
+            currency_symbol = {"usdt_trc20": "USDT", "sol": "SOL", "ton": "TON"}[payment_method]
+            amount = {"usdt_trc20": price.usdt_trc20, "sol": price.sol, "ton": price.ton}[payment_method]
+
+            text = (
+                f"💲 <b>CRYPTO PAYMENT</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Tier: <b>{tier.upper()}</b>\n"
+                f"Amount: <code>{amount} {currency_symbol}</code>\n"
+                f"Network: <b>{network}</b>\n\n"
+                f"Send exactly <code>{amount} {currency_symbol}</code> to:\n"
+                f"<code>{address}</code>\n\n"
+                f"⚠️ <i>Send only {currency_symbol} on the {network} network. "
+                f"Other assets may be lost.</i>\n\n"
+                f"After sending, click the button below and your key will be generated "
+                f"once the payment is detected."
+            )
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "✅ I've Sent Payment", "callback_data": f"confirm:{payment_method}:{tier}"}],
+                    [{"text": "❌ Cancel", "callback_data": "fsm:cancel"}],
+                ]
+            }
+            return (text, markup)
+
+        elif payment_method == "card":
+            # Card payment via Paystack (future)
+            text = (
+                f"💳 <b>CARD PAYMENT</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Card payments are coming soon.\n"
+                f"Please use crypto for now."
+            )
+            return (text, None)
+
+        # elif payment_method == "bank":
+        #     # Local bank transfer (future: uncomment when virtual account is ready)
+        #     text = (
+        #         f"🏦 <b>BANK TRANSFER</b>\n"
+        #         f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        #         f"Tier: <b>{tier.upper()}</b>\n"
+        #         f"Amount: <code>₦{price.ngn:,}</code>\n\n"
+        #         f"Transfer to:\n"
+        #         f"Bank: <b>{BANK_TRANSFER_DETAILS['bank_name']}</b>\n"
+        #         f"Account Name: <b>{BANK_TRANSFER_DETAILS['account_name']}</b>\n"
+        #         f"Account Number: <b>{BANK_TRANSFER_DETAILS['account_number']}</b>\n\n"
+        #         f"After transferring, click the button below to submit your reference."
+        #     )
+        #     markup = {
+        #         "inline_keyboard": [
+        #             [{"text": "✅ I've Transferred", "callback_data": f"confirm:bank:{tier}"}],
+        #         ]
+        #     }
+        #     return (text, markup)
+
+        else:
+            return ("❌ Invalid payment method. Please try again.", None)
+
+    def _handle_payment_confirmation(self, method: str, tier: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle payment confirmation - generate and send the one-time key."""
+        from .payments import generate_payment_key, key_store, get_tier_price
+
+        # Generate the payment key
+        payment_key = generate_payment_key(tier, user_id)
+        key_store.store(payment_key)
+
+        price = get_tier_price(tier)
+
+        # Format expiry time
+        from datetime import datetime, timezone
+        expiry_time = datetime.fromtimestamp(payment_key.expires_at, tz=timezone.utc).strftime("%H:%M UTC")
+
+        text = (
+            f"🎉 <b>PAYMENT CONFIRMED!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Tier: <b>{tier.upper()}</b>\n"
+            f"Amount: <code>₦{price.ngn:,}</code>\n\n"
+            f"🔑 <b>Your One-Time Activation Key:</b>\n"
+            f"<code>{payment_key.key}</code>\n\n"
+            f"⏰ <b>Expires:</b> {expiry_time} (1 hour)\n"
+            f"⚠️ <b>Single use only.</b> Do not share this key.\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👇 <b>Next Steps:</b>\n"
+            f"1. Copy the key above\n"
+            f"2. Go to <b>http://localhost:8080</b>\n"
+            f"3. Log in to your account\n"
+            f"4. Paste the key in the 'Activate Tier' section\n\n"
+            f"<i>Once redeemed, this key is permanently burned.</i>"
+        )
+
+        markup = {
+            "inline_keyboard": [
+                [{"text": "🌐 Open Website", "url": "http://localhost:8080"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_buy_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle /buy command - show tier selection."""
+        from .payments import get_all_prices
+
+        prices = get_all_prices()
+        lines = [
+            "💠 <b>LISA SUBSCRIPTION TIERS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "All tiers include access to the public Telegram channel.\n"
+            "Higher tiers unlock better picks, earlier alerts, and premium packages.\n"
+        ]
+        for p in prices:
+            lines.append(p.format())
+            lines.append("")
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("👇 Select a tier to purchase:")
+
+        text = "\n".join(lines)
+        markup = {
+            "inline_keyboard": [
+                [{"text": f"🥉 Tier 1 — ₦{prices[0].ngn:,}", "callback_data": "buy:tier1"}],
+                [{"text": f"🥈 Tier 2 — ₦{prices[1].ngn:,}", "callback_data": "buy:tier2"}],
+                [{"text": f"🥇 Tier 3 — ₦{prices[2].ngn:,}", "callback_data": "buy:tier3"}],
+            ]
+        }
+        return (text, markup)
+
+    def _handle_wallet_command(self) -> tuple[str, Optional[dict[str, Any]]]:
+        """Handle /wallet command (admin only) - show wallet balances."""
+        from .payments import CRYPTO_WALLETS
+
+        lines = [
+            "💰 <b>LISA WALLET & BALANCES</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+        ]
+
+        lines.append("💲 <b>USDT (TRC20):</b>")
+        lines.append(f"   <code>{CRYPTO_WALLETS['USDT-TRC20']['address']}</code>\n")
+        lines.append("◎ <b>SOL:</b>")
+        lines.append(f"   <code>{CRYPTO_WALLETS['SOL']['address']}</code>\n")
+        lines.append("💎 <b>TON:</b>")
+        lines.append(f"   <code>{CRYPTO_WALLETS['TON']['address']}</code>\n")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("💳 <b>Paystack:</b> Card payments (when configured)")
+        lines.append("🏦 <b>Local Transfer:</b> Coming soon")
+
+        text = "\n".join(lines)
+        return (text, None)
 
     def handle_message(
         self, update: TelegramUpdate

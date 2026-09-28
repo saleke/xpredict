@@ -1,313 +1,473 @@
-"""LISA Multi-Provider Odds System
+"""Multi-provider odds layer for LISA.
 
-Package providing a clean abstraction layer for fetching sports betting odds
-from multiple independent sources, with automatic fallback, quota tracking,
-and provenance for every odds row.
+The engine must never be pinned to a single odds feed. This package defines a
+small, explicit provider contract plus a router that:
 
-Design goals:
-- Eliminate single-provider dependency (The Odds API)
-- Enable graceful degradation when any provider is unavailable
-- Track source origin for every Match/Book/Pick
-- Support both official (free API tiers) and unofficial (scraped) providers
-- Enable cross-source consensus blending
+* tries providers in a configured order and degrades to the next one on any
+  failure (timeouts, rate limits, quota exhaustion, malformed payloads);
+* records which source produced every fixture, so provenance survives into the
+  cache, the ledger and the board;
+* short-circuits a provider that is known-bad instead of paying its timeout on
+  every single cycle (the failure mode that actually hurts throughput);
+* treats quota as a first-class budget, so a poll is skipped rather than made
+  when it cannot help.
+
+Design notes
+------------
+* Each provider owns its own payload -> domain translation (``parse_odds``).
+  There is no global parser registry: adding a feed means adding one class,
+  and a provider can never silently be parsed by the wrong adapter.
+* The router is defensive by construction. It never lets a provider exception
+  escape into the pipeline, and it distinguishes "provider returned nothing"
+  from "provider failed" so operators can see which of the two happened.
+* Monotonic clocks are used for every cooldown/interval decision; wall clock is
+  only used for values that are persisted or displayed.
 """
 
-from typing import Protocol, Any, Optional, Literal, TypeVar
-from dataclasses import dataclass
-from enum import Enum
+from __future__ import annotations
 
-T = TypeVar("T", bound="MatchData")
+import logging
+import threading
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence, runtime_checkable
+
+logger = logging.getLogger("lisa.providers")
 
 __all__ = [
     "SourceTier",
     "ProviderQuota",
     "ProviderError",
-    "RateLimitedError",
     "ApiError",
+    "RateLimitedError",
     "ProviderNotAvailableError",
     "OddsProvider",
     "ProviderRouter",
-    "normalize_odds_payload",
+    "CircuitState",
 ]
-
-# ---------------------------------------------------------------------------
-# Source tier classification
-# ---------------------------------------------------------------------------
 
 
 class SourceTier(Enum):
-    """Classifies the provenance and reliability of an odds provider."""
+    """How much the feed can be trusted, and how it must be surfaced."""
 
-    OFFICIAL = "official"   # Free API tier, maintained, ToS-compliant
-    UNOFFICIAL = "unofficial"  # Scraped, community-maintained, ToS-gray
+    OFFICIAL = "official"      # Licensed/ToS-compliant API, free tier is fine.
+    UNOFFICIAL = "unofficial"  # Scraped or community-maintained: flagged in UI.
 
 
 # ---------------------------------------------------------------------------
-# Quota & health tracking
+# Quota
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ProviderQuota:
-    """Current quota state for a provider."""
+    """Remaining request budget for a provider.
+
+    ``limit <= 0`` means "not metered" (a free or unmetered feed); such a
+    provider must never be treated as exhausted.
+    """
 
     remaining: int
     limit: int
-    reset_at: float  # unix timestamp when quota resets (UTC)
-    tier: SourceTier
+    reset_at: float = 0.0
+    tier: SourceTier = SourceTier.OFFICIAL
+
+    @property
+    def metered(self) -> bool:
+        return self.limit > 0
 
     @property
     def consumed(self) -> int:
-        return self.limit - self.remaining
+        return max(0, self.limit - self.remaining) if self.metered else 0
 
     @property
     def pct_remaining(self) -> float:
-        if self.limit == 0:
-            return 0.0
-        return round(self.remaining / self.limit * 100.0, 2)
+        if not self.metered:
+            return 100.0
+        return round(max(0.0, self.remaining / self.limit * 100.0), 2)
+
+    def has_headroom(self, need: int = 1) -> bool:
+        """True when at least ``need`` more calls can be made."""
+        if not self.metered:
+            return True
+        return self.remaining >= need
 
 
 # ---------------------------------------------------------------------------
-# Exception hierarchy — every adapter raises from this set
+# Errors
 # ---------------------------------------------------------------------------
 
 
 class ProviderError(Exception):
-    """Base class for all provider-related errors."""
+    """Base class for provider failures.
 
-    def __init__(self, message: str, provider: str, retry_after: Optional[float] = None):
-        self.provider = provider
-        self.retry_after = retry_after  # seconds, or None
+    ``retry_after`` lets the router honour a server-supplied cooldown instead
+    of guessing, which is what keeps a rate-limited feed from eating the
+    cycle budget.
+    """
+
+    retryable = True
+
+    def __init__(self, message: str, *, provider: str = "", retry_after: Optional[float] = None):
         super().__init__(message)
+        self.provider = provider
+        self.retry_after = retry_after
 
 
 class ApiError(ProviderError):
-    """HTTP-level failure (non-2xx, timeout, connection error)."""
+    """Transport failure: timeout, DNS, TLS, or a non-2xx response."""
+
+
+class ParseError(ProviderError):
+    """The provider answered, but the payload could not be trusted.
+
+    Treated as a provider fault (and not as "no fixtures") so a silent schema
+    change surfaces as an error instead of as an empty board.
+    """
 
 
 class RateLimitedError(ProviderError):
-    """Provider returned 429 or reported quota exhaustion."""
+    """429, or a quota response that would not have been billed."""
 
-    def __init__(self, message: str, provider: str, retry_after: float):
-        super().__init__(message, provider, retry_after=retry_after)
+    def __init__(self, message: str, *, provider: str = "", retry_after: float = 60.0):
+        super().__init__(message, provider=provider, retry_after=retry_after)
 
 
 class ProviderNotAvailableError(ProviderError):
-    """Provider is explicitly disabled or permanently unavailable."""
+    """Disabled by config, or deliberately left unconfigured."""
 
-    pass
+    retryable = False
 
 
 # ---------------------------------------------------------------------------
-# The Provider Protocol
+# Provider contract
 # ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class OddsProvider(Protocol):
-    """Duck-typed protocol for all odds providers.
+    """The contract every feed adapter implements.
 
-    Consumers should type-hint against this Protocol, not a concrete class,
-    so the router can accept any registered provider.
+    Kept deliberately narrow: four calls and two status calls. Anything a feed
+    needs beyond that belongs inside the adapter, not in the router.
     """
 
     name: str
-    """Unique identifier — must match the name used in ProviderRouter."""
-
     tier: SourceTier
-    """OFFICIAL or UNOFFICIAL — gates UI rendering and logging."""
+
+    def get_odds(self, sport_key: str, *, region: str, markets: str) -> list[dict[str, Any]]:
+        """Return the raw odds payload for one league."""
+
+    def get_events(self, sport_key: str) -> list[dict[str, Any]]:
+        """Return fixtures (ideally a free/discovery call)."""
+
+    def get_scores(self, sport_key: str) -> list[dict[str, Any]]:
+        """Return final/live scores used for settlement."""
+
+    def parse_odds(self, raw: Iterable[Mapping[str, Any]], *, market_keys: Sequence[str]) -> list:
+        """Translate this provider's payload into LISA ``Match`` objects.
+
+        Owned by the adapter on purpose: the schema knowledge stays next to the
+        client that produced it, and a mistyped provider name can never be
+        parsed by the wrong adapter.
+        """
+
+    def quota_status(self) -> ProviderQuota:
+        """Report the budget left, for scheduling decisions."""
+
+    def is_available(self) -> bool:
+        """False when unconfigured or administratively disabled."""
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CircuitState:
+    """Per-provider health, used to stop paying for calls that cannot work."""
+
+    consecutive_failures: int = 0
+    open_until: float = 0.0        # monotonic deadline while the breaker is open
+    last_success: float = 0.0      # monotonic
+    last_error: str = ""
+    last_error_at: float = 0.0
+
+    def trip(self, now: float, cooldown: float, error: str) -> None:
+        self.consecutive_failures += 1
+        self.open_until = max(self.open_until, now + cooldown)
+        self.last_error = error
+        self.last_error_at = now
+
+    def record_success(self, now: float) -> None:
+        self.consecutive_failures = 0
+        self.open_until = 0.0
+        self.last_success = now
+
+    def is_open(self, now: float) -> bool:
+        return now < self.open_until
+
+
+# ---------------------------------------------------------------------------
+# Router
+# ---------------------------------------------------------------------------
+
+
+class ProviderRouter:
+    """Chooses which feed to trust for a league, with a fallback chain.
+
+    Ordering policy (why this matters for throughput):
+
+    1. Skip providers that are administratively unavailable.
+    2. Skip providers whose circuit breaker is open (no point paying a timeout
+       on every cycle for a feed that is already down).
+    3. Skip providers with no quota headroom, so the last few credits are spent
+       deliberately rather than by a poll that returns nothing useful.
+    4. Ask the primary first; on any failure, walk the fallback chain once.
+    5. Never raise. A dead feed must not be able to fail a pipeline cycle.
+    """
+
+    #: Failures before a provider is benched for ``base_cooldown``.
+    FAILURE_THRESHOLD = 3
+    #: Backoff ladder, indexed by consecutive failures past the threshold.
+    COOLDOWN_LADDER: tuple[float, ...] = (60.0, 300.0, 900.0, 1800.0)
+
+    def __init__(
+        self,
+        providers: Sequence[OddsProvider],
+        *,
+        primary: str,
+        fallbacks: Sequence[str] = (),
+        min_quota: int = 1,
+    ) -> None:
+        if not providers:
+            raise ValueError("ProviderRouter requires at least one provider")
+
+        self._by_name: dict[str, OddsProvider] = {}
+        for p in providers:
+            name = getattr(p, "name", "") or type(p).__name__.lower()
+            self._by_name[name] = p
+            # ``name`` on the instance shadows the class attribute for the
+            # router's lookups; keep the canonical form on the object too.
+            try:
+                p.name = name  # type: ignore[misc]
+            except Exception:  # frozen/slots adapter: lookups still work
+                pass
+
+        self.primary = primary
+        self.fallbacks = tuple(f for f in fallbacks if f != primary)
+        self.min_quota = max(1, int(min_quota))
+
+        unknown = {primary, *self.fallbacks} - set(self._by_name)
+        if unknown:
+            raise ValueError(
+                f"Unknown provider(s) {sorted(unknown)}; registered: {sorted(self._by_name)}"
+            )
+
+        self._states: dict[str, CircuitState] = {n: CircuitState() for n in self._by_name}
+        self._lock = threading.Lock()
+
+    # -- introspection ----------------------------------------------------
+
+    @property
+    def provider_names(self) -> tuple[str, ...]:
+        return tuple(self._by_name)
+
+    def _cooldown_for(self, failures: int) -> float:
+        idx = min(max(failures - self.FAILURE_THRESHOLD, 0), len(self.COOLDOWN_LADDER) - 1)
+        return self.COOLDOWN_LADDER[idx]
+
+    def _usable(self, name: str, now: float) -> tuple[bool, str]:
+        """Whether ``name`` may be called right now, and why not if it may not."""
+        provider = self._by_name[name]
+        try:
+            if not provider.is_available():
+                return False, "unavailable"
+        except Exception as exc:  # a broken is_available() must not kill routing
+            logger.warning("provider %s is_available() raised: %s", name, exc)
+            return False, "is_available_error"
+
+        state = self._states[name]
+        if state.is_open(now):
+            return False, f"circuit_open({max(0.0, state.open_until - now):.0f}s)"
+
+        try:
+            quota = provider.quota_status()
+        except Exception as exc:
+            logger.warning("provider %s quota_status() raised: %s", name, exc)
+            return False, "quota_error"
+
+        if not quota.has_headroom(self.min_quota):
+            return False, f"quota_exhausted({quota.remaining}/{quota.limit})"
+        return True, ""
+
+    # -- failure bookkeeping ---------------------------------------------
+
+    def _record_ok(self, name: str, now: float) -> None:
+        with self._lock:
+            self._states[name].record_success(now)
+
+    def _record_fail(self, name: str, now: float, exc: BaseException) -> None:
+        with self._lock:
+            state = self._states[name]
+            state.trip(now, self._cooldown_for(state.consecutive_failures + 1), repr(exc))
+            failures = state.consecutive_failures
+        logger.warning(
+            "provider %s failed (%d in a row), backing off: %s", name, failures, exc
+        )
+
+    # -- primary entry point ----------------------------------------------
 
     def get_odds(
         self,
         sport_key: str,
         *,
-        region: str,
-        markets: str,
-    ) -> list[dict[str, Any]]:
-        """Fetch raw odds payload from this provider.
+        region: str = "eu",
+        markets: str = "h2h",
+        market_keys: Optional[Sequence[str]] = None,
+    ) -> tuple[list, str]:
+        """Fetch one league, degrading through the fallback chain.
 
-        Args:
-            sport_key: LISA's canonical sport key (e.g. "soccer_epl").
-            region: "eu" or "us" — determines which bookmakers are returned.
-            markets: Comma-separated market keys (e.g. "h2h,spreads,totals").
-
-        Returns:
-            Raw provider JSON — schema is provider-specific. The caller (router/
-            parsing) must transform via parse_provider_payload().
-
-        Raises:
-            ApiError: HTTP error, timeout, connection failure.
-            RateLimitedError: Provider returned 429 / quota exhausted.
-            ProviderNotAvailableError: Provider is disabled.
+        Returns ``(matches, source_name)``. ``source_name`` is the provider
+        that produced the data, or ``"none"`` when every candidate was skipped
+        or failed. An empty list with a real source name means "the feed
+        answered and has nothing for this league" -- a meaningful difference
+        from a total failure, and the caller can tell them apart.
         """
+        keys = tuple(market_keys) if market_keys else tuple(
+            m.strip() for m in markets.split(",") if m.strip()
+        )
+        now = time.monotonic()
 
-
-# ---------------------------------------------------------------------------
-# Provider Router — the "traffic cop"
-# ---------------------------------------------------------------------------
-
-
-class ProviderRouter:
-    """Selects a provider (with fallback chain) and returns provenance.
-
-    Responsibilities:
-    1. Try primary provider first.
-    2. On any error, cycle through configured fallbacks.
-    3. Track per-provider quota so we never hit hard limits unexpectedly.
-    4. Return (matches, source_name) so the caller can record provenance.
-    5. Support cross-source consensus by fetching from ALL available providers.
-    """
-
-    def __init__(
-        self,
-        *,
-        primary: str,
-        fallbacks: tuple[str, ...],
-        providers: dict[str, OddsProvider],
-    ):
-        self._primary = primary
-        self._fallbacks = fallbacks
-        self._providers = providers  # name -> OddsProvider
-
-        # Validate that primary and fallbacks reference registered providers
-        all_names = {primary, *fallbacks}
-        missing = all_names - set(providers.keys())
-        if missing:
-            raise ValueError(f"Provider(s) {missing} not registered in router")
-
-    def get_odds_single(
-        self,
-        sport_key: str,
-        *,
-        region: str,
-        markets: str,
-        now: Optional[float] = None,
-    ) -> tuple[Optional[list], str]:
-        """Try primary → fallbacks. Returns (matches_list, source_name) or (None, "none").
-
-        The matches_list may be empty if no provider had data for this fixture.
-        """
-        chain = [self._primary] + list(self._fallbacks)
-
-        for name in chain:
-            provider = self._providers.get(name)
-            if provider is None:
+        for name in self._chain():
+            ok, why = self._usable(name, now)
+            if not ok:
+                logger.debug("skipping provider %s: %s", name, why)
                 continue
-            if not provider.is_available():
+
+            provider = self._by_name[name]
+            try:
+                raw = provider.get_odds(sport_key, region=region, markets=markets)
+            except RateLimitedError as exc:
+                now = time.monotonic()
+                if exc.retry_after:
+                    with self._lock:
+                        self._states[name].open_until = max(
+                            self._states[name].open_until, now + float(exc.retry_after)
+                        )
+                self._record_fail(name, now, exc)
+                continue
+            except ProviderError as exc:
+                self._record_fail(name, name and time.monotonic(), exc)
+                continue
+            except Exception as exc:  # never let a bad adapter break a cycle
+                self._record_fail(name, time.monotonic(), exc)
                 continue
 
             try:
-                raw = provider.get_odds(sport_key, region=region, markets=markets)
-                matches = self._parse_payload(name, raw, markets=markets)
-                if matches:
-                    return matches, name
-            except RateLimitedError as e:
-                # Log and continue to next provider
-                continue
-            except ApiError as e:
-                # Log and continue to next provider
-                continue
-            except Exception as e:
-                # Unexpected error — continue but surface for monitoring
+                matches = provider.parse_odds(raw or [], market_keys=keys)
+            except Exception as exc:
+                self._record_fail(name, time.monotonic(), ParseError(f"{name}: {exc}"))
                 continue
 
+            self._record_ok(name, time.monotonic())
+            return matches, name
+
+        logger.warning("no provider produced odds for %s", sport_key)
         return [], "none"
 
     def get_odds_cross_source(
         self,
         sport_key: str,
         *,
-        region: str,
-        markets: str,
+        region: str = "eu",
+        markets: str = "h2h",
+        market_keys: Optional[Sequence[str]] = None,
     ) -> dict[str, list]:
-        """Fetch from ALL available providers for consensus blending.
+        """Poll every usable provider, for cross-source consensus.
 
-        Returns:
-            {provider_name: [Match, ...], ...} — only providers that returned data.
-            Empty dict if nothing returned.
+        Independent feeds fail in different ways, so blending them raises the
+        effective book count without raising latency much: a provider already
+        benched by its breaker is skipped instantly, and the rest are queried
+        with the caller's own timeout budget.
         """
-        results: dict[str, list] = {}
-        for name, provider in self._providers.items():
-            if not provider.is_available():
+        keys = tuple(market_keys) if market_keys else tuple(
+            m.strip() for m in markets.split(",") if m.strip()
+        )
+        now = time.monotonic()
+        out: dict[str, list] = {}
+
+        for name in self._by_name:
+            ok, why = self._usable(name, now)
+            if not ok:
+                logger.debug("cross-source: skipping %s (%s)", name, why)
                 continue
+            provider = self._by_name[name]
             try:
                 raw = provider.get_odds(sport_key, region=region, markets=markets)
-                matches = self._parse_payload(name, raw, markets=markets)
-                if matches:
-                    results[name] = matches
-            except Exception:
+                matches = provider.parse_odds(raw or [], market_keys=keys)
+            except Exception as exc:
+                self._record_fail(name, time.monotonic(), exc)
                 continue
-        return results
+            if matches:
+                out[name] = matches
+                self._record_ok(name, time.monotonic())
 
-    def _parse_payload(
-        self,
-        provider_name: str,
-        raw: list[dict[str, Any]],
-        *,
-        markets: str,
-    ) -> list:
-        """Dispatch to the correct parser for this provider.
+        return out
 
-        The dispatch table is built at module init time from all registered
-        providers' parse functions.
+    # -- health ------------------------------------------------------------
+
+    def health(self) -> dict[str, dict[str, Any]]:
+        """Per-provider status for the console/dashboard.
+
+        Built defensively: a provider whose status calls raise is reported as
+        degraded rather than allowed to break the health endpoint.
         """
-        from . import parsing  # local import to avoid circular deps
-
-        parser = parsing.PAYLOAD_PARSERS.get(provider_name)
-        if parser is None:
-            # Fallback: try generic fallback parser
-            from .parsing import parse_odds_payload_generic
-            return parse_odds_payload_generic(raw, market_keys=markets.split(","))
-
-        return parser(raw, market_keys=markets.split(","))
-
-    def status(self) -> dict[str, dict]:
-        """Return health/status for every registered provider."""
-        result: dict[str, dict] = {}
-        for name, provider in self._providers.items():
+        now = time.monotonic()
+        out: dict[str, dict[str, Any]] = {}
+        for name, provider in self._by_name.items():
+            with self._lock:
+                state = self._states[name]
+                failures = state.consecutive_failures
+                open_for = max(0.0, state.open_until - now)
+                last_error = state.last_error
+            entry: dict[str, Any] = {
+                "tier": getattr(provider, "tier", SourceTier.OFFICIAL).value,
+                "consecutive_failures": failures,
+                "backing_off_for_sec": round(open_for),
+                "last_error": last_error[:200] if last_error else "",
+            }
             try:
-                quota = provider.quota_status()
-                result[name] = {
-                    "status": "healthy" if provider.is_available() else "unavailable",
-                    "tier": quota.tier.value,
-                    "remaining": quota.remaining,
-                    "limit": quota.limit,
-                    "pct_remaining": quota.pct_remaining,
-                    "last_checked": round(time.time()),  # TODO: track real time
+                entry["quota"] = {
+                    "remaining": provider.quota_status().remaining,
+                    "limit": provider.quota_status().limit,
+                    "pct_remaining": provider.quota_status().pct_remaining,
                 }
-            except Exception:
-                result[name] = {
-                    "status": "error",
-                    "tier": self._providers[name].tier.value,
-                    "remaining": 0,
-                    "limit": 0,
-                    "pct_remaining": 0.0,
-                }
-        return result
+            except Exception as exc:
+                entry["quota"] = {"error": str(exc)[:120]}
+            try:
+                entry["available"] = bool(provider.is_available())
+            except Exception as exc:
+                entry["available"] = False
+                entry["available_error"] = str(exc)[:120]
 
-    def any_exhausted(self) -> bool:
-        """True if every provider is either unavailable or has low remaining."""
-        available = [p for p in self._providers.values() if p.is_available()]
-        if not available:
-            return True
-        return all(p.quota_status().remaining < 20 for p in available)
+            if not entry.get("available"):
+                entry["status"] = "disabled"
+            elif open_for > 0:
+                entry["status"] = "backing_off"
+            elif failures:
+                entry["status"] = "degraded"
+            else:
+                entry["status"] = "healthy"
+            out[name] = entry
+        return out
 
+    def any_usable(self) -> bool:
+        """True when at least one provider could serve a request right now."""
+        now = time.monotonic()
+        return any(self._usable(name, now)[0] for name in self._chain())
 
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-_imported_time: Optional[float] = None
-
-
-def now() -> float:
-    """Monotonic-ish time helper — avoids calling time.time() in hot paths."""
-    global _imported_time
-    if _imported_time is None:
-        _imported_time = time.time()
-    return _imported_time
-
-
-# ---------------------------------------------------------------------------
-# End of package
-# ---------------------------------------------------------------------------
+    def _chain(self) -> tuple[str, ...]:
+        return (self.primary, *self.fallbacks)
