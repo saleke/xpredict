@@ -148,7 +148,12 @@ def test_pipeline_prekickoff_clv_snapshot_and_locking() -> None:
     row_1 = storage._picks[key]
     assert row_1["best_odds"] == 1.45
     assert row_1["closing_odds"] == 1.45
-    assert row_1["clv"] == 0.0
+    # CLV is "how much better was our price than the pre-kickoff close", and
+    # that is unknowable the moment the pick is minted. Seeding it to 0.0
+    # asserted "we captured exactly the closing line" for every pick that is
+    # never re-observed, which dragged the mean down and inflated
+    # positive_clv_share. It stays None until a pre-kickoff cycle re-reads it.
+    assert row_1["clv"] is None
 
     # Cycle 2: T-30m before kickoff, Pinnacle line moves down to 1.25!
     b_spike = [

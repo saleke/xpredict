@@ -2,13 +2,20 @@
 transport failure leaves the ledger untouched."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from conftest import insert_postponed_pick
 
 from lisa.settle import run_settlement
 
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
+
+# Settlement runs on a later clock: the bundled score feed reports results for
+# the 2026-09-21 matchday, so grading before those fixtures kicked off would be
+# asking the engine to resolve matches that have not been played. Settlement also
+# (correctly) refuses to spend a /scores call on a league where nothing has
+# kicked off yet, which is the whole point of that guard.
+SETTLE_NOW = datetime(2026, 9, 22, 9, 0, 0, tzinfo=timezone.utc)
 
 
 def test_settlement_grades_the_ledger(pipeline, fixture_client, storage, settings):
@@ -18,7 +25,7 @@ def test_settlement_grades_the_ledger(pipeline, fixture_client, storage, setting
     insert_postponed_pick(storage)
     assert len(storage.list_pending_picks()) == 5
 
-    rep = run_settlement(fixture_client, storage, settings, now=NOW)
+    rep = run_settlement(fixture_client, storage, settings, now=SETTLE_NOW)
     assert rep.pending == 5
     assert rep.settled == 2          # nba-a + lig-a
     assert rep.won == 2
@@ -47,7 +54,7 @@ def test_settlement_ignores_upstream_failure(pipeline, storage, settings):
 
     pipeline.run_cycle(now=NOW)
     insert_postponed_pick(storage)
-    rep = run_settlement(Boom(), storage, settings, now=NOW)
+    rep = run_settlement(Boom(), storage, settings, now=SETTLE_NOW)
     assert rep.errors and rep.settled == 0
     assert len(storage.list_pending_picks()) == 5  # nothing graded
 
@@ -147,7 +154,10 @@ def test_settlement_multi_market_ledger_execution(storage, settings):
 
     assert len(storage.list_pending_picks()) == 3
 
-    rep = run_settlement(MockClient(), storage, settings, now=NOW)
+    # These picks were created with commence_time=utcnow(), so grade them a
+    # few hours after kickoff, once the fixture can actually be finished.
+    rep = run_settlement(MockClient(), storage, settings,
+                         now=utcnow() + timedelta(hours=4))
     assert rep.pending == 3
     assert rep.settled == 2
     assert rep.won == 1   # Over 210.5

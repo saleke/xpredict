@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 
 from . import config as cfg
@@ -25,10 +25,13 @@ from .storage import Storage, pick_key
 
 logger = logging.getLogger(__name__)
 
-#: How long a raw book payload stays readable for the forecast board.
-PAYLOAD_TTL_SEC = 90 * 60
+#: How long a raw book payload stays readable for the forecast board. This
+#: must comfortably cover the poll cadence: a 90-minute TTL with a 6-hour
+#: cadence left the board dark ~75% of the day. Sized to the full product
+#: window (48h) so a snapshot survives until the next cycle re-mints it.
+PAYLOAD_TTL_SEC = 6 * 3600
 #: How long the merged board rollup stays readable.
-SNAPSHOT_TTL_SEC = 90 * 60
+SNAPSHOT_TTL_SEC = 6 * 3600
 
 
 @dataclass
@@ -141,6 +144,7 @@ class Pipeline:
         if not isinstance(payload, (list, dict)):
             return
         remaining = getattr(self.client, "last_remaining", None)
+        ttl = max(PAYLOAD_TTL_SEC, int(self.settings.forecast_horizon_hours * 3600))
         try:
             self.storage.upsert_live(
                 live_odds_key(sport),
@@ -152,7 +156,7 @@ class Pipeline:
                     ),
                     "payload": payload,
                 },
-                ttl_seconds=PAYLOAD_TTL_SEC,
+                ttl_seconds=ttl,
             )
         except Exception as exc:
             # The cache only backs the UI; losing it must not stop picks.
@@ -248,6 +252,18 @@ class Pipeline:
             # assumes the bet was available before kickoff.
             if match.commence_time is not None and match.commence_time <= now:
                 report.suppressed.append(f"{match.id}:kickoff_passed")
+                continue
+
+            # Hard product cap: picks exist only for fixtures inside the 48h
+            # window. A lead beyond it is outside the promise, cannot be graded
+            # for weeks and starves the near board. This is a hard suppression,
+            # never a padding target.
+            horizon = getattr(self.settings, "pick_horizon_hours", 48.0)
+            if match.commence_time is not None and \
+                    match.commence_time > now + timedelta(hours=horizon):
+                report.suppressed.append(
+                    f"{match.id}:beyond_horizon"
+                    f"({(match.commence_time - now).total_seconds() / 3600:.0f}h)")
                 continue
 
             consensus = refine_match(

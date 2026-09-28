@@ -556,9 +556,17 @@ class AdminAPI:
             inner = getattr(client, "pool", None)
             if inner is not None and hasattr(inner, "status"):
                 try:
-                    pool.update(inner.status().as_dict())
+                    pool.update(inner.status().to_dict())
+                    pool["size"] = len(list(getattr(inner, "_states", ())))
                 except Exception:
                     logger.warning("key pool status unavailable")
+            # The console reads a small, stable surface regardless of how the
+            # pool reports internally.
+            pool.setdefault("remaining_credits", pool.get("credits_remaining")
+                            or pool.get("total_remaining"))
+            pool.setdefault("budget_daily", pool.get("daily_budget")
+                            or getattr(inner, "budget_daily", 0)
+                            if inner is not None else 0)
         paused = False
         if storage is not None and hasattr(storage, "is_system_paused"):
             try:
@@ -566,6 +574,12 @@ class AdminAPI:
             except Exception:
                 pass
         rt = self.runtime
+        stats: Any = {}
+        if storage is not None and hasattr(storage, "admin_pick_stats"):
+            try:
+                stats = storage.admin_pick_stats()
+            except Exception:
+                logger.warning("overview pick stats unavailable")
         return {
             "version": __version__,
             "role": role,
@@ -573,6 +587,7 @@ class AdminAPI:
             "uptime_seconds": round(control.uptime_seconds(), 1),
             "started_at": _iso(control.started_at),
             "paused": paused,
+            "stats": stats,
             "ledger_counts": counts,
             "scheduler": sched,
             "odds_pool": pool,
@@ -591,6 +606,7 @@ class AdminAPI:
                 "enable_inplay": settings.enable_inplay,
                 "enable_extra_markets": settings.enable_extra_markets,
                 "enable_micro_predictions": settings.enable_micro_predictions,
+                "require_positive_ev": settings.require_positive_ev,
                 "inplay_max_leagues": settings.inplay_max_leagues,
             },
             "settings_revision": rt.revision if rt else 0,
@@ -660,28 +676,46 @@ class AdminAPI:
         if pool is None or not hasattr(pool, "status"):
             return {"configured": False, "keys": [], "note":
                     "No key pool is attached; the poller is not using rotation."}
-        status = pool.status().as_dict()
+        status = pool.status().to_dict()
         rows = []
-        for state in getattr(pool, "_states", ()):
+        active_index: Optional[int] = None
+        for i, state in enumerate(getattr(pool, "_states", ())):
             # KeyState.label() is already masked; the raw key is never read here.
+            # The active key is the first one rotation would call now: not on
+            # cooldown, and either unused (remaining unknown) or with credits
+            # left. An exhausted key (remaining == 0) is skipped.
+            available = not (state.disabled_until and state.disabled_until > time.time())
+            has_credit = state.remaining is None or state.remaining > 0
+            if active_index is None and available and has_credit:
+                active_index = i
             rows.append({
+                "index": i,
                 "label": state.label(),
                 "remaining": state.remaining,
                 "used": state.used,
                 "spent_today": state.spent_today,
                 "budget_day": state.budget_day,
+                # Aliases matching the console's column model, so the UI does
+                # not have to know the pool's internal names.
+                "requests_today": state.requests,
+                "budget_daily": state.budget_day,
                 "requests": state.requests,
                 "errors": state.errors,
                 "last_used_at": _iso_ts(state.last_used_at),
+                "disabled_until": _iso_ts(state.disabled_until),
                 "cooldown_until": _iso_ts(state.disabled_until),
                 "cooldown_active": bool(state.disabled_until
                                         and state.disabled_until > time.time()),
             })
+        if active_index is None:
+            active_index = 0 if rows else None
         return {
             "configured": True,
-            "credits_remaining": status.get("credits_remaining"),
-            "any_exhausted": bool(status.get("any_exhausted")),
+            "credits_remaining": status.get("total_remaining"),
+            "any_exhausted": bool(status.get("state") in ("exhausted", "paused")),
+            "active_index": active_index,
             "keys": rows,
+            "note": None,
         }
 
     def key_cooldown(self, handler, query, body, user, role, params):
@@ -690,19 +724,45 @@ class AdminAPI:
         Deliberately narrow: reacting to a key that is being rate limited or
         looks compromised is the legitimate use. It should not double as a way
         to reshuffle the pool arbitrarily.
+
+        The console sends ``label`` plus ``cooldown_seconds``. ``index`` and
+        ``minutes`` are accepted as aliases so an older client — or a hand-typed
+        request — cannot silently no-op: both are translated into the same
+        ``label``/seconds resolution below.
         """
         label = str(body.get("label") or "").strip()
-        if not label:
-            raise AdminError(400, "label is required")
         pool = getattr(self.control.client, "pool", None) if self.control.client else None
         if pool is None:
             raise AdminError(503, "No key pool attached")
+        if not label:
+            index = body.get("index")
+            numeric = (isinstance(index, int) and not isinstance(index, bool)) or \
+                (isinstance(index, str) and index.strip().isdigit())
+            if numeric:
+                states = list(getattr(pool, "_states", ()))
+                i = int(index)
+                if 0 <= i < len(states):
+                    label = states[i].label()
+        if not label:
+            raise AdminError(400, "label is required")
         target = next((s for s in getattr(pool, "_states", ())
                        if s.label() == label), None)
         if target is None:
             raise AdminError(404, "No such key label")
-        seconds = int(body.get("cooldown_seconds") or 900)
-        until = time.time() + max(60, min(seconds, 86400))
+        minutes = body.get("minutes")
+        if minutes is not None:
+            try:
+                minutes = float(minutes)
+            except (TypeError, ValueError):
+                raise AdminError(400, "minutes must be a number")
+            params_seconds = int(minutes * 60)
+        else:
+            try:
+                params_seconds = int(body.get("cooldown_seconds") or 900)
+            except (TypeError, ValueError):
+                raise AdminError(400, "cooldown_seconds must be a number")
+        seconds = max(60, min(params_seconds, 86400))
+        until = time.time() + seconds
         target.disabled_until = until
         self.audit((user or {}).get("id"), "admin.key.cooldown", label,
                    {"cooldown_seconds": seconds, "until": _iso_ts(until)})
@@ -721,6 +781,7 @@ class AdminAPI:
             "secrets_present": rt.redacted_overview(),
             "readonly_fields": sorted(READONLY_FIELDS),
             "scope_leagues": list(cfg.SCOPE_LEAGUES),
+            "effective": _effective_summary(rt.settings()),
         }
 
     def patch_settings(self, handler, query, body, user, role, params):

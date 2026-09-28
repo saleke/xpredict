@@ -533,6 +533,91 @@ class TestAdminReadModel(unittest.TestCase):
                          body["database"]["row_counts"])
 
 
+class TestAdminKeyPool(unittest.TestCase):
+    """The key-pool views must survive a real attached pool.
+
+    Historically these paths called ``pool.status().as_dict()``, a method the
+    pool never had: with a pool attached the Keys view 500'd and the overview
+    silently dropped the pool's numbers. And the console's Cooldown button
+    posted ``{index, minutes}`` against an endpoint that documents
+    ``{label, cooldown_seconds}``, so it could never succeed.
+    """
+
+    class _FakeClient:
+        remaining_credits = 42
+
+        def __init__(self, pool):
+            self.pool = pool
+
+    def setUp(self):
+        from lisa.key_pool import OddsKeyPool
+        self.c = _Console()
+        self.addCleanup(self.c.close)
+        self.c.control.attach(client=self._FakeClient(
+            OddsKeyPool(["key-one-abcdef", "key-two-ghijkl"],
+                        budget_daily=50)))
+        self.c.make_user(self.c.owner_email)
+        _, _, resp = self.c.login(self.c.owner_email)
+        self.owner_cookie = "lisa_admin=" + resp.headers.get(
+            "Set-Cookie", "").split("lisa_admin=", 1)[1].split(";", 1)[0]
+        _, body, _ = self.c.get("/api/admin/session", cookie=self.owner_cookie)
+        self.owner_csrf = body["csrf_token"]
+
+    def test_keys_view_lists_the_pool_with_console_fields(self):
+        status, body, _ = self.c.get("/api/admin/keys",
+                                     cookie=self.owner_cookie)
+        self.assertEqual(200, status)
+        self.assertTrue(body["configured"])
+        self.assertEqual(2, len(body["keys"]))
+        key = body["keys"][0]
+        # The console's column names must be present, or the UI renders '—'.
+        self.assertIn("requests_today", key)
+        self.assertIn("budget_daily", key)
+        self.assertIn("index", key)
+        self.assertIn("label", key)
+        self.assertIsNotNone(body["active_index"])
+
+    def test_overview_surfaces_pool_and_ledger_stats(self):
+        status, body, _ = self.c.get("/api/admin/overview",
+                                     cookie=self.owner_cookie)
+        self.assertEqual(200, status)
+        self.assertTrue(body["odds_pool"]["present"])
+        self.assertEqual(42, body["odds_pool"]["remaining_credits"])
+        self.assertGreaterEqual(body["odds_pool"]["size"], 2)
+        # Overview must carry the same stats object the Performance view uses.
+        self.assertIn("graded", body.get("stats", {}))
+        self.assertIn("require_positive_ev", body["settings"])
+
+    def test_cooldown_accepts_label_and_seconds(self):
+        _, body, _ = self.c.get("/api/admin/keys", cookie=self.owner_cookie)
+        label = body["keys"][0]["label"]
+        status, cooldown, _ = self.c.post(
+            "/api/admin/keys/cooldown",
+            {"label": label, "cooldown_seconds": 300},
+            cookie=self.owner_cookie, csrf=self.owner_csrf)
+        self.assertEqual(200, status)
+        self.assertEqual(label, cooldown["label"])
+        _, keys, _ = self.c.get("/api/admin/keys", cookie=self.owner_cookie)
+        self.assertTrue(keys["keys"][0]["cooldown_active"])
+
+    def test_cooldown_accepts_index_and_minutes_aliases(self):
+        status, cooldown, _ = self.c.post(
+            "/api/admin/keys/cooldown",
+            {"index": 1, "minutes": 10},
+            cookie=self.owner_cookie, csrf=self.owner_csrf)
+        self.assertEqual(200, status)
+        self.assertTrue(cooldown["label"])
+        _, keys, _ = self.c.get("/api/admin/keys", cookie=self.owner_cookie)
+        self.assertTrue(keys["keys"][1]["cooldown_active"])
+
+    def test_cooldown_rejects_a_made_up_label(self):
+        status, _, _ = self.c.post(
+            "/api/admin/keys/cooldown",
+            {"label": "zzzz…xx", "cooldown_seconds": 300},
+            cookie=self.owner_cookie, csrf=self.owner_csrf)
+        self.assertEqual(404, status)
+
+
 class TestAdminSettingsRuntime(unittest.TestCase):
     """Settings edits must be validated, live, and survive a restart."""
 

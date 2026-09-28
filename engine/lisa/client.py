@@ -125,6 +125,23 @@ class OddsApiClient:
             {"apiKey": self.api_key, "daysFrom": str(days_from)},
         )
 
+    def get_events(self, sport_key: str, *,
+                   commence_time_from: str = "",
+                   commence_time_to: str = "") -> list[dict]:
+        """Free /events endpoint: pre-match fixture list with kickoff times.
+
+        Documented and measured to NOT count against the usage quota. This is
+        the discovery primitive the planner relies on to spend /odds credits
+        only on leagues that actually have fixtures in the product window.
+        """
+        params: dict[str, str] = {"apiKey": self.api_key, "dateFormat": "iso"}
+        if commence_time_from:
+            params["commenceTimeFrom"] = commence_time_from
+        if commence_time_to:
+            params["commenceTimeTo"] = commence_time_to
+        return self._get(
+            f"/v4/sports/{urllib.parse.quote(sport_key)}/events/", params)
+
 
 class FixtureClient:
     """Serves static payloads — a drop-in stand-in for OddsApiClient.
@@ -133,12 +150,15 @@ class FixtureClient:
     """
 
     def __init__(self, odds_payloads: dict[str, list] | None = None,
-                 scores_payloads: dict[str, list] | None = None):
+                 scores_payloads: dict[str, list] | None = None,
+                 events_payloads: dict[str, list] | None = None):
         self.odds = odds_payloads or {}
         self.scores = scores_payloads or {}
+        self.events = events_payloads or {}
 
     def list_sports(self) -> list[dict]:
-        return [{"key": k, "active": True, "title": k} for k in self.odds]
+        keys = list(self.odds) or list(self.events)
+        return [{"key": k, "active": True, "title": k} for k in keys]
 
     def get_odds(self, sport_key: str, **kwargs) -> list[dict]:
         return list(self.odds.get(sport_key, []))
@@ -148,3 +168,28 @@ class FixtureClient:
 
     def get_scores(self, sport_key: str, **kwargs) -> list[dict]:
         return list(self.scores.get(sport_key, []))
+
+    def get_events(self, sport_key: str, **kwargs) -> list[dict]:
+        """Serve the free /events discovery endpoint.
+
+        Synthesised from the bundled odds payloads (which already carry id,
+        kickoff and both teams) unless an explicit events map is supplied, so
+        the stand-in exercises the real discovery path the planner depends on
+        instead of silently reporting an empty calendar.
+        """
+        if sport_key in self.events:
+            return list(self.events[sport_key])
+        out: list[dict] = []
+        for ev in self.odds.get(sport_key, []):
+            if not isinstance(ev, dict):
+                continue
+            out.append({
+                "id": str(ev.get("id", "")),
+                "sport_key": sport_key,
+                "sport_title": str(ev.get("sport_title", sport_key)),
+                "commence_time": str(ev.get("commence_time", "")),
+                "home_team": str(ev.get("home_team", "")),
+                "away_team": str(ev.get("away_team", "")),
+                "completed": bool(ev.get("completed", False)),
+            })
+        return out

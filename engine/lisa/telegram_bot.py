@@ -186,18 +186,12 @@ _ROW_CODES = [{"text": "🎟️ Bookmaker Codes"}, {"text": "⚡ 5-Fold Parlay"}
 
 ADMIN_REPLY_KEYBOARD = {
     "keyboard": [
-<<<<<<< HEAD
-        [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
-        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ Live Accumulator"}],
-        [{"text": "🎟️ Execution Guide"}, {"text": "🛡️ Trap Advisories"}],
-=======
         [{"text": "🛠️ Admin Console"}, {"text": "👤 Grant Access"}],
         [{"text": "📣 Broadcast"}, {"text": "🟢 Settle Match"}],
         _ADMIN_ROW_NAV,
         [{"text": "⏸️ Pause System"}, {"text": "📜 Audit Trail"}],
         _ROW_LEDGER,
         _ROW_CODES,
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -613,42 +607,6 @@ def format_settlement_alert_html(pick_data: dict[str, Any]) -> str:
     )
 
 
-<<<<<<< HEAD
-def format_stats_html(summary: dict[str, Any]) -> str:
-    """Format the audited track record. Missing history renders as n/a."""
-
-    def pct(value: Any, digits: int = 1) -> str:
-        return "n/a" if value is None else f"{float(value) * 100:.{digits}f}%"
-
-    def num(value: Any, digits: int = 4) -> str:
-        return "n/a" if value is None else f"{float(value):.{digits}f}"
-
-    settled = summary.get("settled_picks_count") or 0
-    won = summary.get("won_count")
-    lost = summary.get("lost_count")
-    record = (
-        f"{int(won)}/{int(won) + int(lost)}" if won is not None and lost is not None else "n/a"
-    )
-    if not settled:
-        return (
-            "📈 <b>LISA PERFORMANCE LEDGER</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "ℹ️ <b>No settled picks yet.</b> Metrics appear once real matches "
-            "have been graded from the live ledger."
-        )
-
-    return (
-        f"📈 <b>LISA AUDITED PERFORMANCE AUDIT</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"✅ <b>Verified Win Rate:</b> <code>{pct(summary.get('win_rate'))}</code> ({record})\n"
-        f"🎯 <b>Brier Calibration Score:</b> <code>{num(summary.get('brier_score'))}</code>\n"
-        f"⚖️ <b>Expected Calibration Error:</b> <code>{pct(summary.get('ece'), 2)}</code>\n"
-        f"💎 <b>Mean Closing Line Value (CLV):</b> <code>{pct(summary.get('mean_clv'), 2)}</code>\n"
-        f"📊 <b>Sample Size:</b> <code>{int(settled)} fully audited real matches</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <i>View live ledger: http://localhost:8080/#ledger</i>"
-    )
-=======
 def _fmt_metric(summary: dict[str, Any], *keys: str) -> Optional[float]:
     """Return the first present numeric value among ``keys``, else ``None``.
 
@@ -726,7 +684,6 @@ def format_stats_html(summary: dict[str, Any]) -> str:
         lines.append("🛡️ <i>Audited into the verified mathematical ledger. Zero post-hoc manipulation.</i>")
     lines.append("🌐 <i>View live ledger: http://localhost:8080/#ledger</i>")
     return "\n".join(lines)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
 
 def format_free_picks_html(picks: list[dict[str, Any]]) -> str:
@@ -1079,6 +1036,10 @@ class TelegramBot:
         self._member_cache: dict[str, tuple[bool, float]] = {}
         self._tier_cache: dict[str, tuple[str, float]] = {}
         self._picks_cache: tuple[dict[str, Any], float] = ({}, 0.0)
+        # Measured-performance cache used by _load_dashboard_summary. Scored from
+        # the graded ledger, so it is recomputed on the same 30s cadence as the
+        # picks cache rather than on every single command.
+        self._summary_cache: tuple[dict[str, Any], float] = ({}, 0.0)
 
         if admin_telegram_ids is not None:
             raw_admins = admin_telegram_ids
@@ -1103,6 +1064,16 @@ class TelegramBot:
                 self.storage = SqliteStorage(getattr(self.registry, "db_path", "data/lisa.db"))
             except Exception:
                 self.storage = None
+
+    def invalidate_caches(self) -> None:
+        """Drop the picks and performance caches.
+
+        Called when the ledger is known to have changed (a settlement ran, an
+        admin graded a match by hand) so the next command reports current
+        figures instead of up to 30 seconds of stale ones.
+        """
+        self._picks_cache = ({}, 0.0)
+        self._summary_cache = ({}, 0.0)
 
     def is_admin(self, user_id: str) -> bool:
         """Check if incoming user ID is explicitly authorized in the admin whitelist."""
@@ -1627,21 +1598,6 @@ class TelegramBot:
             )
 
         if cmd == "/help":
-<<<<<<< HEAD
-            help_lines = [
-                "📖 <b>LISA Bot Help Desk</b>\n",
-                "/picks — View today's free picks",
-                "/bankroll — Configure your personalized Kelly bankroll profile",
-                "/parlay — View the accumulator priced from live legs",
-                "/codes — How to place a selection (LISA mints no booking codes)",
-                "/stats — Institutional audited track record",
-                "/traps — Capital preserved and traps avoided",
-                "/unlock — Get your free web terminal unlock code",
-                "/vip — Subscription tier information",
-                "/help — Show this help message",
-            ]
-=======
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
             if self.is_admin(user_id):
                 help_lines = [
                     "📖 <b>LISA Admin Help Desk</b>\n",
@@ -2375,94 +2331,89 @@ class TelegramBot:
         return data if isinstance(data, list) else []
 
     def _handle_traps(self) -> tuple[str, Optional[dict[str, Any]]]:
-<<<<<<< HEAD
-        """Recent trap advisories, straight from the ingestion daemon."""
-        traps = self._recent_traps()
-        if not traps:
-            text = (
-                "\U0001f6e1\ufe0f <b>LISA CAPITAL PRESERVATION DESK</b>\n"
-                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-                "\u2139\ufe0f <b>No trap advisories recorded yet.</b> A trap is logged "
-                "only when the books genuinely disagree on a public favourite during "
-                "a real odds cycle."
-            )
-        else:
-            lines = [
-                "\U0001f6e1\ufe0f <b>LISA CAPITAL PRESERVATION DESK</b>\n"
-                "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
-                f"Advisories in the recent cycle window: <b>{len(traps)}</b>\n\n"
-                "<b>Most recent:</b>",
-            ]
-            for t in traps[:5]:
-                lines.append(
-                    f"\u2022 <i>{t.get('home_team', '?')} vs {t.get('away_team', '?')}</i>: "
-                    f"pass on {t.get('public_favorite', '?')} "
-                    f"(books disagree, CV {float(t.get('cv') or 0) * 100:.1f}%)"
-                )
-            lines.append(
-                "\n\U0001f4a1 <i>A pass is not a result \u2014 check the ledger for "
-                "graded matches.</i>"
-            )
-            text = "\n".join(lines)
-=======
-        """Display measured pass-advisory / trap counts from the honest summary.
+        """Display the trap advisories actually recorded by the odds poller.
 
-        Reports the gross and net counterfactual together. Showing only the gross
-        "capital preserved" figure would be misleading: most avoided traps would
-        in fact have won, so avoidance is not free money.
+        The poller writes one row per suppressed (pass-advisory) fixture to
+        ``live:traps``. That recorded history is the primary source here:
+        this command used to read only an aggregate metrics summary, so a
+        system that was actively suppressing fixtures reported "no measured
+        pass-advisory data yet" — the live record existed and was ignored.
+
+        When history exists we show it verbatim and make no capital-preserved
+        claim: most avoided traps would have won, so "stake avoided" is not
+        money saved and is deliberately not reported here.
         """
-        summary = self._load_dashboard_summary() or {}
-        traps = _fmt_metric(summary, "grade_c_traps_avoided", "traps_avoided_month")
-        traps_won = _fmt_metric(summary, "grade_c_traps_that_won")
-        traps_lost = _fmt_metric(summary, "grade_c_traps_that_lost")
-        passes = _fmt_metric(summary, "pass_advisories_count")
-        evaluated = _fmt_metric(summary, "total_matches_evaluated", "total_matches")
-        gross = _fmt_metric(summary, "capital_preserved_dollars")
-        net_cfv = _fmt_metric(summary, "net_counterfactual_value")
-
+        traps = self._recent_traps()
         lines = [
             "🛡️ <b>LISA CAPITAL PRESERVATION DESK</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━",
         ]
-        if traps is None and evaluated is None:
+
+        if traps:
             lines.append(
-                "ℹ️ <b>No measured pass-advisory data yet.</b>\n\n"
-                "<i>Trap counts are published only once matches have been evaluated and\n"
-                "graded. LISA reports nothing rather than an illustrative figure.</i>"
+                f"🚫 <b>Recorded Trap Advisories:</b> <code>{len(traps)}</code>\n"
+            )
+            for t in traps[-10:]:
+                home = str(t.get("home_team") or "?").strip()
+                away = str(t.get("away_team") or "?").strip()
+                fav = str(t.get("public_favorite") or "").strip()
+                try:
+                    cv_pct = f"{float(t.get('cv')) * 100:.1f}%"
+                except (TypeError, ValueError):
+                    cv_pct = "n/a"
+                line = f"• {home} vs {away}"
+                if fav and fav not in (home, away):
+                    line += f"  (public: {fav})"
+                lines.append(f"{line}  —  books disagreed <code>{cv_pct}</code>")
+            lines.append(
+                "\n<i>A trap advisory means the books materially disagreed, so the\n"
+                "consensus was not trustworthy enough to price. It is a pass, not\n"
+                "a result: avoided traps are not capital saved, because many would\n"
+                "have won. No profit is claimed from them.</i>"
             )
         else:
-            if evaluated is not None:
-                lines.append(f"🔍 <b>Matches Evaluated:</b> <code>{int(evaluated)}</code>")
-            if passes is not None:
-                lines.append(f"🛡️ <b>Pass Advisories Issued:</b> <code>{int(passes)}</code>")
-            if traps is not None:
-                lines.append(f"🚫 <b>Traps Avoided:</b> <code>{int(traps)}</code>")
+            summary = self._load_dashboard_summary() or {}
+            traps_count = _fmt_metric(summary, "grade_c_traps_avoided",
+                                      "traps_avoided_month")
+            traps_won = _fmt_metric(summary, "grade_c_traps_that_won")
+            traps_lost = _fmt_metric(summary, "grade_c_traps_that_lost")
+            passes = _fmt_metric(summary, "pass_advisories_count")
+            evaluated = _fmt_metric(summary, "total_matches_evaluated",
+                                    "total_matches")
 
-            if traps_won is not None and traps_lost is not None and traps:
+            if traps_count is None and evaluated is None:
                 lines.append(
-                    f"↔️ <b>Of those avoided, would have:</b> "
-                    f"<code>{int(traps_won)} won</code> / <code>{int(traps_lost)} lost</code>"
+                    "ℹ️ <b>No trap advisories recorded yet.</b>\n\n"
+                    "<i>Advisories are published only once fixtures have actually been\n"
+                    "suppressed by the dispersion gate. LISA reports nothing rather\n"
+                    "than an illustrative figure.</i>"
                 )
-            if gross is not None:
-                lines.append(f"💵 <b>Gross Stake Avoided:</b> <code>${gross:,.0f}</code>")
-            if net_cfv is not None:
+            else:
+                if evaluated is not None:
+                    lines.append(
+                        f"🔍 <b>Matches Evaluated:</b> <code>{int(evaluated)}</code>")
+                if passes is not None:
+                    lines.append(
+                        f"🛡️ <b>Pass Advisories Issued:</b> <code>{int(passes)}</code>")
+                if traps_count is not None:
+                    lines.append(
+                        f"🚫 <b>Traps Avoided:</b> <code>{int(traps_count)}</code>")
+                if traps_won is not None and traps_lost is not None and traps_count:
+                    lines.append(
+                        f"↔️ <b>Of those avoided, would have:</b> "
+                        f"<code>{int(traps_won)} won</code> / "
+                        f"<code>{int(traps_lost)} lost</code>")
                 lines.append(
-                    f"⚖️ <b>Net Counterfactual Value:</b> <code>${net_cfv:+,.0f}</code>"
+                    "\n<i>Read avoidance as a decision-quality measure, not as profit:\n"
+                    "a majority of avoided traps would have won.</i>"
                 )
-            if gross is not None and net_cfv is not None:
-                lines.append(
-                    "\n<i>Read the two figures together: the gross stake avoided is not a\n"
-                    "profit, because a majority of avoided traps would have won. The net\n"
-                    "counterfactual is the defensible number, and it assumes a flat stake\n"
-                    "on every executed bet.</i>"
-                )
+
         lines.append(
             "\n<i>LISA only executes when dispersion across books is near zero. "
             "Verify every line at the price shown before staking.</i>"
         )
 
         text = "\n".join(lines)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         markup = {
             "inline_keyboard": [
                 [{"text": "\U0001f4ca View Active Value Picks", "callback_data": "menu:picks"}],
@@ -2957,10 +2908,6 @@ class TelegramBot:
 
         accuracy_phrases = ["win rate", "winrate", "accuracy", "track record", "how accurate", "are you profitable", "past results", "performance", "audit", "ledger"]
         if any(p in clean for p in accuracy_phrases) or ("win" in tokens and "rate" in tokens) or ("accurate" in tokens and "how" in tokens):
-<<<<<<< HEAD
-            # Metrics come from the graded ledger or the page says it has none.
-            return (format_stats_html(self._load_dashboard_summary()), quick_nav_markup)
-=======
             stats = self._load_dashboard_summary() or {}
             settled = _fmt_metric(stats, "settled_picks_count", "total_bets")
             win_rate = _fmt_metric(stats, "win_rate")
@@ -2998,7 +2945,6 @@ class TelegramBot:
                 )
             body.append("\nAudit the full settled ledger anytime with <b>/stats</b>.")
             return ("\n".join(body), quick_nav_markup)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         tier_check_phrases = ["my tier", "my plan", "my subscription", "my status", "my account", "what is my tier", "what tier am i", "check tier", "current tier"]
         if any(p in clean for p in tier_check_phrases):
@@ -3165,10 +3111,6 @@ class TelegramBot:
         return summary
 
     def _load_dashboard_summary(self) -> dict[str, Any]:
-<<<<<<< HEAD
-        """Real performance summary. Uncomputed metrics stay ``None``."""
-        return dict(self._dashboard_payload().get("summary") or {})
-=======
         """Return measured performance metrics, or ``{}`` when none exist.
 
         Resolution order, most authoritative first:
@@ -3226,7 +3168,6 @@ class TelegramBot:
         except Exception:
             logger.debug("backtest_report.json unreadable", exc_info=True)
         return {}
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def poll_updates(self) -> list[TelegramUpdate]:
         """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""

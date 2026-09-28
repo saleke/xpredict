@@ -2206,7 +2206,52 @@ function renderForecastBoard() {
       </article>`;
   }).join('');
 
-  board.innerHTML = heroHtml + unlockStrip + cards;
+  // Dual ranking strip: the safest WIN and the best positive-EV EARN are
+  // deliberately different rankings of the same board — the safest favourite
+  // normally doesn't pay, and the best value price normally isn't the
+  // favourite. Show both answers side by side so neither is buried.
+  const f = state.forecast;
+  const dualCards = [];
+  if (f && f.best_win) {
+    const b = f.best_win;
+    dualCards.push(`
+      <div class="fc-dual-card win">
+        <div class="fc-dual-head">
+          <span class="fc-dual-tag win">BEST WIN</span>
+          <span class="fc-dual-ko">${koLabel({ commence_at: b.commence_at })}</span>
+        </div>
+        <div class="fc-dual-title">${esc(cleanText(b.home))} <span class="fc-dual-vs">vs</span> ${esc(cleanText(b.away))}</div>
+        <div class="fc-dual-line">Safest outright: <strong>${esc(b.outcome_name)}</strong> — consensus ${(b.p_top * 100).toFixed(0)}%</div>
+        <div class="fc-dual-foot">
+          <span>${(b.win_score * 100).toFixed(1)}% risk-adjusted score</span>
+          <span>${b.n_books} books</span>
+        </div>
+      </div>`);
+  }
+  if (f && f.best_earning) {
+    const e = f.best_earning;
+    dualCards.push(`
+      <div class="fc-dual-card earn">
+        <div class="fc-dual-head">
+          <span class="fc-dual-tag earn">BEST EARN</span>
+          <span class="fc-dual-ko">${koLabel({ commence_at: e.commence_at })}</span>
+        </div>
+        <div class="fc-dual-title">${esc(cleanText(e.home))} <span class="fc-dual-vs">vs</span> ${esc(cleanText(e.away))}</div>
+        <div class="fc-dual-line">Value play: <strong>${esc(e.outcome_name)}</strong> @ ${e.best_odds} (${String(e.market || 'h2h').toUpperCase()})</div>
+        <div class="fc-dual-foot">
+          <span class="text-pos">+${(e.ev * 100).toFixed(1)}% EV</span>
+          <span>est. ${(e.p * 100).toFixed(0)}% real prob</span>
+          <span>sharp: ${esc(e.best_book || '')}</span>
+        </div>
+      </div>`);
+  }
+  const dualStrip = (f && (f.best_win || f.best_earning)) ? `
+    <div class="fc-dual-strip">
+      <div class="fc-dual-note">The board is ranked two ways on purpose — the safest winner is almost never the best value price. Here are today's best of each.</div>
+      <div class="fc-dual-grid">${dualCards.join('')}</div>
+    </div>` : '';
+
+  board.innerHTML = heroHtml + dualStrip + unlockStrip + cards;
 }
 
 function renderTierMatrix() {

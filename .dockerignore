@@ -1,0 +1,33 @@
+# Build context hygiene: nothing here belongs in the runtime image.
+# The Dockerfile only copies engine/ and web/, but keeping the context
+# small also skips __pycache__ and local state that can vary per machine.
+
+.git
+.gitignore
+.env
+.env.*
+Dockerfile
+docker-compose.yml
+*.md
+scripts/
+
+# Python bytecode
+**/__pycache__/
+*.pyc
+
+# Local databases and runtime state (the deploy DB lives in ./data on the
+# host and is bind-mounted; baking a different one into the image would make
+# the ledger diverge from the record on disk).
+engine/data/
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Tests are not needed at runtime.
+engine/tests/
+
+# Never ship a web/data dir: the dashboard reads from the API, and any
+# verified-users or report JSON is host-only state.
+web/data/

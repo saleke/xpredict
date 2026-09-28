@@ -68,8 +68,16 @@ def test_payment_webhook_fails_closed_without_secret(tmp_path, monkeypatch):
         server.shutdown()
 
 
+#: A real secret has to clear the server's entropy gate (length + not a known
+#: placeholder) or the webhook answers 503 and never reaches the signature check.
+#: The old fixture used the 11-character "correct-horse", which the server now
+#: correctly refuses outright — so the signature path this test exists to cover
+#: was never actually being exercised.
+WEBHOOK_SECRET = "correct-horse-battery-staple-xkcd-2026-rotated"
+
+
 def test_payment_webhook_rejects_wrong_and_unsigned(tmp_path, monkeypatch):
-    monkeypatch.setenv("LISA_WEBHOOK_SECRET", "correct-horse")
+    monkeypatch.setenv("LISA_WEBHOOK_SECRET", WEBHOOK_SECRET)
     server, base = _serve(tmp_path)
     try:
         # Unsigned
@@ -78,8 +86,10 @@ def test_payment_webhook_rejects_wrong_and_unsigned(tmp_path, monkeypatch):
         assert exc.value.code == 401
         with pytest.raises(urllib.error.HTTPError):
             _post(f"{base}/api/v1/webhook/payment", {"customer_email": "x@example.com", "tier": "tier3"})
-        # Wrong secret (including the historical hardcoded default)
-        for bad in ("lisa_internal_secret_2026", "correct-hor", "correct-horseX"):
+        # Wrong secret (including the historical hardcoded default, and
+        # near-misses of the real one)
+        for bad in ("lisa_internal_secret_2026", WEBHOOK_SECRET[:-1],
+                    WEBHOOK_SECRET + "X", WEBHOOK_SECRET.upper()):
             with pytest.raises(urllib.error.HTTPError) as exc:
                 _post(f"{base}/api/v1/webhook/payment",
                       {"customer_email": "x@example.com", "tier": "tier3"},
@@ -88,8 +98,34 @@ def test_payment_webhook_rejects_wrong_and_unsigned(tmp_path, monkeypatch):
         # Correct secret is accepted
         with _post(f"{base}/api/v1/webhook/payment",
                    {"customer_email": "x@example.com", "tier": "tier3"},
-                   {"X-Webhook-Secret": "correct-horse"}) as resp:
+                   {"X-Webhook-Secret": WEBHOOK_SECRET}) as resp:
             assert json.loads(resp.read().decode())["success"] is True
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("weak", [
+    "correct-horse",                       # too short to be a secret
+    "lisa_internal_secret_2026",            # historical hardcoded default
+    "changeme",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",      # low-entropy padding
+])
+def test_payment_webhook_refuses_weak_secrets_entirely(tmp_path, monkeypatch, weak):
+    """A weak/placeholder secret must 503, never silently accept the caller.
+
+    This is the distinction the previous fixture blurred: a secret too weak to
+    be real is *not* validated, it is refused, because there is no way to tell a
+    genuine payment event from a forged one with a guessable key.
+    """
+    monkeypatch.setenv("LISA_WEBHOOK_SECRET", weak)
+    server, base = _serve(tmp_path)
+    try:
+        for headers in (None, {"X-Webhook-Secret": weak}):
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                _post(f"{base}/api/v1/webhook/payment",
+                      {"customer_email": "victim@example.com", "tier": "tier3"},
+                      headers)
+            assert exc.value.code == 503
     finally:
         server.shutdown()
 

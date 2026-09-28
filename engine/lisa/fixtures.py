@@ -17,6 +17,10 @@ cover every gate outcome:
     lig-b  mid-table 1X2                                      -> below_threshold
     bdl-a  Bayern favourite                                   -> PASS
     bdl-b  mid-table 1X2                                      -> below_threshold
+The bundled payloads describe a single coherent matchday (2026-09-21) so the
+48h product window always contains the whole set. The engine's own tests use a
+fixed clock of 2026-09-20T15:00Z, i.e. the evening before that matchday, which
+is when a 48h board is actually useful.
 """
 from __future__ import annotations
 
@@ -118,7 +122,7 @@ NBA_ODDS: list[dict] = [
 
 LA_LIGA_ODDS: list[dict] = [
     _game("lig-a", "soccer_spain_la_liga", "Real Madrid", "Elche",
-          "2026-09-22T17:00:00Z", [
+          "2026-09-21T17:00:00Z", [
               _book("pinnacle", "Pinnacle",
                     {"Real Madrid": 1.20, "Draw": 6.50, "Elche": 11.00}),
               _book("bet365", "Bet365",
@@ -131,7 +135,7 @@ LA_LIGA_ODDS: list[dict] = [
                     {"Real Madrid": 1.20, "Draw": 6.60, "Elche": 11.00}),
           ]),
     _game("lig-b", "soccer_spain_la_liga", "Valencia", "Getafe",
-          "2026-09-22T19:00:00Z", [
+          "2026-09-21T19:00:00Z", [
               _book("pinnacle", "Pinnacle",
                     {"Valencia": 2.30, "Draw": 3.30, "Getafe": 3.00}),
               _book("bet365", "Bet365",
@@ -147,7 +151,7 @@ LA_LIGA_ODDS: list[dict] = [
 
 BUNDESLIGA_ODDS: list[dict] = [
     _game("bdl-a", "soccer_germany_bundesliga", "Bayern Munchen", "Bochum",
-          "2026-09-22T15:30:00Z", [
+          "2026-09-21T15:30:00Z", [
               _book("pinnacle", "Pinnacle",
                     {"Bayern Munchen": 1.22, "Draw": 6.20, "Bochum": 10.50}),
               _book("bet365", "Bet365",
@@ -160,7 +164,7 @@ BUNDESLIGA_ODDS: list[dict] = [
                     {"Bayern Munchen": 1.22, "Draw": 6.30, "Bochum": 10.80}),
           ]),
     _game("bdl-b", "soccer_germany_bundesliga", "Wolfsburg", "Augsburg",
-          "2026-09-22T13:30:00Z", [
+          "2026-09-21T13:30:00Z", [
               _book("pinnacle", "Pinnacle",
                     {"Wolfsburg": 2.20, "Draw": 3.40, "Augsburg": 3.10}),
               _book("bet365", "Bet365",
@@ -208,7 +212,7 @@ NBA_SCORES: list[dict] = [
 ]
 
 LA_LIGA_SCORES: list[dict] = [
-    _score("lig-a", "soccer_spain_la_liga", "2026-09-22T17:00:00Z",
+    _score("lig-a", "soccer_spain_la_liga", "2026-09-21T17:00:00Z",
            "Real Madrid", "Elche", 2, 1),
 ]
 
@@ -236,7 +240,7 @@ NBA_TOTALS_ODDS: list[dict] = [
 
 LA_LIGA_TOTALS_ODDS: list[dict] = [
     _game("lig-tot-a", "soccer_spain_la_liga", "Real Madrid", "Elche",
-          "2026-09-22T17:00:00Z", [
+          "2026-09-21T17:00:00Z", [
               # Line 2.5: 5 books (densest)
               _book("pinnacle", "Pinnacle", {"Over": 1.22, "Under": 4.50},
                     market="totals", point=2.5),

@@ -468,15 +468,44 @@ def _write_report_json_streaming_generic(payload: dict, out_path: Path,
         fh.write("}\n")
 
 
+def _default_web_dir() -> Path:
+    """The dashboard root in the repo layout, found from the package location.
+
+    ``serve`` and ``start`` must not resolve ``web`` against the process CWD:
+    the service can be launched from anywhere (a systemd unit, a cron job, a
+    monitoring harness), and a CWD-relative default silently serves whatever
+    directory happens to be named ``web`` — or a directory listing.
+    """
+    return Path(__file__).resolve().parent.parent.parent / "web"
+
+
+def _resolve_web_dir(raw: Optional[str]) -> Path:
+    """Resolve the web root for the serve/start commands.
+
+    An explicit ``--dir`` is honored verbatim. The default is anchored to the
+    repository layout. Either way the result must look like the dashboard:
+    merely existing is not enough, or a stray data dir named ``web`` would be
+    mounted and the console would appear dead.
+    """
+    base = Path(raw).resolve() if raw else _default_web_dir()
+    if not base.is_dir():
+        raise ValueError(f"web root {base} does not exist; pass --dir")
+    if not ((base / "index.html").is_file() and (base / "admin.html").is_file()):
+        raise ValueError(f"{base} is not the LISA dashboard (missing "
+                         "index.html/admin.html); pass --dir")
+    return base
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     from .auth import AuthManager
     from .server import make_production_server
 
-    web_dir = Path(args.dir or "web").resolve()
-    port = int(args.port or 8080)
-    if not web_dir.exists():
-        print(f"[serve] Error: Directory {web_dir} does not exist.")
+    try:
+        web_dir = _resolve_web_dir(args.dir)
+    except ValueError as exc:
+        print(f"[serve] Error: {exc}.")
         return 1
+    port = int(args.port or 8080)
 
     settings = cfg.load_settings()
     storage = _make_storage(settings)
@@ -678,7 +707,11 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
     settings = cfg.load_settings()
     port = int(getattr(args, "port", 8080) or 8080)
-    web_dir = Path(getattr(args, "dir", "web") or "web").resolve()
+    try:
+        web_dir = _resolve_web_dir(getattr(args, "dir", None))
+    except ValueError as exc:
+        print(f"[start] Error: {exc}.")
+        return 1
 
     db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
     storage = SqliteStorage(db_path)
@@ -795,7 +828,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
         control=control,
     )
 
-    print(f"[start] Admin console: http://0.0.0.0:{port}/admin.html")
+    print(f"[start] Admin console: http://0.0.0.0:{port}/admin")
     print(f"[start] ==========================================================")
     print(f"[start] LISA Production Service active on http://0.0.0.0:{port}/")
     print(f"[start] Multi-Threaded Engine: ON | SQLite WAL: ON | Security: ON")
@@ -862,8 +895,8 @@ def main(argv: list[str] | None = None) -> int:
     srv = sub.add_parser("serve", help="launch local HTTP server for the web dashboard")
     srv.add_argument("--port", type=int, default=8080,
                      help="port number (default: 8080)")
-    srv.add_argument("--dir", default="web",
-                     help="directory to serve (default: web)")
+    srv.add_argument("--dir", default=None,
+                     help="directory to serve (default: <repo>/web)")
     srv.add_argument("--bot", action="store_true",
                      help="run the Telegram bot polling daemon concurrently")
 
@@ -966,7 +999,7 @@ def main(argv: list[str] | None = None) -> int:
 
     start = sub.add_parser("start", help="launch unified production stack (web server + bot + scheduler)")
     start.add_argument("--port", type=int, default=8080, help="port number (default: 8080)")
-    start.add_argument("--dir", default="web", help="directory to serve (default: web)")
+    start.add_argument("--dir", default=None, help="directory to serve (default: <repo>/web)")
     start.add_argument("--no-bot", action="store_true", help="disable Telegram bot background daemon")
     start.add_argument("--no-ingest", action="store_true", help="disable background odds polling")
 

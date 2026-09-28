@@ -30,6 +30,11 @@
   // not UI state, and must never be persisted or serialised.
   var viewCtl = null;
 
+  // Monotonic navigation counter. A background session refresh that lands after
+  // the operator has moved on must not repaint the old view, so it checks the
+  // sequence number it captured before touching the DOM.
+  var navSeq = 0;
+
   var el = {
     gate: document.getElementById('gate'),
     gateForm: document.getElementById('gateForm'),
@@ -285,8 +290,7 @@
     el.gate.hidden = true;
     el.gateError.hidden = true;
     el.shell.hidden = false;
-    el.railRole.textContent = (state.role || 'operator') +
-      (state.user && state.user.email ? ' · ' + state.user.email : '');
+    paintRole();
     var remembered = recallSession();
     var initial = (remembered && remembered.view) || 'overview';
     go(initial);
@@ -363,6 +367,14 @@
     state.view = viewId;
     try { sessionStorage.setItem(SESSION_KEY + '_view', viewId); } catch (e) {}
 
+    // The cookie is authoritative and the server re-resolves the role on every
+    // request, so re-fetch it on each navigation. An operator whose rights
+    // changed (allowlist edit, tier change, restart) sees the matching controls
+    // without reloading the tab; boot() still paints the first view from the
+    // session restoration, this only keeps a long-lived tab honest.
+    navSeq += 1;
+    refreshRole(navSeq);
+
     // Supersede whatever was still loading. The aborted render may already have
     // scheduled its own DOM writes, so the identity check below is what actually
     // keeps the newer view on screen.
@@ -407,6 +419,47 @@
       '<div class="stat__value' + (tone ? ' ' + tone : '') + '">' + value + '</div>' +
       (foot ? '<div class="stat__foot">' + esc(foot) + '</div>' : '') +
       '</div></div>';
+  }
+
+  function paintRole() {
+    el.railRole.textContent = (state.role || 'operator') +
+      (state.user && state.user.email ? ' · ' + state.user.email : '');
+  }
+
+  // The server resolves the role from the live cookie + allowlist/tier on every
+  // request, but a tab caches it at boot. Re-resolve it in the background so
+  // owner-only controls track the account's *current* rights without a reload.
+  // Re-painting the active view is guarded by the navigation sequence so a slow
+  // response can never paint over a view the operator actually asked for.
+  function refreshRole(seq) {
+    if (!state.role) return;
+    api.get('/session', { anonymous: true, keepAlive: true }).then(function (s) {
+      if (seq !== navSeq) return;
+      if (!s.authenticated) {
+        state.role = null;
+        state.user = null;
+        state.csrf = null;
+        showGate('Your session has expired. Sign in again.');
+        return;
+      }
+      var changed = (s.role || null) !== (state.role || null);
+      state.role = s.role;
+      state.user = s.user;
+      state.csrf = s.csrf_token;
+      state.expiresAt = s.expires_at;
+      paintRole();
+      if (changed) {
+        buildNav();
+        if (seq !== navSeq) return;
+        if (state.view && RENDER[state.view]) {
+          var viewId = state.view;
+          Promise.resolve(RENDER[viewId](true)).then(function (note) {
+            if (seq !== navSeq) return;
+            if (note) el.viewNote.textContent = note;
+          }).catch(function () { /* a re-render failure is non-fatal */ });
+        }
+      }
+    }).catch(function () { /* non-fatal: keep the current role */ });
   }
 
   function card(title, bodyHtml, headExtra) {
@@ -567,20 +620,19 @@
         return '';
       }
       var rows = (k.keys || []).map(function (key, i) {
-        var state_ = key.disabled_until && key.disabled_until > Date.now() / 1000 ? 'cooldown'
-          : (key.disabled_until ? 'available' : 'available');
+        var cooldown = key.disabled_until && key.disabled_until > Date.now() / 1000;
         return {
           idx: i + 1,
           label: '<span class="mono">' + esc(key.label || 'key ' + (i + 1)) + '</span>' +
-            (i === k.active_index ? ' ' + badge('active', 'brand') : ''),
-          requests: esc(key.requests_today || 0) + ' / ' + esc(key.budget_daily || 0),
-          remaining: esc(Math.max(0, (key.budget_daily || 0) - (key.requests_today || 0))),
-          cooldown: key.disabled_until && key.disabled_until > Date.now() / 1000
+            (k.active_index === i ? ' ' + badge('active', 'brand') : ''),
+          requests: esc(key.requests_today != null ? key.requests_today : (key.requests || 0)) + ' / ' + esc(key.budget_daily != null ? key.budget_daily : (key.budget_day || 0)),
+          remaining: esc(Math.max(0, Number(key.remaining != null ? key.remaining : 0))),
+          cooldown: cooldown
             ? '<span class="warn">' + esc(Math.ceil(key.disabled_until - Date.now() / 1000)) + 's</span>'
             : '<span class="mute">—</span>',
-          state: state_ === 'cooldown' ? badge('cooldown', 'warn') : badge('available', 'pos'),
+          state: cooldown ? badge('cooldown', 'warn') : badge('available', 'pos'),
           action: isOwner()
-            ? '<button class="btn btn--ghost btn--sm" data-cooldown="' + i + '">Cooldown</button>'
+            ? '<button class="btn btn--ghost btn--sm" data-cooldown="' + attr(key.label || ('key ' + (i + 1))) + '">Cooldown</button>'
             : '<span class="mute">owner only</span>'
         };
       });
@@ -604,7 +656,7 @@
   document.addEventListener('click', function (ev) {
     var cd = ev.target.closest('[data-cooldown]');
     if (!cd) return;
-    var i = cd.getAttribute('data-cooldown');
+    var label = cd.getAttribute('data-cooldown');
     var mins = window.prompt('Cooldown length in minutes (1-1440):', '30');
     if (mins === null) return;
     var n = Number(mins);
@@ -612,8 +664,8 @@
       toast('err', 'Invalid duration', 'Enter a number of minutes between 1 and 1440.');
       return;
     }
-    api.post('/keys/cooldown', { index: Number(i), minutes: n })
-      .then(function (r) { toast('ok', 'Cooldown set', 'Key ' + (Number(i) + 1) + ' paused for ' + n + ' minutes.'); go('keys', true); })
+    api.post('/keys/cooldown', { label: label, cooldown_seconds: Math.round(n * 60) })
+      .then(function (r) { toast('ok', 'Cooldown set', (r.label || label) + ' paused for ' + mins + ' minutes.'); go('keys', true); })
       .catch(reportError);
   });
 
@@ -786,15 +838,55 @@
     }).join('');
   }
 
+  // Set-tier dropdown for the Users view. Collapsed it shows the account's
+  // current tier; opening it reveals every available tier (the current one
+  // marked), so the dropdown always makes the full role set visible.
+  var TIER_OPTS = [
+    ['free', 'Free'],
+    ['tier1', 'Tier 1'],
+    ['tier2', 'Tier 2'],
+    ['tier3', 'Tier 3'],
+    ['admin', 'Admin']
+  ];
+
+  function tierDropdown(u) {
+    var current = TIER_OPTS.some(function (t) { return t[0] === u.tier; }) ? u.tier : 'free';
+    return '<span class="tier-dd" data-dduser="' + attr(u.id) + '">' +
+      '<button type="button" class="tier-dd__btn" data-ddbtn="1">' +
+      '<span class="tier-dd__val">' + esc(current) + '</span>' +
+      '<span class="tier-dd__caret">&#9662;</span></button>' +
+      '<ul class="tier-dd__menu" hidden>' +
+      TIER_OPTS.map(function (t) {
+        var isCur = t[0] === current;
+        return '<li><button type="button" class="tier-dd__opt' + (isCur ? ' is-current' : '') + '"' +
+          ' data-ddtier="' + attr(t[0]) + '"' + (isCur ? ' disabled' : '') + '>' +
+          esc(t[1]) + '</button></li>';
+      }).join('') +
+      '</ul></span>';
+  }
+
+  // Any click outside an open tier dropdown closes it. The dropdown's own
+  // button stops propagation, so the menu stays put until an option is
+  // picked or the operator clicks somewhere else.
+  document.addEventListener('click', function () {
+    el.view.querySelectorAll('.tier-dd.is-open').forEach(function (o) {
+      o.classList.remove('is-open');
+      o.querySelector('.tier-dd__menu').hidden = true;
+    });
+  });
+
   el.view.addEventListener('click', function (ev) {
     var pg = ev.target.closest('[data-page]');
     if (pg && !pg.disabled) {
-      var next = Number(pg.getAttribute('data-page'));
-      if (pickQuery.page !== undefined && el.view.querySelector('#pq')) pickQuery.page = next;
-      else if (notifQuery) { notifQuery.page = next; }
-      else if (userQuery) { userQuery.page = next; }
-      else if (auditQuery) { auditQuery.page = next; }
-      go(state.view, true);
+      var q = null;
+      if (state.view === 'picks') q = pickQuery;
+      else if (state.view === 'notifications') q = notifQuery;
+      else if (state.view === 'users') q = userQuery;
+      else if (state.view === 'audit') q = auditQuery;
+      if (q) {
+        q.page = Number(pg.getAttribute('data-page'));
+        go(state.view, true);
+      }
     }
     var apply = ev.target.closest('#papply');
     if (apply) {
@@ -839,29 +931,37 @@
         return '';
       }
       var b = r.board;
-      var fixtures = b.fixtures || b.rows || [];
+      // The board is a bulletin: each row is a fixture whose `market` is the
+      // headline quote, with any extra lines in `micro_markets`.
+      var fixtures = b.matches || b.fixtures || b.rows || [];
       var rows = fixtures.map(function (f) {
-        var markets = f.markets || {};
-        var marketText = Object.keys(markets).map(function (m) {
-          return '<div class="stat__foot">' + esc(m) + ': ' +
-            esc((markets[m] || []).map(function (o) { return o.outcome_name || o.outcome; }).join(', ')) +
-            '</div>';
-        }).join('');
+        var marketsText = [];
+        if (f.market && f.market.market) {
+          marketsText.push('<div class="stat__foot">' + esc(f.market.market) + ': ' +
+            esc(f.market.top_outcome || '') +
+            (f.market.best_odds ? ' @ ' + esc(f.market.best_odds) : '') + '</div>');
+        }
+        (f.micro_markets || []).forEach(function (mm) {
+          marketsText.push('<div class="stat__foot">' + esc(mm.market || mm.side || '') + ': ' +
+            esc(mm.outcome || mm.side || '') +
+            ' <span class="mute">' + (mm.priced ? esc(mm.best_odds) : 'unpriced') + '</span></div>');
+        });
         return {
-          league: '<span class="mono">' + esc(f.league_name || f.sport_key || '—') + '</span>',
-          when: '<span class="nowrap">' + esc(when(f.commence_time)) + '</span>',
-          fixture: esc([f.home_team, f.away_team].filter(Boolean).join(' v ') || '—'),
-          markets: marketText || '<span class="mute">—</span>',
-          p: num(f.p_true, 3),
-          ev: num(f.best_ev, 4)
+          league: '<span class="mono">' + esc(f.league || f.sport_key || '—') + '</span>',
+          when: '<span class="nowrap">' + esc(when(f.commence_at)) + '</span>',
+          fixture: esc([f.home, f.away].filter(Boolean).join(' v ') || f.match_id || '—'),
+          markets: marketsText.join('') || '<span class="mute">—</span>',
+          p: num(f.market && f.market.p_top, 3),
+          ev: num(f.market && f.market.ev, 4)
         };
       });
 
-      var shortfall = b.shortfall;
+      var shortfall = Number(b.shortfall || 0);
       el.view.innerHTML =
-        (shortfall && shortfall.count
+        (shortfall > 0
           ? '<div class="note note--warn" style="margin-bottom:14px">' +
-            esc(shortfall.message || (shortfall.count + ' short of target')) + '</div>'
+            'Shortfall: ' + esc(shortfall) + ' fixture(s) short of this horizon\'s target.' +
+            '</div>'
           : '') +
         tableCard('Fixtures in horizon', [
           { key: 'league', label: 'League' },
@@ -870,7 +970,10 @@
           { key: 'markets', label: 'Markets' },
           { key: 'p', label: 'p', num: true },
           { key: 'ev', label: 'EV', num: true }
-        ], rows, { emptyTitle: 'No fixtures in the horizon' });
+        ], rows, { emptyTitle: 'No fixtures in the horizon',
+                   emptyBody: (b.mode === 'no_live_data')
+                     ? (b.disclaimer || 'The poller has not cached a snapshot.')
+                     : 'The poller has not cached a snapshot.' });
       return b.generated_at ? 'generated ' + ago(b.generated_at) : '';
     });
   };
@@ -944,7 +1047,9 @@
     return api.get('/cache').then(function (r) {
       var c = r.cache || {};
       var prefixes = Object.keys(c.by_prefix || {}).map(function (k) {
-        return { prefix: '<span class="mono">' + esc(k) + '</span>', n: esc(c.by_prefix[k]) };
+        var v = c.by_prefix[k];
+        var n = (v && typeof v === 'object') ? (v.count != null ? v.count : v.entries) : v;
+        return { prefix: '<span class="mono">' + esc(k) + '</span>', n: esc(n == null ? 0 : n) };
       });
       el.view.innerHTML =
         '<div class="grid grid--4">' +
@@ -1194,9 +1299,7 @@
             : '<span class="mute">—</span>',
           last: '<span class="nowrap">' + esc(ago(u.last_login_at)) + '</span>',
           action: isOwner()
-            ? '<select class="select" data-usertier="' + attr(u.id) + '" style="width:auto">' +
-              options([['free', 'free'], ['tier1', 'tier1'], ['tier2', 'tier2'], ['tier3', 'tier3'], ['admin', 'admin']],
-                      u.tier) + '</select>'
+            ? tierDropdown(u)
             : '<span class="mute">owner only</span>'
         };
       });
@@ -1226,16 +1329,38 @@
         userQuery.page = 1;
         go('users', true);
       });
-      el.view.querySelectorAll('[data-usertier]').forEach(function (sel) {
-        sel.addEventListener('change', function () {
-          var id = sel.getAttribute('data-usertier');
-          var tier = sel.value;
-          api.patch('/users/' + encodeURIComponent(id), { tier: tier }).then(function () {
-            toast('ok', 'Tier updated', 'Set to ' + tier + '.');
-            go('users', true);
-          }).catch(function (err) {
-            reportError(err);
-            go('users', true);
+      el.view.querySelectorAll('.tier-dd').forEach(function (dd) {
+        var btn = dd.querySelector('.tier-dd__btn');
+        var menu = dd.querySelector('.tier-dd__menu');
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var willOpen = !dd.classList.contains('is-open');
+          el.view.querySelectorAll('.tier-dd.is-open').forEach(function (o) {
+            o.classList.remove('is-open');
+            o.querySelector('.tier-dd__menu').hidden = true;
+          });
+          if (!willOpen) return;
+          var rect = btn.getBoundingClientRect();
+          menu.style.top = (rect.bottom + 4) + 'px';
+          menu.style.left = rect.left + 'px';
+          menu.hidden = false;
+          dd.classList.add('is-open');
+        });
+        dd.querySelectorAll('.tier-dd__opt').forEach(function (opt) {
+          opt.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            menu.hidden = true;
+            dd.classList.remove('is-open');
+            if (opt.disabled) return;
+            var id = dd.getAttribute('data-dduser');
+            var tier = opt.getAttribute('data-ddtier');
+            api.patch('/users/' + encodeURIComponent(id), { tier: tier }).then(function () {
+              toast('ok', 'Tier updated', 'Set to ' + tier + '.');
+              go('users', true);
+            }).catch(function (err) {
+              reportError(err);
+              go('users', true);
+            });
           });
         });
       });

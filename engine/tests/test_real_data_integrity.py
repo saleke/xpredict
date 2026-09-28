@@ -281,9 +281,35 @@ class TestLiveFeedOnlyBulletin(unittest.TestCase):
 
 class TestBotSurfacesAreReal(unittest.TestCase):
     def test_stats_page_has_no_default_numbers(self):
+        # Empty summary: the honest state, never a placeholder track record.
         html = format_stats_html({})
-        self.assertIn("No settled picks yet", html)
+        self.assertIn("Insufficient settled sample", html)
+        self.assertIn("<code>0</code>", html)
         self.assertNotIn("84.0%", html)
+        for marker in FABRICATED_MARKERS:
+            self.assertNotIn(marker, html)
+
+    def test_stats_page_withholds_figures_below_the_minimum_sample(self):
+        # A small sample is real but not meaningful: report the count, publish
+        # no win rate. Publishing "100.0%" off three graded picks is exactly the
+        # unverified figure this surface must never show.
+        html = format_stats_html({
+            "settled_picks_count": 3, "wins": 3, "win_rate": 1.0,
+            "brier_score": 0.09, "mean_clv": 0.04,
+        })
+        self.assertIn("Insufficient settled sample", html)
+        self.assertIn("<code>3</code>", html)
+        self.assertNotIn("100.0%", html)
+        self.assertNotIn("84.0%", html)
+
+    def test_stats_page_publishes_figures_once_the_sample_is_meaningful(self):
+        html = format_stats_html({
+            "settled_picks_count": 40, "wins": 24, "win_rate": 0.60,
+            "brier_score": 0.19, "mean_clv": 0.021,
+            "positive_clv_share": 0.63, "ece": 0.04,
+        })
+        self.assertIn("60.0%", html)
+        self.assertIn("24/40", html)
 
     def test_parlay_without_legs_refuses_to_invent(self):
         text, _ = format_parlay_html([], user_tier="tier3")

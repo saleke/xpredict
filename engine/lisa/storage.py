@@ -15,9 +15,12 @@ import os
 import re
 import sqlite3
 from contextlib import contextmanager
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
+
+logger = logging.getLogger(__name__)
 
 from .gate import Pick
 
@@ -69,7 +72,13 @@ def pick_to_row(pick: Pick) -> dict:
         "best_ev": exec_.ev if exec_ else None,
         "closing_odds": exec_.odds if exec_ else None,
         "closing_p_true": pick.p_true,
-        "clv": 0.0 if exec_ else None,
+        # CLV is "how much better was our price than the pre-kickoff close",
+        # and it is only knowable once the fixture has actually been re-observed
+        # near kickoff. Seeding it to 0.0 asserted "we captured exactly the
+        # closing line" for every pick we never re-observed, which dragged the
+        # mean down and inflated the false-positive-free-looking CLV metrics.
+        # Unmeasured CLV is None, and every CLV aggregate skips it.
+        "clv": None,
         "conviction_score": getattr(pick, "conviction_score", 0.0),
         "recommended_stake_pct": getattr(pick, "recommended_stake_pct", 0.0),
         "recommended_units": getattr(pick, "recommended_units", 0.0),
@@ -630,7 +639,70 @@ class SqliteStorage(Storage):
     def ensure_schema(self) -> None:
         with self._tx() as conn:
             conn.executescript(SQLITE_DDL)
+            self._apply_migrations(conn)
             conn.commit()
+
+    # -- schema migration --------------------------------------------------
+
+    @staticmethod
+    def _ddl_columns(ddl: str) -> dict[str, list[tuple[str, str]]]:
+        """Columns declared by the CREATE TABLE blocks in ``ddl``.
+
+        Derived from the DDL itself rather than hand-maintained, so a column
+        added to ``SQLITE_DDL`` is automatically covered by the migration path
+        on the next start. Primary-key and constraint lines are skipped: SQLite
+        cannot add a primary key to an existing table.
+        """
+        out: dict[str, list[tuple[str, str]]] = {}
+        for match in re.finditer(
+                r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\);",
+                ddl, flags=re.S | re.I):
+            table, body = match.group(1), match.group(2)
+            cols: list[tuple[str, str]] = []
+            for line in body.splitlines():
+                line = line.strip().rstrip(",")
+                if not line or line.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+                    continue
+                cm = re.match(r"(\w+)\s+(TEXT|REAL|INTEGER|NUMERIC|BLOB)\b", line, flags=re.I)
+                if cm:
+                    cols.append((cm.group(1), cm.group(2).upper()))
+            out[table] = cols
+        return out
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        try:
+            return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            return set()
+
+    def _apply_migrations(self, conn: sqlite3.Connection) -> list[str]:
+        """Bring an existing database up to the current schema, additively.
+
+        ``CREATE TABLE IF NOT EXISTS`` creates *new* tables but never adds a
+        column to a table that already exists, so any database created before a
+        column was introduced kept the old shape and every INSERT naming that
+        column failed with "no such column" — the ledger went dark on upgrade
+        rather than at first use. This walks the DDL and adds whatever the
+        database is missing, so an upgrade is safe and silent.
+        """
+        applied: list[str] = []
+        for table, columns in self._ddl_columns(SQLITE_DDL).items():
+            existing = self._table_columns(conn, table)
+            if not existing:
+                continue   # brand-new table: CREATE TABLE already made it current
+            for name, ddl_type in columns:
+                if name in existing:
+                    continue
+                try:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}")
+                    applied.append(f"{table}.{name}")
+                except sqlite3.Error:
+                    continue
+        if applied:
+            logger.info("SQLite schema migration applied: %s", ", ".join(applied))
+        return applied
 
     # -- hot layer -----------------------------------------------------------
 

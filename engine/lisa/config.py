@@ -155,12 +155,21 @@ class Settings:
     metrics_path: str = "data/metrics.jsonl"
 
     # -- forecast board window ------------------------------------------------
-    # The board is a short-horizon product. Everything on it must be playable
-    # inside this window; fixtures further out are excluded rather than used to
-    # pad the board to a volume target.
-    forecast_horizon_hours: float = 24.0
+    # The board is a short-horizon product (the LISA product promise is 48h).
+    # Everything on it must be playable inside this window; fixtures further
+    # out are excluded rather than used to pad the board to a volume target.
+    forecast_horizon_hours: float = 48.0
     forecast_min_matches: int = 12         # volume promise, reported as a shortfall
     forecast_max_matches: int = 40
+
+    # -- hard caps on the paid odds poll -------------------------------------
+    # Picks are only ever minted for fixtures kicking off inside this window;
+    # a lead beyond it is outside the product promise and gets suppressed at
+    # the gate. (The free /events calendar drives discovery instead.)
+    pick_horizon_hours: float = 48.0
+    # A cycle may pay for at most this many leagues' /odds calls. The free
+    # calendar filters the candidate set to leagues with fixtures in-window.
+    planner_max_leagues: int = 8
 
     # -- optional product surfaces (built, off by default) -------------------
     # Extra markets cost real credits: 1 per sport for h2h, 3 for
@@ -297,6 +306,10 @@ def load_settings() -> Settings:
             "LISA_FORECAST_MIN_MATCHES", Settings.forecast_min_matches),
         forecast_max_matches=_int(
             "LISA_FORECAST_MAX_MATCHES", Settings.forecast_max_matches),
+        pick_horizon_hours=_float(
+            "LISA_PICK_HORIZON_HOURS", Settings.pick_horizon_hours),
+        planner_max_leagues=_int(
+            "LISA_PLANNER_MAX_LEAGUES", Settings.planner_max_leagues),
         enable_extra_markets=_bool(
             "LISA_ENABLE_EXTRA_MARKETS", Settings.enable_extra_markets),
         enable_micro_predictions=_bool(

@@ -9,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import pytest
+
 from lisa.auth import AuthManager
 from lisa.gate import Execution, Pick
 from lisa.odds import utcnow
@@ -35,14 +37,11 @@ def _make_sample_pick(match_id: str, outcome: str) -> Pick:
 
 
 def test_auth_api_flow(tmp_path, monkeypatch):
-<<<<<<< HEAD
-=======
     # A real, high-entropy webhook secret. The old literal
     # "lisa_internal_secret_2026" shipped in server.py and is now rejected.
     webhook_secret = "test-secret-4f8a2c9e1b7d6035ae94c8f2b16d7e30"
     monkeypatch.setenv("LISA_WEBHOOK_SECRET", webhook_secret)
 
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
     port = _get_free_port()
     db_file = str(tmp_path / "auth_api_test.db")
     storage = SqliteStorage(db_file)
@@ -103,22 +102,6 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             data = json.loads(resp.read().decode())
             assert data["success"] is True
             assert data["user"]["email"] == "sarah@xpredict.ai"
-<<<<<<< HEAD
-            # A client-declared paid tier must never be honoured at signup.
-            assert data["user"]["tier"] == "free"
-            session_id = data["session_id"]
-            user_id = data["user"]["id"]
-
-        # 2b. Paid tier only via the authenticated webhook path
-        promote_req = urllib.request.Request(
-            f"{base_url}/api/auth/update-tier",
-            data=json.dumps({"user_id": user_id, "tier": "tier2"}).encode(),
-            headers={"Content-Type": "application/json", "X-Webhook-Secret": webhook_secret},
-            method="POST",
-        )
-        with urllib.request.urlopen(promote_req) as resp:
-            assert json.loads(resp.read().decode())["tier"] == "tier2"
-=======
             assert data["user"]["tier"] == "free", "signup must not honour a requested tier"
             session_id = data["session_id"]
             user_id = data["user"]["id"]
@@ -137,7 +120,6 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             data = json.loads(resp.read().decode())
             assert data["success"] is True
             assert data["tier"] == "tier2"
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
         # 3. /api/auth/me using Cookie
         req = urllib.request.Request(
@@ -174,9 +156,6 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             assert picks[3]["is_locked"] is False
             assert picks[3]["outcome_name"] == "Outcome-3"
 
-<<<<<<< HEAD
-        # 6. /api/auth/link-telegram — a bare claim must not grant verification
-=======
         # 6. /api/auth/link-telegram
         # Possession must be proven by a bot-side /start verify_<user_id>
         # handshake that named the same Telegram id. Self-asserting an id is
@@ -201,7 +180,6 @@ def test_auth_api_flow(tmp_path, monkeypatch):
         from lisa import telegram_bot as tb_mod
         tb_mod.registry.verify(user_id, telegram_user_id="778899", username="SarahTelegram")
 
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         link_req = urllib.request.Request(
             f"{base_url}/api/auth/link-telegram",
             data=json.dumps({"telegram_id": "778899", "telegram_username": "SarahTelegram"}).encode(),
@@ -214,8 +192,13 @@ def test_auth_api_flow(tmp_path, monkeypatch):
         with urllib.request.urlopen(link_req) as resp:
             data = json.loads(resp.read().decode())
             assert data["success"] is True
-            assert data["telegram_verified"] is False
-            assert data["user"]["telegram_verified"] is False
+            # The bot-side handshake above already named this exact telegram_id
+            # for this web user, so possession is proven and the link is
+            # verified. The response used to report telegram_verified=False
+            # here, which misreported a completed proof and left the unlock
+            # side effects gated behind a redundant second channel.
+            assert data["telegram_verified"] is True
+            assert data["user"]["telegram_verified"] is True
             assert data["user"]["telegram_username"] == "SarahTelegram"
 
         # 6b. The same link with a valid unlock code is proven and unlocks
@@ -234,6 +217,9 @@ def test_auth_api_flow(tmp_path, monkeypatch):
         )
         with urllib.request.urlopen(proven_link_req) as resp:
             data = json.loads(resp.read().decode())
+            # Supplying a valid unlock code as well must stay idempotent: the
+            # pairing is already proven, so the outcome is unchanged and the
+            # verified flag is not flipped back and forth.
             assert data["telegram_verified"] is True
             assert data["user"]["telegram_verified"] is True
 
@@ -252,8 +238,15 @@ def test_auth_api_flow(tmp_path, monkeypatch):
             },
             method="POST",
         )
-        with urllib.request.urlopen(forged_link_req) as resp:
-            assert json.loads(resp.read().decode())["telegram_verified"] is False
+        # No bot-side handshake ever named this user, so the link is refused
+        # outright (403) rather than accepted-and-left-unverified. Refusing is
+        # the stronger guarantee: there is no row claiming the id at all.
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(forged_link_req)
+        assert exc.value.code == 403
+        fraud_user = auth.get_user_by_id(fraudster["id"])
+        assert fraud_user["telegram_verified"] is False
+        assert fraud_user["telegram_id"] in (None, "")
 
         # And an already-proven identity is not demoted by a bogus retry
         retry_req = urllib.request.Request(

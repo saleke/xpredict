@@ -28,6 +28,10 @@ class SettlementReport:
     void: int = 0
     skipped_no_scores: int = 0
     skipped_not_due: int = 0
+    #: Leagues holding pending picks that were not billed for a /scores call
+    #: because no pick in them had passed the settle window yet.
+    leagues_skipped: int = 0
+    leagues_queried: int = 0
     errors: list[str] = field(default_factory=list)
     settled_picks: list[dict] = field(default_factory=list)
 
@@ -58,8 +62,21 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
     for row in pending:
         by_sport.setdefault(row["sport_key"], []).append(row)
 
+    # Only ask for scores for a league that actually has a pick whose fixture
+    # has kicked off. /scores costs 2 credits per call (daysFrom is set so
+    # completed games carry scores), and a pick for a fixture two weeks out
+    # cannot be resolved by today's response. Without this guard every league
+    # holding a single pending pick was billed 2 credits on every settlement
+    # tick, all day, for nothing.
+    due_by_sport: dict[str, list[dict]] = {}
+    for sport, rows in by_sport.items():
+        if any(_hours_since(r["commence_time"], now) >= 0.0 for r in rows):
+            due_by_sport[sport] = rows
+    report.leagues_skipped = len(by_sport) - len(due_by_sport)
+
     scores_by_match: dict[str, object] = {}
-    for sport in by_sport:
+    for sport in due_by_sport:
+        report.leagues_queried += 1
         try:
             payload = client.get_scores(sport, days_from=settings.settle_scores_days)
         except Exception as exc:  # transport failure: rows stay pending
@@ -68,7 +85,11 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
         for score in parse_scores_payload(payload):
             scores_by_match[score.match_id] = score
 
-    for row in pending:
+    graded_rows: list[dict] = []
+    for rows in due_by_sport.values():
+        graded_rows.extend(rows)
+
+    for row in graded_rows:
         dedupe = row["dedupe_key"]
         score = scores_by_match.get(row["match_id"])
         if score is None:

@@ -28,6 +28,7 @@ from typing import Any, Iterable, Optional
 
 from .consensus import Consensus, refine
 from .history import HISTORICAL_ODDS
+from .micro import build_micro_markets, is_goals_sport
 from .model import EloPoissonModel
 from .odds import H2H, Book, Match
 from .tiers import lock_state
@@ -128,18 +129,31 @@ def _uncertainty_flags(market: Optional[dict[str, Any]],
             "key": "market_disagreement",
             "label": f"Books disagree (CV {market['cv'] * 100:.0f}% across {market['n_books']} books).",
         })
-    model_top = max(("home", "draw", "away"), key=lambda o: model.get(f"p_{o}", 0.0))
-    if market["top_outcome"] != model_top:
+    # Only compare market vs model when the model actually has a view. A
+    # not-ready model (or a sport with no model at all) must not manufacture a
+    # "model disagreement" flag out of a None probability.
+    model_ps = {o: model.get(f"p_{o}") for o in ("home", "draw", "away")}
+    model_ready = bool(model.get("ready")) and all(
+        isinstance(v, (int, float)) for v in model_ps.values())
+    if model_ready:
+        model_top = max(model_ps, key=lambda o: float(model_ps[o]))
+        if market["top_outcome"] != model_top:
+            reasons.append({
+                "key": "model_disagreement",
+                "label": f"Market leans {market['top_outcome']}, the independent model leans {model_top}.",
+            })
+        if not model.get("ready", False):
+            reasons.append({"key": "low_model_history", "label": "Short model history for these clubs."})
+        if market["p_top"] > 0.65 and any(r["key"] == "model_disagreement" for r in reasons):
+            reasons.append({
+                "key": "caution_favourite",
+                "label": "Heavy favourite with market/model misalignment — classic sucker spot.",
+            })
+    else:
+        # No independent model available for this sport/fixture: say so once.
         reasons.append({
-            "key": "model_disagreement",
-            "label": f"Market leans {market['top_outcome']}, the independent model leans {model_top}.",
-        })
-    if not model.get("ready", False):
-        reasons.append({"key": "low_model_history", "label": "Short model history for these clubs."})
-    if market["p_top"] > 0.65 and any(r["key"] == "model_disagreement" for r in reasons):
-        reasons.append({
-            "key": "caution_favourite",
-            "label": "Heavy favourite with market/model misalignment — classic sucker spot.",
+            "key": "low_model_history",
+            "label": "No independent model view for this fixture — market consensus only.",
         })
     return reasons
 
@@ -227,97 +241,6 @@ def _opportunity(consensus: Consensus) -> dict[str, Any]:
     }
 
 
-def _poisson_tail(home_goals: float, away_goals: float, line: float,
-                  *, over: bool) -> Optional[float]:
-    """P(total goals over/under ``line``) from two independent Poissons.
-
-    This is what turns the goal model into an actual micro market rather than a
-    decorative number: a real totals line can be priced against a probability
-    the books never published.
-    """
-    if home_goals <= 0 or away_goals <= 0 or line < 0:
-        return None
-    target = int(line) + 1  # "over 2.5" means 3+ goals
-    # Sum of two Poissons is Poisson with the summed mean.
-    total = home_goals + away_goals
-    cumulative = 0.0
-    term = pow(2.718281828459045, -total)  # e ** -total
-    for k in range(0, target):
-        cumulative += term
-        term = term * (total / (k + 1))
-    over_p = max(0.0, min(1.0, 1.0 - cumulative))
-    return over_p if over else 1.0 - over_p
-
-
-def _btts_probability(home_goals: float, away_goals: float) -> Optional[float]:
-    """P(both teams score at least once) from the model goal rates."""
-    if home_goals <= 0 or away_goals <= 0:
-        return None
-    e = 2.718281828459045
-    return (1.0 - pow(e, -home_goals)) * (1.0 - pow(e, -away_goals))
-
-
-def _micro_opportunities(match_id: str, matrix: dict[str, Any],
-                         totals: list[dict[str, Any]],
-                         btts_price: Optional[tuple[float, str]] = None
-                         ) -> list[dict[str, Any]]:
-    """Goal-market (micro) opportunities priced against the real book lines.
-
-    ``totals`` holds the priced totals opportunities already derived from the
-    books. Where the model and a real line exist together the edge is genuine;
-    with no book price the entry is still shown but flagged as unpriced, so the
-    UI never implies an edge it cannot back.
-    """
-    exp = (matrix.get("expected_goals") or {})
-    home_goals, away_goals = exp.get("home"), exp.get("away")
-    if home_goals is None or away_goals is None:
-        return []
-
-    out: list[dict[str, Any]] = []
-    for opp in totals:
-        line = opp.get("line")
-        if line is None:
-            continue
-        for side, over in (("Over", True), ("Under", False)):
-            # The consensus top outcome for a totals market is the priced side.
-            if opp.get("top_outcome", "").lower().startswith(side.lower()) is not over:
-                continue
-            p = _poisson_tail(home_goals, away_goals, line, over=over)
-            if p is None or p <= 0 or p >= 1:
-                continue
-            fair = round(1.0 / p, 3)
-            best_odds = opp.get("best_odds")
-            ev = round((p * best_odds) - 1.0, 4) if best_odds else None
-            out.append({
-                "market": "model_totals",
-                "line": line,
-                "side": side,
-                "p_model": round(p, 4),
-                "fair_odds": fair,
-                "best_odds": best_odds,
-                "best_book": opp.get("best_book"),
-                "ev": ev,
-                "match_id": match_id,
-            })
-
-    p_btts = _btts_probability(home_goals, away_goals)
-    if p_btts is not None and 0 < p_btts < 1:
-        for side, p in (("Yes", p_btts), ("No", 1.0 - p_btts)):
-            best_odds, best_book = btts_price if btts_price else (None, None)
-            out.append({
-                "market": "model_btts",
-                "line": None,
-                "side": side,
-                "p_model": round(p, 4),
-                "fair_odds": round(1.0 / p, 3),
-                "best_odds": round(best_odds, 3) if best_odds else None,
-                "best_book": best_book,
-                "ev": round((p * best_odds) - 1.0, 4) if best_odds else None,
-                "match_id": match_id,
-            })
-    return out
-
-
 def _row_from_matches(matches: list[Match], model: EloPoissonModel, *,
                       in_play: bool = False) -> Optional[dict[str, Any]]:
     """One forecast row for a real fixture, covering every market priced for it.
@@ -344,28 +267,45 @@ def _row_from_matches(matches: list[Match], model: EloPoissonModel, *,
     # market that did resolve, so existing consumers keep working.
     market = by_market.get(H2H) or (opportunities[0] if opportunities else None)
 
-    matrix = model.predict_score_matrix(league, home, away)
-    pred = model.predict_log(league, home, away)
-    model_view = {
-        "p_home": round(pred["p_home"], 4),
-        "p_draw": round(pred["p_draw"], 4),
-        "p_away": round(pred["p_away"], 4),
-        "ready": bool(pred["model_ready"]),
-    }
-    micro = {
-        "p_btts": matrix.get("p_btts"),
-        "p_over_2_5": matrix.get("p_over_2_5"),
-        "expected_goals_home": matrix.get("expected_goals", {}).get("home"),
-        "expected_goals_away": matrix.get("expected_goals", {}).get("away"),
-        "most_likely_scores": matrix.get("most_likely_scores", []),
-    }
+    # Sport-aware independent model. Only soccer has the Poisson goal model;
+    # every other sport gets an honest blank rather than football-shaped
+    # numbers (expected "goals", BTTS, scorelines) the model cannot produce.
+    if is_goals_sport(league):
+        matrix = model.predict_score_matrix(league, home, away)
+        pred = model.predict_log(league, home, away)
+        model_view = {
+            "p_home": round(pred["p_home"], 4),
+            "p_draw": round(pred["p_draw"], 4),
+            "p_away": round(pred["p_away"], 4),
+            "ready": bool(pred["model_ready"]),
+        }
+        micro = {
+            "p_btts": matrix.get("p_btts"),
+            "p_over_2_5": matrix.get("p_over_2_5"),
+            "expected_goals_home": matrix.get("expected_goals", {}).get("home"),
+            "expected_goals_away": matrix.get("expected_goals", {}).get("away"),
+            "most_likely_scores": matrix.get("most_likely_scores", []),
+        }
+    else:
+        matrix, pred = {}, {"model_ready": False}
+        model_view = {
+            "p_home": None,
+            "p_draw": None,
+            "p_away": None,
+            "ready": False,
+        }
+        micro = {
+            "p_btts": None,
+            "p_over_2_5": None,
+            "expected_goals_home": None,
+            "expected_goals_away": None,
+            "most_likely_scores": [],
+        }
 
-    totals = [o for o in opportunities if o.get("market") == "totals"]
-    btts_price = None
-    b = by_market.get("btts")
-    if b and b.get("best_odds"):
-        btts_price = (float(b["best_odds"]), str(b.get("best_book")))
-    micro_opps = _micro_opportunities(anchor.id, matrix, totals, btts_price)
+    micro_opps = build_micro_markets(
+        anchor, opportunities, model,
+        include_model_markets=True,
+    )
 
     reasons = _uncertainty_flags(market, model_view)
     if in_play:
@@ -398,9 +338,104 @@ def _row_from_matches(matches: list[Match], model: EloPoissonModel, *,
 
 
 
+def _win_score(r: dict[str, Any]) -> Optional[float]:
+    """Confidence-weighted win score for a forecast row, or None when unrated.
+
+    ``p_top`` alone is not the whole story: a 0.80 favourite quoted by two
+    books that disagree is a worse *win opportunity* than a 0.70 favourite
+    over ten books at near-zero dispersion. The score is the market's true
+    probability discounted by how fragile that probability is:
+      * high uncertainty  -> -15%
+      * medium uncertainty -> -5%
+      * thin market (<5 books) -> -3%, <3 books -> -10%
+    The result is a relative ranking key, not an absolute calibrated
+    probability, and is always reported alongside ``p_top`` so it cannot
+    masquerade as one.
+    """
+    market = r.get("market")
+    if not market or not isinstance(market.get("p_top"), (int, float)):
+        return None
+    p = market["p_top"]
+    if p <= 0.0 or p >= 1.0:
+        return None
+    level = (r.get("uncertainty") or {}).get("level")
+    solidity = 1.0
+    if level == "high":
+        solidity *= 0.85
+    elif level == "medium":
+        solidity *= 0.95
+    n = market.get("n_books") or 0
+    if n < 3:
+        solidity *= 0.90
+    elif n < 5:
+        solidity *= 0.97
+    return round(p * solidity, 4)
+
+
+def _best_earning_market(r: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The best real, *priced*, positive-EV quote for this fixture.
+
+    Scans the headline market and every micro market. Only quotes backed by a
+    real book count (``best_odds`` present); model-derived rows with no price
+    behind them are views, not earners, and can never win this ranking. Returns
+    None when nothing on the fixture is both priced and positive-EV — an honest
+    \"no earner here\" rather than a manufactured pick.
+    """
+    best: Optional[dict[str, Any]] = None
+
+    def _consider(market_name: str, outcome_name: Any, p: Any,
+                  best_odds: Any, best_book: Any, fair_odds: Any,
+                  ev: Any) -> None:
+        nonlocal best
+        try:
+            p_f = float(p)
+            ev_f = float(ev)
+            odds_f = float(best_odds)
+        except (TypeError, ValueError):
+            return
+        if p_f <= 0 or ev_f <= 0 or odds_f <= 1.0:
+            return
+        entry = {
+            "market": market_name,
+            "outcome_name": str(outcome_name),
+            "p": round(p_f, 4),
+            "best_odds": round(odds_f, 3),
+            "best_book": str(best_book or ""),
+            "fair_odds": round(float(fair_odds), 3) if fair_odds else None,
+            "ev": round(ev_f, 4),
+        }
+        if best is None or ev_f > best["ev"]:
+            best = entry
+
+    market = r.get("market")
+    if market and isinstance(market.get("best_odds"), (int, float)):
+        _consider(
+            market.get("market", "h2h"),
+            market.get("top_outcome"),
+            market.get("p_top"),
+            market.get("best_odds"),
+            market.get("best_book"),
+            market.get("fair_odds"),
+            market.get("ev"),
+        )
+    for mm in r.get("micro_markets") or []:
+        if not mm.get("priced"):
+            continue
+        _consider(
+            mm.get("market", ""),
+            mm.get("outcome") or mm.get("side"),
+            mm.get("p"),
+            mm.get("best_odds"),
+            mm.get("best_book"),
+            mm.get("fair_odds"),
+            mm.get("ev"),
+        )
+    return best
+
+
 def _finalize(rows: list[dict[str, Any]], *, mode: str, disclaimer: str,
               day_label: Optional[str] = None) -> dict[str, Any]:
-    """Sort, mark marquee/top-pick and package the board."""
+    """Sort, mark marquee/top-pick, rank win vs earn, package the board."""
     rows.sort(key=lambda r: (str(r.get("commence_at") or ""), r["match_id"]))
 
     from collections import Counter
@@ -417,9 +452,58 @@ def _finalize(rows: list[dict[str, Any]], *, mode: str, disclaimer: str,
     for r in sorted(rows, key=_coverage)[:3]:
         r["marquee"] = True
 
-    candidates = [r for r in rows if r["market"] and r["market"]["p_top"] >= TOP_PICK_MIN_PROB]
-    if candidates:
-        max(candidates, key=lambda r: r["market"]["p_top"])["is_top_pick"] = True
+    # -- dual ranking: best WIN opportunity vs best EARN opportunity ---------
+    # A "win opportunity" is the most reliable probability on the board; an
+    # "earn opportunity" is the best *priced, positive-EV* quote, across every
+    # market (moneyline, handicap, over/under, model micro) of every fixture.
+    # Ranking the same board two ways is honest because the two answers are
+    # normally different: the safest winner rarely pays enough to earn.
+    for r in rows:
+        r["win_score"] = _win_score(r)
+        r["best_earning_market"] = _best_earning_market(r)
+
+    win_candidates = [r for r in rows
+                      if r["win_score"] is not None
+                      and r["win_score"] >= TOP_PICK_MIN_PROB]
+    earn_candidates = [r for r in rows if r["best_earning_market"] is not None]
+
+    best_win: Optional[dict[str, Any]] = None
+    if win_candidates:
+        top = max(win_candidates, key=lambda r: float(r["win_score"]))
+        top["is_top_pick"] = True
+        top["best_win"] = True
+        best_win = {
+            "match_id": top["match_id"],
+            "home": top.get("home"),
+            "away": top.get("away"),
+            "league": top.get("league"),
+            "outcome_name": top["market"]["top_outcome"],
+            "p_top": top["market"]["p_top"],
+            "win_score": round(float(top["win_score"]), 4),
+            "n_books": top["market"]["n_books"],
+            "commence_at": top.get("commence_at"),
+        }
+
+    best_earning: Optional[dict[str, Any]] = None
+    if earn_candidates:
+        top = max(earn_candidates,
+                  key=lambda r: float(r["best_earning_market"]["ev"]))
+        top["best_earning"] = True
+        m = top["best_earning_market"]
+        best_earning = {
+            "match_id": top["match_id"],
+            "home": top.get("home"),
+            "away": top.get("away"),
+            "league": top.get("league"),
+            "market": m["market"],
+            "outcome_name": m["outcome_name"],
+            "p": m["p"],
+            "best_odds": m["best_odds"],
+            "best_book": m["best_book"],
+            "fair_odds": m["fair_odds"],
+            "ev": m["ev"],
+            "commence_at": top.get("commence_at"),
+        }
 
     return {
         "kind": "match_forecast_bulletin",
@@ -427,7 +511,13 @@ def _finalize(rows: list[dict[str, Any]], *, mode: str, disclaimer: str,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "day": day_label,
         "count": len(rows),
-        "top_pick": next((r["match_id"] for r in rows if r["is_top_pick"]), None),
+        # Back-compat alias: the UI historically highlighted ``top_pick`` to
+        # mean the highest-conviction pick. It now means the best WIN
+        # opportunity; the board additionally ranks the best EARN opportunity
+        # separately, because they are not the same match.
+        "top_pick": best_win["match_id"] if best_win else None,
+        "best_win": best_win,
+        "best_earning": best_earning,
         "marquee_count": sum(1 for r in rows if r["marquee"]),
         "high_uncertainty_count": sum(
             1 for r in rows if r["uncertainty"]["level"] == "high"
@@ -449,6 +539,8 @@ NO_LIVE_DATA = {
     "day": None,
     "count": 0,
     "top_pick": None,
+    "best_win": None,
+    "best_earning": None,
     "marquee_count": 0,
     "high_uncertainty_count": 0,
     "in_play_count": 0,
@@ -461,14 +553,40 @@ NO_LIVE_DATA = {
 }
 
 
-#: The board is a short-horizon product: everything on it must be playable
-#: within this window. Padding the board with fixtures weeks out to hit a
-#: volume target is worse than showing fewer matches, so the cap is absolute.
-FORECAST_HORIZON_HOURS = 24.0
+#: The board is a short-horizon product (the LISA promise is 48h): everything on
+#: it must be playable within this window. Padding the board with fixtures weeks
+#: out to hit a volume target is worse than showing fewer matches, so the cap is
+#: absolute.
+FORECAST_HORIZON_HOURS = 48.0
 
 #: Volume promise the board aims for inside the horizon. Reported honestly as a
 #: shortfall when the day's real fixtures cannot supply it.
 FORECAST_MIN_MATCHES = 12
+
+
+def _filter_micro_markets(micro_list: list[dict[str, Any]], *,
+                          include_micro_markets: bool,
+                          include_micro_predictions: bool) -> list[dict[str, Any]]:
+    """Keep only the micro rows the enabled product surfaces may show.
+
+    ``include_micro_markets`` unlocks the real-book (priced) markets, which cost
+    extra credits at fetch time and are therefore off by default.
+    ``include_micro_predictions`` unlocks the model-derived rows, which are free
+    because they reuse the Poisson matrix on already-polled fixtures. A row is
+    only ever kept when the surface that funds it is switched on.
+    """
+    if include_micro_markets:
+        return micro_list
+    out: list[dict[str, Any]] = []
+    for m in micro_list:
+        if m.get("market") in ("model_totals", "model_btts"):
+            if include_micro_predictions:
+                out.append(m)
+        elif m.get("market") == "h2h":
+            continue    # already the row's headline market; do not duplicate it
+        else:
+            out.append(m)
+    return out
 
 
 def _group_by_fixture(matches: list[Match]) -> list[list[Match]]:
@@ -494,6 +612,7 @@ def build_live_bulletin(matches: list[Match], *, max_matches: int = 40,
                         horizon_hours: float = FORECAST_HORIZON_HOURS,
                         min_matches: int = FORECAST_MIN_MATCHES,
                         include_micro_markets: bool = False,
+                        include_micro_predictions: bool = False,
                         include_in_play: bool = False,
                         now: Optional[datetime] = None) -> dict[str, Any]:
     """Forecast board for real fixtures inside the horizon window.
@@ -553,10 +672,19 @@ def build_live_bulletin(matches: list[Match], *, max_matches: int = 40,
     board["in_play_count"] = len(live_rows)
     board["in_play"] = live_rows
     if not include_micro_markets:
-        # Priced micro bets need real totals lines, which cost extra credits.
-        # Strip them rather than showing an edge with no price behind it.
+        # Rows that require a paid market (spreads/totals/btts) or that are
+        # model-only are stripped unless their surface is switched on. h2h is
+        # always polled, so it is always retained.
         for row in rows + live_rows:
-            row.pop("micro_markets", None)
+            filtered = _filter_micro_markets(
+                row.get("micro_markets") or [],
+                include_micro_markets=False,
+                include_micro_predictions=include_micro_predictions,
+            )
+            if filtered:
+                row["micro_markets"] = filtered
+            else:
+                row.pop("micro_markets", None)
     return board
 
 
@@ -566,6 +694,7 @@ def build_live_bulletin_from_payloads(payloads: list[tuple[str, list[dict[str, A
                                       horizon_hours: float = FORECAST_HORIZON_HOURS,
                                       min_matches: int = FORECAST_MIN_MATCHES,
                                       include_micro_markets: bool = False,
+                                      include_micro_predictions: bool = False,
                                       include_in_play: bool = False,
                                       market_keys: Optional[Iterable[str]] = None
                                       ) -> dict[str, Any]:
@@ -588,6 +717,7 @@ def build_live_bulletin_from_payloads(payloads: list[tuple[str, list[dict[str, A
         horizon_hours=horizon_hours,
         min_matches=min_matches,
         include_micro_markets=include_micro_markets,
+        include_micro_predictions=include_micro_predictions,
         include_in_play=include_in_play,
         now=now,
     )

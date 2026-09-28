@@ -35,6 +35,32 @@ from lisa.telegram_bot import (
 )
 
 
+def _synthetic_pick(match_id: str) -> Pick:
+    """A real, well-formed ledger row for tests that need a graded sample."""
+    now = datetime.now(timezone.utc)
+    return Pick(
+        match_id=match_id,
+        sport_key="soccer_epl",
+        home_team="Arsenal",
+        away_team="Wolverhampton",
+        commence_time=now,
+        market="h2h",
+        outcome_name="Arsenal",
+        p_true=0.72,
+        fair_odds=1.389,
+        n_books=6,
+        stdev=0.011,
+        cv=0.015,
+        best_execution=Execution(
+            book_key="pinnacle", book_title="Pinnacle", odds=1.42, ev=0.022),
+        state="TRIGGER_ALERT",
+        created_at=now,
+        conviction_score=6.0,
+        recommended_stake_pct=1.0,
+        recommended_units=1.0,
+    )
+
+
 class TestTelegramBot(unittest.TestCase):
     def setUp(self):
         # Isolated per-test storage: the bot must never read the operator's
@@ -141,16 +167,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("84.0%", html)
         self.assertIn("0.1305", html)
         self.assertIn("3.61%", html)
-<<<<<<< HEAD
-        self.assertIn("3.12%", html)
-        self.assertIn("50 fully audited real matches", html)
-        self.assertIn("42/50", html)
-
-    def test_format_stats_html_empty_is_honest(self):
-        html = format_stats_html({"settled_picks_count": 0})
-        self.assertIn("No settled picks yet", html)
-        self.assertNotIn("84.0%", html)
-=======
         self.assertIn("+3.12%", html)
         self.assertIn("50 fully audited real matches", html)
 
@@ -188,7 +204,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("-1.81%", html)
         self.assertIn("did <b>not</b> beat the closing line", html)
         self.assertNotIn("+3.12%", html)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_format_free_picks_html(self):
         picks = [
@@ -269,7 +284,7 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("No active signals", reply_empty)
 
         reply_stats_empty, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
-        self.assertIn("No settled picks yet", reply_stats_empty)
+        self.assertIn("Insufficient settled sample", reply_stats_empty)
 
         reply_traps_empty, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
         self.assertIn("No trap advisories recorded yet", reply_traps_empty)
@@ -288,14 +303,37 @@ class TestTelegramBot(unittest.TestCase):
     def test_command_stats_from_settled_ledger(self):
         storage = self.storage
         self.bot._picks_cache = ({}, 0.0)
+
+        # One graded pick is real but not a track record: the audit must refuse
+        # to publish a win rate off a sample this small.
         storage.insert_pick(self.sample_pick)
         key = f"{self.sample_pick.match_id}::{self.sample_pick.market}::{self.sample_pick.outcome_name}"
         storage.settle_pick(key, "WIN", datetime.now(timezone.utc))
+        self.bot.invalidate_caches()
+        thin, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
+        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", thin)
+        self.assertIn("Insufficient settled sample", thin)
+        self.assertNotIn("100.0%", thin)
+
+        # Grow the graded ledger past the publication threshold. Combined with
+        # the one WIN above this is 24 wins from 40 graded picks — a real 60%
+        # that the surface may now show, sourced from the ledger rather than
+        # from any stored figure.
+        wins, losses = 23, 16
+        for i in range(wins + losses):
+            storage.insert_pick(_synthetic_pick(f"graded-{i}"))
+            storage.settle_pick(
+                f"graded-{i}::h2h::Arsenal", "WIN" if i < wins else "LOSS",
+                datetime.now(timezone.utc))
+        total = 1 + wins + losses
+        won = 1 + wins
+        self.bot.invalidate_caches()
 
         reply, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
         self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
-        self.assertIn("100.0%", reply)
-        self.assertIn("1/1", reply)
+        self.assertNotIn("Insufficient settled sample", reply)
+        self.assertIn("60.0%", reply)
+        self.assertIn(f"{won}/{total} graded", reply)
 
     def test_command_traps_from_real_history(self):
         storage = self.storage
@@ -399,11 +437,6 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("📊 Active Top Picks", buttons)
         self.assertIn("🏦 My Bankroll", buttons)
         self.assertIn("📈 Accuracy Ledger", buttons)
-<<<<<<< HEAD
-        self.assertIn("⚡ Live Accumulator", buttons)
-        self.assertIn("🎟️ Execution Guide", buttons)
-=======
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
         self.assertIn("🛡️ Trap Advisories", buttons)
         # Parlay and booking codes are paid-tier features, so they must NOT be
         # advertised on the free keyboard.
@@ -987,25 +1020,6 @@ class TestTelegramBot(unittest.TestCase):
         for q in ["win rate", "accuracy", "track record"]:
             upd = TelegramUpdate(109, 209, "chat_conv", "user_free", "trader_joe", text=q)
             reply = self.bot.process_one_update(upd)
-<<<<<<< HEAD
-            # The conversational answer is the real ledger page, never a
-            # hardcoded headline number.
-            self.assertIn("LISA PERFORMANCE LEDGER", reply)
-            self.assertNotIn("84.0%", reply)
-
-    def test_conversational_faq_accuracy_reports_graded_rows(self):
-        storage = InMemoryStorage()
-        bot = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=storage)
-        pick = self.sample_pick
-        storage.insert_pick(pick)
-        storage.settle_pick(
-            f"{pick.match_id}::{pick.market}::{pick.outcome_name}", "WIN", self.now)
-        upd = TelegramUpdate(119, 219, "chat_conv", "user_free", "trader_joe", text="win rate")
-        reply = bot.process_one_update(upd)
-        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
-        self.assertIn("100.0%", reply)
-        self.assertIn("1/1", reply)
-=======
             self.assertIn("AUDITED PERFORMANCE", reply)
             # Figures must come from the measured summary, never a hardcoded
             # marketing number.
@@ -1013,7 +1027,6 @@ class TestTelegramBot(unittest.TestCase):
             self.assertNotIn("0.089", reply)
             self.assertNotIn("+4.18%", reply)
             self.assertIn("no configuration is claimed to be profitable", reply)
->>>>>>> 2bfd448 (environmental update on telegram_bot_admin access activation and user telegram interaction exprience)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")

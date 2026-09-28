@@ -24,6 +24,7 @@ from typing import Callable, Optional
 
 from . import config as cfg
 from .cadence import any_live, CadenceDecision, decide_cadence
+from .calendar import FixtureCalendar
 from .notify import LogNotifier, Notifier
 from .key_pool import QuotaExhausted
 from .odds import utcnow
@@ -42,6 +43,11 @@ class TickSummary:
     cycle_reports: list[CycleReport] = field(default_factory=list)
     settlement: Optional[SettlementReport] = None
     skipped_reason: Optional[str] = None
+    #: Degraded-mode notices (e.g. the free calendar was unavailable so the
+    #: planner fell back to the configured league list). These are operational
+    #: context, not failures: they must not raise an alert or inflate the
+    #: error counters an operator watches.
+    warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -61,6 +67,7 @@ class Scheduler:
                  pipeline: Optional[Pipeline] = None,
                  notifier: Optional[Notifier] = None,
                  tracker: Optional[Tracker] = None,
+                 calendar: Optional[FixtureCalendar] = None,
                  now_fn: Optional[Callable[[], datetime]] = None):
         self.client = client
         self.storage = storage
@@ -69,6 +76,14 @@ class Scheduler:
         self.pipeline = pipeline or Pipeline(client, storage, settings,
                                              notifier=self.notifier)
         self.tracker = tracker
+        #: Zero-credit fixture calendar. Discovered fresh (free /events calls)
+        #: on the loop; if every key is drained the board still gets its
+        #: fixture calendar and the scheduler simply holds off on paid polls.
+        #: ``settings`` may be a callable provider (the live-editing contract),
+        #: so resolve through the property rather than touching the argument.
+        eff = self.settings
+        self.calendar = calendar or FixtureCalendar(
+            client, storage, sports=eff.sports)
         self._now_fn = now_fn or utcnow
         self.next_cycle_at: Optional[datetime] = None   # None == due now
         self.next_settle_at: Optional[datetime] = None
@@ -230,7 +245,49 @@ class Scheduler:
 
     def _run_cycle(self, summary: TickSummary, now: datetime, *,
                    live: bool) -> None:
-        reports = self.pipeline.run_cycle(live=live, now=now)
+        sport_keys: Optional[list[str]] = None
+        if self.calendar is not None:
+            # Discovery is free, so refresh the calendar when it has gone stale
+            # and plan paid polls from what it actually found. A league with no
+            # fixture inside the horizon is never polled for /odds — spending a
+            # credit there moves nothing on the board.
+            try:
+                s = self.settings
+                refresh_age = min(s.cadence_prematch_sec * 4, 4 * 3600)
+                if self.calendar.stale(refresh_age, now=now):
+                    self.calendar.refresh(now=now)
+                horizon = (s.pick_horizon_hours or 48.0)
+                plan = self.calendar.plan_leagues(
+                    horizon_hours=horizon,
+                    max_leagues=getattr(s, "planner_max_leagues", 8) or 8,
+                    now=now,
+                )
+                # Only an authoritative, recently refreshed calendar is allowed
+                # to say "nothing to do". If discovery failed we keep polling the
+                # configured leagues (still bounded by the planner cap) rather
+                # than going dark or overspending.
+                cap = getattr(s, "planner_max_leagues", 8) or 8
+                if self.calendar.has_fresh_snapshot(refresh_age, now=now):
+                    sport_keys = [p["sport_key"] for p in plan]
+                else:
+                    summary.warnings.append(
+                        "planner: calendar not fresh, using configured leagues")
+                    sport_keys = list(s.sports)[:cap]
+            except Exception as exc:
+                # A broken calendar must not starve the cycle entirely: fall
+                # back to the configured league list, bounded by the planner cap.
+                summary.warnings.append(f"planner: {exc!r}")
+
+            if sport_keys is not None and not sport_keys:
+                # Nothing inside the window: spend nothing this cycle. The
+                # cadence is re-derived below from an empty commence set.
+                summary.cycle_reports = []
+                summary.ran_cycle = True
+                self.stats.cycles_run += 1
+                self._commences = ()
+                return
+
+        reports = self.pipeline.run_cycle(sport_keys=sport_keys, live=live, now=now)
         summary.cycle_reports = reports
         summary.ran_cycle = True
         self.stats.cycles_run += 1

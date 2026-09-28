@@ -35,6 +35,14 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute is how this page swaps between the sign-in gate and
+   the console, and `.gate`/`.shell` both set `display: grid`. A class selector
+   outranks the user-agent `[hidden] { display: none }` rule, so without this
+   the gate kept rendering above the dashboard after a successful sign-in. One
+   high-specificity rule makes the attribute authoritative everywhere, so
+   element-specific `[hidden]` rules are not needed per component. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   background: var(--bg);
@@ -374,6 +382,46 @@ a:hover { text-decoration: underline; }
 
 .btn--sm { padding: 4px 9px; font-size: 11.5px; }
 .btn--block { width: 100%; }
+
+/* Set-tier dropdown in the Users view. Collapsed it shows the account's
+   current tier; opening it reveals every available tier so the operator can
+   see and change the whole role set. The menu is position:fixed and placed
+   via JS so the table's overflow-x container never clips it. */
+.tier-dd { position: relative; display: inline-block; }
+.tier-dd__btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px;
+  font: inherit; font-size: 11.5px; font-weight: 500;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  background: var(--raised); color: var(--ink); cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.12s;
+}
+.tier-dd__btn:hover { border-color: var(--brand); }
+.tier-dd__val { text-transform: uppercase; }
+.tier-dd__caret {
+  display: inline-block; font-size: 9px; color: var(--ink-3);
+  transition: transform 0.12s;
+}
+.tier-dd.is-open .tier-dd__caret { transform: rotate(180deg); }
+.tier-dd__menu {
+  position: fixed; z-index: 100;
+  min-width: 150px; padding: 4px; margin: 0;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  background: var(--panel-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  list-style: none;
+}
+.tier-dd__opt {
+  display: block; width: 100%; text-align: left;
+  padding: 6px 10px; margin: 0;
+  font: inherit; font-size: 12px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--ink); cursor: pointer;
+}
+.tier-dd__opt:hover { background: rgba(255, 255, 255, 0.06); }
+.tier-dd__opt.is-current { color: var(--brand); font-weight: 600; }
+.tier-dd__opt.is-current::after { content: ' ✓'; color: var(--brand); }
 
 /* ---------- forms ---------- */
 
