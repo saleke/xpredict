@@ -129,6 +129,15 @@ class Score:
                 return "VOID"
             return "WIN" if diff > 0 else "LOSS"
 
+        if market in ("btts", "both_teams_to_score"):
+            name_lower = outcome_name.strip().lower()
+            both = (self.home_score or 0) > 0 and (self.away_score or 0) > 0
+            if name_lower in ("yes", "y", "btts yes"):
+                return "WIN" if both else "LOSS"
+            if name_lower in ("no", "n", "btts no"):
+                return "LOSS" if both else "WIN"
+            return None
+
         if market in ("double_chance", "dc"):
             name_lower = outcome_name.strip().lower()
             # 1X: Home or Draw

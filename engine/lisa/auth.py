@@ -29,7 +29,16 @@ logger = logging.getLogger(__name__)
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 PBKDF2_ITERATIONS = 600_000
 DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
-VALID_TIERS = ("free", "tier1", "tier2", "tier3")
+#: Values the ``users.tier`` column may hold.
+#:
+#: This is the *account* tier, not the subscription ladder. ``admin`` belongs
+#: here because the account's tier is what grants operator access (see
+#: ``admin_api.role_for`` and the bot's ``admin:`` commands), and operators do
+#: not hold a subscription level. The subscription ladder lives in
+#: ``tiers.VALID_TIERS`` and deliberately excludes ``admin``: adding it there
+#: would give every admin account a paid feature set and a position in the
+#: upgrade chain.
+VALID_TIERS = ("free", "tier1", "tier2", "tier3", "admin")
 
 
 def hash_password(password: str) -> tuple[str, str]:

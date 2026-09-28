@@ -64,7 +64,11 @@ def test_spike_cadence_near_kickoff(fixture_client, storage) -> None:
 
 def test_live_cadence_and_live_flag_after_kickoff(fixture_client, storage) -> None:
     clock = FakeClock(KICKOFF)
-    sched = _scheduler(fixture_client, storage, clock)
+    # Live cadence is opt-in: with in-play off, a running match must not by
+    # itself move the scheduler to 15 minute polling.
+    sched = Scheduler(fixture_client, storage,
+                      cfg.Settings(sports=FIXTURE_SPORTS, enable_inplay=True),
+                      now_fn=clock)
     first = sched.tick()
 
     assert first.mode == "live"          # nba-a kicks off at this instant
@@ -131,3 +135,46 @@ def test_run_forever_honours_max_ticks(fixture_client, storage) -> None:
     assert sched.stats.cycles_run == 1
     assert sched.stats.settlements_run == 1
     assert sleeps and all(sec >= 0 for sec in sleeps)
+
+# --- in-play cadence gating --------------------------------------------------
+#
+# A match that has already kicked off used to drop the scheduler into the 15
+# minute live cadence purely on timing. With in-play switched off there is no
+# live poll refreshing that price, so a tradeable-looking in-play quote would be
+# whatever was last cached. The cadence has to stay off, not just the display.
+
+def _live_settings(**overrides):
+    base = dict(sports=FIXTURE_SPORTS, cadence_prematch_sec=3600,
+                cadence_live_sec=900, cadence_idle_sec=6 * 3600,
+                enable_inplay=False, inplay_tail_hours=2.0)
+    base.update(overrides)
+    return cfg.Settings(**base)
+
+
+def test_a_running_match_does_not_engage_live_cadence_when_inplay_is_off(
+        fixture_client, storage) -> None:
+    """Fixture client serves a match that kicked off an hour ago."""
+    clock = FakeClock(NOW)
+    sched = Scheduler(fixture_client, storage, _live_settings(), now_fn=clock)
+    sched._commences = [NOW - timedelta(minutes=30)]   # kicked off half an hour ago
+    assert sched._live_now(clock.now) is False
+
+
+def test_the_same_match_does_engage_live_cadence_when_inplay_is_on(
+        fixture_client, storage) -> None:
+    clock = FakeClock(NOW)
+    sched = Scheduler(fixture_client, storage,
+                      _live_settings(enable_inplay=True), now_fn=clock)
+    sched._commences = [NOW - timedelta(minutes=30)]
+    assert sched._live_now(clock.now) is True
+
+
+def test_in_play_tail_bounds_how_long_a_match_stays_live(
+        fixture_client, storage) -> None:
+    """A match that ended hours ago must not keep the live cadence running."""
+    clock = FakeClock(NOW)
+    sched = Scheduler(fixture_client, storage,
+                      _live_settings(enable_inplay=True), now_fn=clock)
+    long_done = NOW - timedelta(hours=9)
+    sched._commences = [long_done]
+    assert sched._live_now(clock.now) is False

@@ -38,6 +38,12 @@ def _tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 DEFAULT_API_BASE_URL = "https://api.the-odds-api.com"
 
 SCOPE_LEAGUES: tuple[str, ...] = (
+    # The original scope was European football plus two basketball competitions.
+    # On any given day that set can be empty inside a 24h window -- the five
+    # biggest European leagues share a match calendar, so a day with no fixture
+    # in one is usually a day with none in the others. The scope was widened with
+    # leagues whose schedules are independent of the European one, so the
+    # 24h board has fixtures to show on more days of the year.
     "basketball_nba",
     "basketball_euroleague",
     "soccer_spain_la_liga",
@@ -47,6 +53,21 @@ SCOPE_LEAGUES: tuple[str, ...] = (
     "soccer_netherlands_eredivisie",
     "soccer_portugal_primeira_liga",
     "soccer_epl",
+    # North American, on a calendar that does not move with Europe.
+    "americanfootball_nfl",
+    "baseball_mlb",
+    "basketball_wnba",
+    # Summer/winter season competitions. Both are seasonal: when a league is out
+    # of season the API simply returns no events, and an empty league is not an
+    # error, but it does contribute nothing to board volume.
+    "icehockey_liiga",
+    "icehockey_sweden_allsvenskan",
+    "tennis_wta_singapore_open",
+    # Secondary football leagues, which carry fixtures European football does not.
+    "soccer_mexico_ligamx",
+    "soccer_brazil_serie_b",
+    "soccer_usa_mls",
+    "soccer_uefa_nations_league",
 )
 SCOPE_SET: frozenset[str] = frozenset(SCOPE_LEAGUES)
 
@@ -146,6 +167,31 @@ class Settings:
     # bank_name: str = ""
     # bank_account_name: str = ""
     # bank_account_number: str = ""
+
+    # -- forecast board window ------------------------------------------------
+    # The board is a short-horizon product. Everything on it must be playable
+    # inside this window; fixtures further out are excluded rather than used to
+    # pad the board to a volume target.
+    forecast_horizon_hours: float = 24.0
+    forecast_min_matches: int = 12         # volume promise, reported as a shortfall
+    forecast_max_matches: int = 40
+
+    # -- optional product surfaces (built, off by default) -------------------
+    # Extra markets cost real credits: 1 per sport for h2h, 3 for
+    # h2h+spreads+totals on a single region, 6 across eu+us. They stay off while
+    # the pre-match model is being measured for accuracy and precision.
+    enable_extra_markets: bool = False
+    # Model-only goal markets (BTTS, over/under any line, scorelines) cost no
+    # extra credits at all: they are derived from the Poisson matrix on fixtures
+    # already being polled. They are still gated so a measurement run can be
+    # kept to a single well-understood product surface.
+    enable_micro_predictions: bool = False
+    # In-play polling costs far more than pre-match: tracking every active
+    # league at the live cadence runs 300-500 credits/day, so even when enabled
+    # the cap below keeps high-frequency polling to the nearest kickoffs.
+    enable_inplay: bool = False
+    inplay_max_leagues: int = 2            # concurrent leagues polled live
+    inplay_tail_hours: float = 2.0         # keep polling this long after kickoff
 
 
 _DOTENV_LOADED = False
@@ -259,6 +305,21 @@ def load_settings() -> Settings:
         credit_warn=_int("LISA_CREDIT_WARN", Settings.credit_warn),
         credit_stop=_int("LISA_CREDIT_STOP", Settings.credit_stop),
         credit_budget_daily=_int("LISA_CREDIT_BUDGET_DAILY", Settings.credit_budget_daily),
+        forecast_horizon_hours=_float(
+            "LISA_FORECAST_HORIZON_HOURS", Settings.forecast_horizon_hours),
+        forecast_min_matches=_int(
+            "LISA_FORECAST_MIN_MATCHES", Settings.forecast_min_matches),
+        forecast_max_matches=_int(
+            "LISA_FORECAST_MAX_MATCHES", Settings.forecast_max_matches),
+        enable_extra_markets=_bool(
+            "LISA_ENABLE_EXTRA_MARKETS", Settings.enable_extra_markets),
+        enable_micro_predictions=_bool(
+            "LISA_ENABLE_MICRO_PREDICTIONS", Settings.enable_micro_predictions),
+        enable_inplay=_bool("LISA_ENABLE_INPLAY", Settings.enable_inplay),
+        inplay_max_leagues=_int(
+            "LISA_INPLAY_MAX_LEAGUES", Settings.inplay_max_leagues),
+        inplay_tail_hours=_float(
+            "LISA_INPLAY_TAIL_HOURS", Settings.inplay_tail_hours),
         metrics_path=os.environ.get("LISA_METRICS_PATH", Settings.metrics_path),
         tier1_price_ngn=_int("LISA_TIER1_PRICE_NGN", Settings.tier1_price_ngn),
         tier2_price_ngn=_int("LISA_TIER2_PRICE_NGN", Settings.tier2_price_ngn),

@@ -258,13 +258,18 @@ class TestLiveFeedOnlyBulletin(unittest.TestCase):
         self.assertTrue(payloads, "daemon must cache the raw odds payloads")
         self.assertTrue(storage.get_live_stale(LIVE_SNAPSHOT_KEY))
 
-        # The fixture kickoffs are fixed dates, so evaluate just before them.
-        before_fixtures = datetime(2026, 9, 19, tzinfo=timezone.utc)
+        # The fixture kickoffs are fixed at 2026-09-01T00:00Z, so evaluate a few
+        # hours before them. This used to be 2026-09-19, which placed every
+        # fixture 18 days in the past: they were reported as "in progress" and
+        # put on the board. A finished match belongs on neither list.
+        before_fixtures = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
         board = build_live_bulletin_from_payloads(
             [(str(k), v) for k, v in payloads], now=before_fixtures
         )
         self.assertEqual(board["mode"], "live")
+        self.assertTrue(board["matches"], "fixtures 12h out must reach the board")
         for row in board["matches"]:
+            self.assertFalse(row["in_play"], "a future fixture is not in play")
             self.assertIn("home", row)
             self.assertIn("uncertainty", row)
             if row["market"]:
