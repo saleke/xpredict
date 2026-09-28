@@ -13,3 +13,8 @@ build/
 
 # Deploy updater bookkeeping: runtime log, not source.
 deploy/update.log
+
+# Editor/backup debris must never be committed
+*.bak
+*.orig
+*.rej
