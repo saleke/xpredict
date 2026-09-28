@@ -6,14 +6,24 @@ import pytest
 from lisa import config as cfg
 
 
-def test_default_scope_is_the_nine_league_whitelist(monkeypatch):
-    monkeypatch.delenv("LISA_SPORTS", raising=False)
-    settings = cfg.load_settings()
+def test_default_scope_matches_the_declared_allowlist():
+    # Read the dataclass default rather than load_settings(): the local .env
+    # sets LISA_SPORTS, so load_settings() reflects the deployment, not the
+    # default this test is about.
+    settings = cfg.Settings()
     assert settings.sports == cfg.SCOPE_LEAGUES
-    assert len(settings.sports) == 9
-    assert "basketball_nba" in settings.sports
-    assert "basketball_euroleague" in settings.sports
-    assert "soccer_epl" in settings.sports
+    # The original nine were all European, which meant a European matchweek
+    # pause emptied the 24h board. The widened scope must keep the originals
+    # AND add leagues on an independent calendar.
+    for original in ("basketball_nba", "basketball_euroleague", "soccer_epl",
+                     "soccer_spain_la_liga", "soccer_germany_bundesliga"):
+        assert original in settings.sports
+    for independent in ("americanfootball_nfl", "baseball_mlb",
+                        "basketball_wnba", "icehockey_liiga",
+                        "soccer_uefa_nations_league"):
+        assert independent in settings.sports
+    assert len(settings.sports) > 9
+    assert len(set(settings.sports)) == len(settings.sports), "no duplicates"
 
 
 def test_api_base_url_defaults_to_api_host(monkeypatch):

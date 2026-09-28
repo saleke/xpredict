@@ -64,7 +64,7 @@ class Scheduler:
                  now_fn: Optional[Callable[[], datetime]] = None):
         self.client = client
         self.storage = storage
-        self.settings = settings
+        self._settings = settings
         self.notifier = notifier or LogNotifier()
         self.pipeline = pipeline or Pipeline(client, storage, settings,
                                              notifier=self.notifier)
@@ -75,17 +75,40 @@ class Scheduler:
         self._commences: tuple[datetime, ...] = ()      # last snapshot starts
         self.stats = RunStats()
 
+    @property
+    def settings(self):
+        """Effective settings, re-read on every access.
+
+        May be a ``Settings`` instance or a zero-argument callable returning one.
+        The callable form is how the admin panel applies changes to a running
+        process: the scheduler and pipeline ask for the current settings each
+        time they need one instead of holding a snapshot from construction.
+        """
+        s = self._settings
+        return s() if callable(s) else s
+
     # -- public ---------------------------------------------------------------
 
-    def tick(self, now: Optional[datetime] = None) -> TickSummary:
-        """One unit of scheduler work: run whatever is due at ``now``."""
+    def tick(self, now: Optional[datetime] = None,
+             *, only: Optional[str] = None) -> TickSummary:
+        """One unit of scheduler work: run whatever is due at ``now``.
+
+        ``only`` restricts the work to ``"cycle"`` or ``"settlement"``. The
+        normal loop leaves it unset and the tick does both when both are due;
+        the admin console needs the narrow form, because an operator asking to
+        "settle now" should not also trigger a full fixture poll and spend a
+        cycle of API budget as a side effect.
+        """
+        if only is not None and only not in ("cycle", "settlement"):
+            raise ValueError(f"only must be 'cycle', 'settlement' or None, got {only!r}")
         now = now or self._now()
         summary = TickSummary(now=now, mode="")
 
         decision = self._decide(now)
         summary.mode = decision.mode
 
-        if self.next_cycle_at is None or now >= self.next_cycle_at:
+        if only != "settlement" and (
+                self.next_cycle_at is None or now >= self.next_cycle_at):
             blocked = self._credit_block(decision.mode)
             if blocked is not None:
                 summary.skipped_reason = blocked
@@ -111,7 +134,8 @@ class Scheduler:
                     self.next_cycle_at = now + timedelta(
                         seconds=decision.interval_sec)
 
-        if self.next_settle_at is None or now >= self.next_settle_at:
+        if only != "cycle" and (
+                self.next_settle_at is None or now >= self.next_settle_at):
             report = run_settlement(self.client, self.storage, self.settings,
                                     now=now)
             summary.settlement = report

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="color-scheme" content="dark">
+<title>LISA Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/admin.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23060907'/><path d='M9 8v16M9 16l8-8M9 16l9 8' stroke='%23ccff00' stroke-width='2.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+</head>
+<body>
+
+<!-- ====================================================================
+     Sign-in. Replaced by the console shell once a session is established.
+     ==================================================================== -->
+<div class="gate" id="gate">
+  <form class="gate__card" id="gateForm" autocomplete="on">
+    <div class="gate__mark">LISA / Console</div>
+    <h1 class="gate__title">Operator sign-in</h1>
+    <p class="gate__sub">Restricted to accounts on the operator allowlist.</p>
+
+    <label class="field">
+      <span class="field__label">Email</span>
+      <input class="input" type="email" id="gateEmail" name="username"
+             autocomplete="username" required spellcheck="false" autofocus>
+    </label>
+
+    <label class="field">
+      <span class="field__label">Password</span>
+      <input class="input" type="password" id="gatePassword" name="current-password"
+             autocomplete="current-password" required>
+    </label>
+
+    <div class="note note--bad" id="gateError" hidden style="margin-bottom:14px"></div>
+
+    <button class="btn btn--primary btn--block" type="submit" id="gateSubmit">Sign in</button>
+
+    <p class="stat__foot" style="margin-top:18px;text-align:center">
+      Sessions expire after 8 hours and are bound to this browser.
+    </p>
+  </form>
+</div>
+
+<!-- ====================================================================
+     Console shell
+     ==================================================================== -->
+<div class="shell" id="shell" hidden>
+
+  <aside class="rail">
+    <div class="rail__brand">
+      <div class="rail__name">LISA / Console</div>
+      <div class="rail__role" id="railRole">—</div>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="Console sections"></nav>
+
+    <div class="rail__foot">
+      <span id="railUptime" class="mono">—</span>
+      <button class="btn btn--ghost btn--sm" id="btnRefresh" title="Reload this view">Refresh</button>
+      <button class="btn btn--ghost btn--sm" id="btnSignOut">Sign out</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <div class="topbar__title" id="viewTitle">Overview</div>
+        <div class="topbar__note" id="viewNote"></div>
+      </div>
+      <div class="topbar__spacer"></div>
+      <div class="topbar__busy" id="busy" hidden aria-label="Loading"></div>
+    </header>
+
+    <div class="view" id="view" aria-live="polite"></div>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script src="/js/admin.js"></script>
+</body>
+</html>

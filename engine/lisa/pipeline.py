@@ -52,8 +52,19 @@ class Pipeline:
                  notifier: Optional[Notifier] = None):
         self.client = client
         self.storage = storage
-        self.settings = settings
+        self._settings = settings
         self.notifier = notifier or LogNotifier()
+
+    @property
+    def settings(self):
+        """Effective settings, re-read on every access.
+
+        May be a ``Settings`` instance or a zero-argument callable returning one.
+        The callable form is how the admin panel applies changes to a running
+        process without a restart.
+        """
+        s = self._settings
+        return s() if callable(s) else s
 
     # -- public --------------------------------------------------------------
 

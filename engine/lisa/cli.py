@@ -469,6 +469,7 @@ def _write_report_json_streaming_generic(payload: dict, out_path: Path,
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
+    from .auth import AuthManager
     from .server import make_production_server
 
     web_dir = Path(args.dir or "web").resolve()
@@ -479,6 +480,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     settings = cfg.load_settings()
     storage = _make_storage(settings)
+
+    # `serve` is the dashboard-only entry point: no poller, so the console can
+    # read state and edit settings but there is no scheduler to drive.
+    from .control import Control
+    from .runtime import RuntimeConfig
+    runtime = RuntimeConfig(settings, storage=storage)
+    control = Control(storage, auth=AuthManager(storage=storage), runtime=runtime)
 
     bot_inst = None
     if getattr(args, "bot", False) and settings.telegram_token:
@@ -510,13 +518,17 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         t = threading.Thread(target=_bot_loop, daemon=True)
         t.start()
 
+    control.attach(bot=bot_inst)
+
     server = make_production_server(
         host="0.0.0.0",
         port=port,
         web_dir=str(web_dir),
         storage=storage,
-        settings=settings,
+        settings=runtime.settings(),
         bot=bot_inst,
+        auth=control.auth,
+        control=control,
     )
     print(f"[serve] LISA Dashboard running at http://localhost:{port}/ (serving {web_dir}) [Multi-Threaded Production Server]")
     try:
@@ -659,6 +671,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
     import sys
     import threading
     import time
+    from .auth import AuthManager
     from .server import make_production_server
     from .storage import SqliteStorage
     from .telegram_bot import TelegramBot
@@ -669,6 +682,18 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
     db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
     storage = SqliteStorage(db_path)
+
+    # One handle on the live process, shared by the HTTP server, the bot and the
+    # poller, so the admin console inspects and controls the objects that are
+    # actually running rather than a second set of them.
+    from .control import Control
+    from .runtime import RuntimeConfig
+    runtime = RuntimeConfig(settings, storage=storage)
+    if runtime.overrides():
+        print(f"[start] Applying {len(runtime.overrides())} persisted setting "
+              f"override(s) from a previous console session.")
+    settings = runtime.settings()
+    control = Control(storage, auth=AuthManager(storage=storage), runtime=runtime)
 
     # The operational ledger starts empty on purpose.
     #
@@ -729,12 +754,16 @@ def _cmd_start(args: argparse.Namespace) -> int:
             credit_warn=settings.credit_warn,
             credit_stop=settings.credit_stop,
         )
+        # `runtime` is passed as a provider, not a snapshot: the scheduler asks it
+        # for the current settings each time it needs one, which is what makes a
+        # console change take effect on the next tick with no restart.
         scheduler = Scheduler(
             client=client,
             storage=storage,
-            settings=settings,
+            settings=runtime.settings,
             notifier=_make_notifier(settings),
         )
+        control.attach(scheduler=scheduler, client=client, bot=bot_inst)
         labels = ", ".join(s.label() for s in client.pool._states)
         print(f"[live-ingest] Rotating client online with {len(api_keys)} key(s): {labels}")
         print(f"[live-ingest] Per-key daily budget: {settings.credit_budget_daily} request(s)")
@@ -760,10 +789,13 @@ def _cmd_start(args: argparse.Namespace) -> int:
         port=port,
         web_dir=str(web_dir),
         storage=storage,
-        settings=settings,
+        settings=runtime.settings(),
         bot=bot_inst,
+        auth=control.auth,
+        control=control,
     )
 
+    print(f"[start] Admin console: http://0.0.0.0:{port}/admin.html")
     print(f"[start] ==========================================================")
     print(f"[start] LISA Production Service active on http://0.0.0.0:{port}/")
     print(f"[start] Multi-Threaded Engine: ON | SQLite WAL: ON | Security: ON")

@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from . import __version__
 from . import config as cfg
+from .admin_api import AdminAPI
 from .auth import AuthManager
 from .dashboard import LIVE_ODDS_PREFIX
 from .gate import Pick
@@ -122,6 +123,12 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        # Handlers that need to set a cookie queue it here rather than writing
+        # headers directly, so there is exactly one place that ends the header
+        # block and no chance of sending a body after the headers are done.
+        for cookie in getattr(self, "_pending_cookies", ()) or ():
+            self.send_header("Set-Cookie", cookie)
+        self._pending_cookies = []
         self._send_cors_headers()
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
@@ -214,6 +221,31 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
+    def _try_admin(self, method: str) -> bool:
+        """Hand an /api/admin request to the console API. True if answered."""
+        admin = getattr(self.server, "admin", None)
+        parsed = urllib.parse.urlparse(self.path)
+        if admin is None or not parsed.path.startswith("/api/admin"):
+            return False
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        body = self._read_json_body() if method in ("POST", "PUT", "PATCH", "DELETE") else None
+        return admin.handle(self, method, parsed.path, query, body)
+
+    def do_PUT(self):
+        if self._try_admin("PUT"):
+            return
+        self._send_json({"error": "Endpoint not found"}, status=404)
+
+    def do_PATCH(self):
+        if self._try_admin("PATCH"):
+            return
+        self._send_json({"error": "Endpoint not found"}, status=404)
+
+    def do_DELETE(self):
+        if self._try_admin("DELETE"):
+            return
+        self._send_json({"error": "Endpoint not found"}, status=404)
+
     def _is_denied_static_path(self, path: str) -> bool:
         """Block static access to non-public directories under ``web/``."""
         parts = [p for p in urllib.parse.urlparse(path).path.split("/") if p]
@@ -222,6 +254,9 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        if self._try_admin("GET"):
+            return
 
         if self._is_denied_static_path(path):
             self._send_json({"error": "Not found"}, status=404)
@@ -268,6 +303,9 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        if self._try_admin("POST"):
+            return
 
         if path in ("/api/v1/webhook/payment", "/api/webhook/payment", "/api/webhook/stripe"):
             self._handle_payment_webhook()
@@ -890,7 +928,12 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             else:
                 tier = auth_user.get("tier", "free")
         elif user_id.startswith("user_seed_") or user_id.startswith("test_"):
-            tier = requested_tier
+            # Seed and test rows are a fixture convenience, not an entitlement.
+            # Honouring a `tier` parameter on them let any anonymous caller
+            # request `?user_id=test_x&tier=tier3` and receive every masked pick
+            # unmasked, which defeated the tiering entirely. They stay on the
+            # free view; the tests that need a paid view authenticate instead.
+            tier = "free"
         else:
             tier = "free"
 
@@ -975,9 +1018,24 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             except Exception:
                 settled = []
 
+        # The settled table grows without bound, so an unfiltered response grows
+        # with it: every anonymous visitor re-read and re-serialised the entire
+        # history on each request. Cap it at the most recent slice, newest
+        # first, and say so explicitly rather than silently truncating.
+        try:
+            limit = int(urllib.parse.parse_qs(parsed.query).get("limit", ["200"])[0])
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(limit, 1000))
+        total = len(settled)
+        page = settled[:limit]
+
         self._send_json({
-            "settled_ledger": settled,
-            "count": len(settled),
+            "settled_ledger": page,
+            "count": len(page),
+            "total": total,
+            "truncated": total > len(page),
+            "limit": limit,
         })
 
 
@@ -995,8 +1053,15 @@ def make_production_server(
     settings: Optional[cfg.Settings] = None,
     bot: Optional[TelegramBot] = None,
     auth: Optional[AuthManager] = None,
+    control: Optional[Any] = None,
 ) -> ReusableThreadingHTTPServer:
-    """Factory creating and configuring the multi-threaded production server."""
+    """Factory creating and configuring the multi-threaded production server.
+
+    ``control`` is the process-wide handle the admin console drives: it owns the
+    runtime settings, the scheduler and the odds client, so the console can act
+    on the same objects the ingestion loop is using rather than on a second,
+    disconnected instance of them.
+    """
     server = ReusableThreadingHTTPServer((host, port), LISAProductionHandler)
     server.web_dir = Path(web_dir).resolve()
     server.storage = storage or SqliteStorage()
@@ -1004,4 +1069,10 @@ def make_production_server(
     server.settings = settings or cfg.load_settings()
     server.bot = bot
     server.start_time = time.time()
+    server.control = control
+    if control is not None:
+        # The control object is the authority for settings once it exists, so
+        # the handler must read through it or it would see a stale snapshot.
+        control.bind_server(server)
+    server.admin = AdminAPI(control) if control is not None else None
     return server
