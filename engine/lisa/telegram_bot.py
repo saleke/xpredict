@@ -1039,6 +1039,9 @@ class TelegramBot:
         self._member_cache: dict[str, tuple[bool, float]] = {}
         self._tier_cache: dict[str, tuple[str, float]] = {}
         self._picks_cache: tuple[dict[str, Any], float] = ({}, 0.0)
+        # _load_dashboard_summary reads this before its first write, so it must
+        # start as an expired, empty entry rather than be absent.
+        self._summary_cache: tuple[dict[str, Any], float] = ({}, 0.0)
 
         if admin_telegram_ids is not None:
             raw_admins = admin_telegram_ids
