@@ -221,6 +221,10 @@ class SettlementBackfiller:
                 report.errors.append(f"{day.isoformat()}: {exc}")
                 logger.warning("backfill: skipping %s (%s)", day, exc)
                 continue
+            except Exception as exc:  # a bad page must not abort the pass
+                report.errors.append(f"{day.isoformat()}: unexpected {exc!r}")
+                logger.exception("backfill: unexpected failure on %s", day)
+                continue
             report.days_fetched += 1
             fixtures_by_day[day] = fixtures
 

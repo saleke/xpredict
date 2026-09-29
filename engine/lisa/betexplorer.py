@@ -322,7 +322,13 @@ class BetExplorerClient:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             raise BetExplorerError(f"HTTP {exc.code} for {key}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, OSError, TimeoutError,
+                json.JSONDecodeError) as exc:
+            # OSError covers the connection-level failures urllib does not
+            # wrap, notably ConnectionResetError and ssl.SSLError, which a
+            # rate-limited or mid-handshake peer does raise. Without these the
+            # exception escapes the backfill loop and aborts the whole pass
+            # instead of being recorded as one bad day.
             raise BetExplorerError(f"transport failure for {key}: {exc!r}") from exc
 
         matches = parse_matches(payload)

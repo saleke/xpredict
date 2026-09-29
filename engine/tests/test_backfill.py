@@ -341,21 +341,53 @@ def test_backfill_reports_ambiguity_instead_of_guessing():
 
 
 def test_backfill_survives_a_failed_day_page():
+    """One bad page must not abort the pass; the rest of the window still runs."""
+
     class _Flaky(_StubClient):
+        def __init__(self, by_day, fail_on):
+            super().__init__(by_day)
+            self.fail_on = fail_on
+
         def get_matches(self, day):
-            if day.isoformat() == "2020-01-01":
+            if day.isoformat() in self.fail_on:
                 raise BetExplorerError("boom")
             return super().get_matches(day)
 
+    day = (utcnow() - timedelta(days=2)).date()
     storage = InMemoryStorage()
-    _make_pick(storage)
-    client = _Flaky({(utcnow() - timedelta(days=1)).date().isoformat(): [_fixture()]})
-    client.by_day["2020-01-01"] = []
+    _make_pick(storage, commence_days_ago=2)
+    client = _Flaky({day.isoformat(): [_fixture(score=(2, 1), odds_home=1.55)]},
+                    fail_on={(day + timedelta(days=1)).isoformat()})
 
     report = SettlementBackfiller(storage=storage, client=client).run(dry_run=False)
-    assert report.considered == 1
-    # The one genuinely bad day is recorded; the pick's own day still works.
-    assert isinstance(report, BackfillReport)
+
+    # The slack day failed but the pick's own day still settled.
+    assert len(report.errors) == 1
+    assert "boom" in report.errors[0]
+    assert report.settled == 1
+    assert report.to_dict()["errors"] == report.errors
+
+
+def test_backfill_survives_a_mid_pass_connection_reset():
+    """ConnectionResetError must be recorded, not propagate and kill the run.
+
+    A rate-limited or mid-handshake peer raises this and urllib does not wrap
+    it, so it needs explicit handling to stay a per-day error.
+    """
+    class _Resetting(_StubClient):
+        def get_matches(self, day):
+            if day.isoformat() == "2020-01-01":
+                raise ConnectionResetError(104, "Connection reset by peer")
+            return super().get_matches(day)
+
+    day = (utcnow() - timedelta(days=1)).date()
+    storage = InMemoryStorage()
+    _make_pick(storage)
+    client = _Resetting({day.isoformat(): [_fixture(score=(2, 1), odds_home=1.55)]})
+
+    # A raw reset (not wrapped) would escape the run() loop entirely.
+    report = SettlementBackfiller(storage=storage, client=client).run(dry_run=False)
+    assert report.settled == 1
 
 
 def test_backfill_reports_no_pending_picks():
