@@ -11,7 +11,10 @@ from lisa.settle import run_settlement
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 
-def test_settlement_grades_the_ledger(pipeline, fixture_client, storage, settings):
+def test_settlement_grades_the_ledger(legacy_pipeline, fixture_client, storage,
+                                      legacy_settings):
+    settings = legacy_settings
+    pipeline = legacy_pipeline
     pipeline.run_cycle(now=NOW)
     # The postponed fixture was picked pre-kickoff in real life; ingestion no
     # longer mints picks for matches that already commenced.
@@ -40,7 +43,11 @@ def test_settlement_grades_the_ledger(pipeline, fixture_client, storage, setting
     assert rows["nba-e::h2h::Thunder"]["state"] == "TRIGGER_ALERT"  # untouched
 
 
-def test_settlement_ignores_upstream_failure(pipeline, storage, settings):
+def test_settlement_ignores_upstream_failure(legacy_pipeline, storage,
+                                             legacy_settings):
+    settings = legacy_settings
+    pipeline = legacy_pipeline
+
     class Boom:
         def get_scores(self, sport, **kwargs):
             raise RuntimeError("scores endpoint down")

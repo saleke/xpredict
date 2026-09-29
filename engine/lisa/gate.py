@@ -202,7 +202,20 @@ def evaluate_pick_freshness(pick: Union[Pick, dict], current_match: Match,
 def evaluate(consensus: Consensus, *, threshold: float = 0.75,
              min_books: int = 5, max_cv: float = 0.10,
              ev_min: float = 0.0,
-             require_positive_ev: bool = False) -> GateResult:
+             require_positive_ev: bool = True) -> GateResult:
+    """Score a consensus into at most one pick, or explain the suppression.
+
+    ``require_positive_ev`` defaults to **True**. A de-vigged consensus cannot
+    be beaten by a better de-vig -- the best possible de-vig converges to the
+    market's own belief -- so certainty alone is not an edge. When this was
+    False the gate emitted picks on ``p_top >= 0.75`` with no edge requirement;
+    with no book beating fair price, ``best_execution`` was ``None``,
+    ``exec_odds`` fell back to ``1/p_top``, EV computed to exactly 0.0, and
+    Kelly returned "Pass: Non-positive expected value" with a zero stake. The
+    result was a headline pick with no price and no stake. Now the pick is only
+    emitted when some book actually beats the leave-one-out fair price, and the
+    EV the customer is told about is the same EV Kelly is sized from.
+    """
     if consensus.n_books < min_books:
         return GateResult(None, "insufficient_books")
     # Plausibility before certainty: a market the books disagree on is
@@ -213,6 +226,7 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
         return GateResult(None, "below_threshold")
 
     best: Optional[Execution] = None
+    best_p_ref: Optional[float] = None
     for btp in consensus.books:
         price = btp.prices.get(consensus.top_outcome)
         if price is None or price < MIN_EXEC_PRICE:
@@ -227,6 +241,7 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
         if ev >= ev_min and (best is None or ev > best.ev):
             best = Execution(book_key=btp.book_key, book_title=btp.book_title,
                              odds=price, ev=ev)
+            best_p_ref = p_ref
 
     if require_positive_ev and best is None:
         return GateResult(None, "no_positive_ev")
@@ -241,8 +256,15 @@ def evaluate(consensus: Consensus, *, threshold: float = 0.75,
 
     from .staking import compute_kelly_stake
     exec_odds = best.odds if best else consensus.fair_odds
+    # Size on the same probability the EV was measured against. These were two
+    # different numbers for one bet: the gate judged the book with the
+    # leave-one-out `p_ref` while Kelly was handed the self-inclusive
+    # `p_top`, so the stake could be computed against a probability the EV
+    # claim had already ruled out. With require_positive_ev=True the p_ref used
+    # for the winning execution is the one to size on.
+    sizing_p = best_p_ref if best is not None else consensus.p_top
     kelly = compute_kelly_stake(
-        p_true=consensus.p_top,
+        p_true=sizing_p,
         odds=exec_odds,
         cv=consensus.cv,
         max_cv=max_cv,

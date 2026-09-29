@@ -18,6 +18,25 @@ from .storage import Storage
 
 _NEVER_COMPLETED = {"postponed", "cancelled", "suspended", "abandoned"}
 
+# Recorded on every settled row so a customer can check a grade against an
+# independent scoreboard rather than taking the engine's word for it.
+SCORE_SOURCE = "the-odds-api:scores"
+
+
+def _score_text(score) -> Optional[str]:
+    """Render the observed final score as ``"2:1"``.
+
+    Returns None for a match that never produced goals, so a settled row with
+    no score stays visibly unscored instead of claiming a 0:0 that was never
+    actually observed as a result.
+    """
+    if score is None or not getattr(score, "completed", False):
+        return None
+    h, a = score.home_score, score.away_score
+    if h is None or a is None:
+        return None
+    return f"{int(h)}:{int(a)}"
+
 
 @dataclass
 class SettlementReport:
@@ -79,7 +98,9 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
             if (score.status in _NEVER_COMPLETED
                     and _hours_since(row["commence_time"], now)
                     >= settings.settle_after_hours + settings.settle_grace_hours):
-                if storage.settle_pick(dedupe, "VOID", now, state="VOID"):
+                if storage.settle_pick(dedupe, "VOID", now, state="VOID",
+                                          actual_score=_score_text(score),
+                                          score_source=SCORE_SOURCE):
                     report.void += 1
                     report.settled_picks.append({
                         "dedupe_key": dedupe,
@@ -92,6 +113,8 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                         "best_odds": row.get("best_odds"),
                         "closing_odds": row.get("closing_odds"),
                         "clv": row.get("clv"),
+                        "actual_score": _score_text(score),
+                        "score_source": SCORE_SOURCE,
                         "result": "VOID",
                         "state": "VOID",
                     })
@@ -105,7 +128,9 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
             continue
 
         if grade == "VOID":
-            if storage.settle_pick(dedupe, "VOID", now, state="VOID"):
+            if storage.settle_pick(dedupe, "VOID", now, state="VOID",
+                                          actual_score=_score_text(score),
+                                          score_source=SCORE_SOURCE):
                 report.void += 1
                 report.settled_picks.append({
                     "dedupe_key": dedupe,
@@ -118,11 +143,15 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                     "best_odds": row.get("best_odds"),
                     "closing_odds": row.get("closing_odds"),
                     "clv": row.get("clv"),
+                    "actual_score": _score_text(score),
+                    "score_source": SCORE_SOURCE,
                     "result": "VOID",
                     "state": "VOID",
                 })
         else:
-            if storage.settle_pick(dedupe, grade, now, state="SETTLED"):
+            if storage.settle_pick(dedupe, grade, now, state="SETTLED",
+                                          actual_score=_score_text(score),
+                                          score_source=SCORE_SOURCE):
                 report.settled += 1
                 if grade == "WIN":
                     report.won += 1
@@ -139,6 +168,8 @@ def run_settlement(client, storage: Storage, settings: cfg.Settings,
                     "best_odds": row.get("best_odds"),
                     "closing_odds": row.get("closing_odds"),
                     "clv": row.get("clv"),
+                    "actual_score": _score_text(score),
+                    "score_source": SCORE_SOURCE,
                     "result": grade,
                     "state": "SETTLED",
                 })

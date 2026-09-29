@@ -149,16 +149,24 @@ def summarize_profile(
         "max_drawdown_dollars": round(max_dd_dollars, 2),
         "sharpe_ratio": round(sharpe, 2),
         "sortino_ratio": round(sortino, 2),
-        "profit_factor": round(profit_factor, 2),
+        "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
         "risk_level": risk_level,
         "best_for": best_for,
     }
 
 
-def _risk_metrics(returns: Sequence[float]) -> tuple[float, float, float]:
-    """Sharpe, Sortino, and profit factor from a realised per-bet return series."""
+def _risk_metrics(returns: Sequence[float]) -> tuple[float, float, Optional[float]]:
+    """Sharpe, Sortino, and profit factor from a realised per-bet return series.
+
+    Undefined metrics are returned as ``None``, never as a flattering constant.
+    A return series with no losing bet has *no* downside deviation, so Sortino
+    is undefined rather than "1.5x Sharpe" -- which is what this used to report
+    and which has no statistical meaning. Likewise a series with no losses has
+    no finite profit factor; returning 99.0 made an undefined ratio look like a
+    strong one in any report that displayed it.
+    """
     if not returns:
-        return 0.0, 0.0, 99.0
+        return 0.0, 0.0, None
     mean_ret = statistics.mean(returns)
     std_ret = statistics.stdev(returns) if len(returns) > 1 else 0.01
     sharpe = (mean_ret / std_ret * math.sqrt(len(returns))) if std_ret > 0 else 0.0
@@ -168,11 +176,12 @@ def _risk_metrics(returns: Sequence[float]) -> tuple[float, float, float]:
         downside_dev = math.sqrt(sum(d ** 2 for d in downside) / len(downside))
         sortino = (mean_ret / downside_dev * math.sqrt(len(returns))) if downside_dev > 0 else 0.0
     else:
-        sortino = sharpe * 1.5
+        # No losing bet: downside deviation is zero and Sortino is undefined.
+        sortino = 0.0
 
     gross_wins = sum(r for r in returns if r > 0)
     gross_losses = abs(sum(r for r in returns if r < 0))
-    profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else 99.0
+    profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else None
     return sharpe, sortino, profit_factor
 
 
@@ -264,7 +273,7 @@ class BacktestReport:
     max_drawdown_dollars: float
     sharpe_ratio: float
     sortino_ratio: float
-    profit_factor: float
+    profit_factor: Optional[float]
     brier_score: float
     reliability: float
     resolution: float
@@ -314,7 +323,8 @@ class BacktestReport:
                 "max_drawdown_dollars": round(self.max_drawdown_dollars, 2),
                 "sharpe_ratio": round(self.sharpe_ratio, 2),
                 "sortino_ratio": round(self.sortino_ratio, 2),
-                "profit_factor": round(self.profit_factor, 2),
+                "profit_factor": (round(self.profit_factor, 2)
+                                  if self.profit_factor is not None else None),
                 "brier_score": round(self.brier_score, 4),
                 "reliability": round(self.reliability, 4),
                 "resolution": round(self.resolution, 4),
@@ -679,8 +689,23 @@ class BacktestEngine:
         traps_that_lost = sum(1 for r in grade_c_recs if r.result == "PASS_TRAP_AVOIDED")
         traps_that_won = sum(1 for r in grade_c_recs if r.result == "PASS_ADVISORY")
         total_capital_saved = sum(r.capital_saved for r in grade_c_recs)
-        # Net counterfactual: (losses avoided * $100) - (missed wins * $80 net profit at avg ~1.80 odds)
-        net_counterfactual = (traps_that_lost * 100.0) - (traps_that_won * 80.0)
+        # Net counterfactual: (losses avoided * flat unit) - (missed wins * their
+        # realised profit at the archived price).
+        #
+        # The 80.0 previously hardcoded here was described as "net profit at avg
+        # ~1.80 odds" but was never derived from the data, so the single most
+        # quotable "capital preserved" figure on the page was invented. Derive it
+        # from the records themselves; when there is nothing to derive it from,
+        # report None rather than a number.
+        avoided_win_profit = sum(
+            (r.best_odds - 1.0) * self.flat_stake_unit
+            for r in grade_c_recs
+            if r.result == "PASS_ADVISORY" and r.best_odds
+        )
+        if traps_that_lost or traps_that_won:
+            net_counterfactual = (traps_that_lost * self.flat_stake_unit) - avoided_win_profit
+        else:
+            net_counterfactual = None
 
         # Risk & Return Metrics (Sharpe, Sortino, Profit Factor)
         if trade_returns:
@@ -693,12 +718,15 @@ class BacktestEngine:
                 downside_dev = math.sqrt(sum(d ** 2 for d in downside) / len(downside))
                 sortino = (mean_ret / downside_dev * math.sqrt(len(trade_returns))) if downside_dev > 0 else 0.0
             else:
-                sortino = sharpe * 1.5
+                # No losing bet -> no downside deviation -> Sortino undefined.
+                sortino = 0.0
         else:
             sharpe = 0.0
             sortino = 0.0
 
-        profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else 99.0
+        # Undefined when there were no losses; 99.0 made that look like a
+        # strong ratio in any report that printed it.
+        profit_factor = (gross_wins / gross_losses) if gross_losses > 0 else None
 
         # Provenance of the evaluated dataset — every exported report states what
         # it actually ran on, so a report can never silently claim synthetic data.
@@ -759,7 +787,8 @@ class BacktestEngine:
             initial_capital=self.initial_bankroll,
         )
         conservative_summary["capital_preserved_dollars"] = round(total_capital_saved, 2)
-        conservative_summary["net_counterfactual_value"] = round(net_counterfactual, 2)
+        conservative_summary["net_counterfactual_value"] = (
+            round(net_counterfactual, 2) if net_counterfactual is not None else None)
 
         # 2. Unfiltered market favourites — betting every de-vigged favourite at the
         #    best recorded price. Shows what naive favourite-chasing actually returns.
@@ -1033,7 +1062,10 @@ def format_backtest_report(report: BacktestReport, verbose: bool = False) -> str
     lines.append(f"  Maximum Peak-to-Trough Drawdown:    -{report.max_drawdown_pct:.2f}%  (-${report.max_drawdown_dollars:,.2f})")
     lines.append(f"  Sharpe Ratio (Risk-Adjusted):       {report.sharpe_ratio:.2f}")
     lines.append(f"  Sortino Ratio (Downside Risk):      {report.sortino_ratio:.2f}")
-    lines.append(f"  Profit Factor (Gross Win/Loss):     {report.profit_factor:.2f}")
+    if report.profit_factor is None:
+        lines.append("  Profit Factor (Gross Win/Loss):     n/a (no losing bets in sample)")
+    else:
+        lines.append(f"  Profit Factor (Gross Win/Loss):     {report.profit_factor:.2f}")
 
     if report.strategy_comparison_matrix:
         lines.append("\n[4] MULTI-STRATEGY EXECUTION COMPARISON MATRIX")

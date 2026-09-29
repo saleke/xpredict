@@ -12,7 +12,10 @@ from conftest import insert_postponed_pick
 T = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 
-def test_cycle_and_pick_recording(tmp_path, pipeline) -> None:
+def test_cycle_and_pick_recording(tmp_path, legacy_pipeline) -> None:
+    # Legacy gate: this test asserts on the full suppression-reason histogram,
+    # which is only fully populated when certainty alone can emit a pick.
+    pipeline = legacy_pipeline
     track = Tracker(tmp_path / "m.jsonl", storage=pipeline.storage)
     reports = pipeline.run_cycle(now=T)
     insert_postponed_pick(pipeline.storage)
@@ -30,7 +33,8 @@ def test_cycle_and_pick_recording(tmp_path, pipeline) -> None:
     assert summary["errors"] == 0
 
 
-def test_pick_recording_dedupes_across_cycles(tmp_path, pipeline) -> None:
+def test_pick_recording_dedupes_across_cycles(tmp_path, legacy_pipeline) -> None:
+    pipeline = legacy_pipeline
     track = Tracker(tmp_path / "m.jsonl", storage=pipeline.storage)
     pipeline.run_cycle(now=T)
     insert_postponed_pick(pipeline.storage)

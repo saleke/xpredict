@@ -172,6 +172,10 @@ def test_volume_controller_throttles_alerts_and_preserves_ledger() -> None:
         gate_threshold=0.74,
         max_alerts_per_cycle=2,
         max_alerts_per_sport_cycle=2,
+        # This test is about the Volume Controller throttling notifications, not
+        # about the edge requirement. require_positive_ev=False keeps all four
+        # fixtures reaching the throttle so the cap itself is what is measured.
+        require_positive_ev=False,
     )
 
     class MockClient:

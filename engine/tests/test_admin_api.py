@@ -708,6 +708,57 @@ class TestPublicApiSecurity(unittest.TestCase):
             self.assertTrue(pick["is_locked"] or pick.get("tier_level") == "FREE",
                             "a locked pick was revealed via the tier parameter")
 
+    def test_dashboard_masks_picks_for_anonymous_callers(self):
+        """The paid product must be enforced by the server, not the client.
+
+        /api/dashboard is the route the frontend actually calls, and it used to
+        return every pick fully unmasked while the tier was read from
+        localStorage -- so one line in a devtools console unlocked everything.
+        Entitlement is now applied in the handler.
+        """
+        for i in range(6):
+            self.c.storage.insert_pick_row({
+                "dedupe_key": f"d{i}::h2h::Home", "match_id": f"d{i}",
+                "sport_key": "soccer_epl", "market": "h2h", "outcome_name": f"Team {i}",
+                "outcome": f"Team {i}", "best_odds": 1.5 + i / 10, "p_true": 0.8,
+                "fair_odds": 1.3, "state": "CONFIRMED", "created_at": i,
+                "commence_time": i})
+
+        _, body, _ = self.c.get("/api/dashboard")
+        self.assertEqual(body["viewer_tier"], "free")
+        self.assertFalse(body["is_authenticated"])
+
+        picks = body.get("active_picks") or []
+        self.assertTrue(picks, "expected pending picks to be returned for masking")
+        # Rank 1 is free; everything after it must be stripped for a stranger.
+        self.assertEqual(picks[0]["rank"], 1)
+        self.assertFalse(picks[0]["is_locked"])
+        for pick in picks[1:]:
+            self.assertTrue(pick["is_locked"],
+                            f"rank {pick['rank']} was not locked for an anonymous caller")
+            self.assertIsNone(pick["best_odds"])
+            self.assertIsNone(pick["best_ev"])
+            self.assertIsNone(pick["fair_odds"])
+
+    def test_dashboard_ranks_are_always_present(self):
+        """`rank` must exist on every pick, whatever the ledger contains.
+
+        The frontend decided its lock state from `p.rank`, which no payload ever
+        set -- so every pick fell through to the final branch and a default
+        visitor saw 100% of picks locked, including the free first one.
+        """
+        self.c.storage.insert_pick_row({
+            "dedupe_key": "r0::h2h::Home", "match_id": "r0",
+            "sport_key": "soccer_epl", "market": "h2h", "outcome": "Home",
+            "outcome_name": "Home", "best_odds": 1.5, "p_true": 0.8,
+            "fair_odds": 1.3, "state": "CONFIRMED", "created_at": 1,
+            "commence_time": 1})
+        _, body, _ = self.c.get("/api/dashboard")
+        picks = body.get("active_picks") or []
+        self.assertTrue(picks)
+        self.assertEqual(picks[0]["rank"], 1)
+        self.assertFalse(picks[0]["is_locked"])
+
     def test_ledger_response_is_bounded(self):
         now = time.time()
         for i in range(1200):
@@ -719,7 +770,10 @@ class TestPublicApiSecurity(unittest.TestCase):
                 "commence_time": now - i})
         _, body, _ = self.c.get("/api/ledger")
         self.assertLessEqual(len(body["settled_ledger"]), 1000)
-        self.assertTrue(body["truncated"])
+        # The ledger pages rather than truncates: a capped `limit` with no
+        # offset made the record past pick 1,000 unreachable.
+        self.assertTrue(body["has_more"])
+        self.assertEqual(body["next_offset"], len(body["settled_ledger"]))
         self.assertEqual(1200, body["total"])
 
     def test_ledger_limit_is_respected_and_capped(self):

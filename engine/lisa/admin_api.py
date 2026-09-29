@@ -847,19 +847,26 @@ class AdminAPI:
         if result not in ("WIN", "LOSS", "VOID"):
             raise AdminError(400, "result must be WIN, LOSS or VOID")
         key = params.get("key", "")
+        actual_score = str(body.get("actual_score") or "").strip() or None
+        if actual_score and not re.fullmatch(r"\d{1,2}\s*[:\-]\s*\d{1,2}", actual_score):
+            raise AdminError(400, "actual_score must look like '2:1'")
         # The storage layer takes a datetime and formats it; passing the ISO
         # string produced by `_utcnow_iso` here raised inside the driver and
         # surfaced to the operator as a 500.
-        if not storage.settle_pick(key, result, datetime.now(timezone.utc)):
+        if not storage.settle_pick(key, result, datetime.now(timezone.utc),
+                                   actual_score=actual_score):
             raise AdminError(409, "Pick is already settled, or not in a settlable state")
         self.audit((user or {}).get("id"), "admin.pick.settle", key,
-                   {"result": result})
-        return {"success": True, "dedupe_key": key, "result": result}
+                   {"result": result, "actual_score": actual_score})
+        return {"success": True, "dedupe_key": key, "result": result,
+                "actual_score": actual_score}
 
     def settle_match(self, handler, query, body, user, role, params):
         storage = self.storage
         if storage is None or not hasattr(storage, "manual_settle_match"):
             raise AdminError(503, "Storage unavailable")
+        # settle_pick records the observed score; settle_match must too, or the
+        # operator path leaves the ledger's verification columns empty.
         match_id = str(body.get("match_id") or "").strip()
         if not match_id:
             raise AdminError(400, "match_id is required")
@@ -868,12 +875,19 @@ class AdminAPI:
         result = str(body.get("result") or "WIN").strip().upper()
         if result not in ("WIN", "LOSS", "VOID"):
             raise AdminError(400, "result must be WIN, LOSS or VOID")
-        count = storage.manual_settle_match(match_id, result)
+        actual_score = str(body.get("actual_score") or "").strip() or None
+        if actual_score and not re.fullmatch(r"\d{1,2}\s*[:\-]\s*\d{1,2}", actual_score):
+            raise AdminError(400, "actual_score must look like '2:1'")
+        count = storage.manual_settle_match(match_id, result, actual_score=actual_score)
         if not count:
-            raise AdminError(404, "No pending picks matched that id")
+            # With the write-once guard, zero rows means the id matched nothing
+            # OR every matching row was already terminal. Say which.
+            raise AdminError(404, "No pending picks matched that id "
+                                 "(already-settled rows are not re-settable)")
         self.audit((user or {}).get("id"), "admin.pick.settle_match", match_id,
-                   {"result": result, "rows": count})
-        return {"success": True, "rows_settled": count, "result": result}
+                   {"result": result, "rows": count, "actual_score": actual_score})
+        return {"success": True, "rows_settled": count, "result": result,
+                "actual_score": actual_score}
 
     def pick_stats(self, handler, query, body, user, role, params):
         storage = self.storage

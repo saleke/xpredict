@@ -64,12 +64,18 @@ def pick_to_row(pick: Pick) -> dict:
         "cv": pick.cv,
         "state": pick.state,
         "result": None,
+        "actual_score": None,
+        "score_source": None,
         "best_book": exec_.book_key if exec_ else None,
         "best_odds": exec_.odds if exec_ else None,
         "best_ev": exec_.ev if exec_ else None,
-        "closing_odds": exec_.odds if exec_ else None,
-        "closing_p_true": pick.p_true,
-        "clv": 0.0 if exec_ else None,
+        # closing_* and clv start as NULL, not a copy of the emit price. A pick
+        # that is never re-priced before kickoff has *no* observed close; seeding
+        # these from `best_odds` made an unrepriced pick score exactly 0.0 CLV,
+        # which reads as "beat the close perfectly" in every mean that folds it in.
+        "closing_odds": None,
+        "closing_p_true": None,
+        "clv": None,
         "conviction_score": getattr(pick, "conviction_score", 0.0),
         "recommended_stake_pct": getattr(pick, "recommended_stake_pct", 0.0),
         "recommended_units": getattr(pick, "recommended_units", 0.0),
@@ -108,7 +114,9 @@ class Storage:
         raise NotImplementedError
 
     def settle_pick(self, dedupe_key: str, result: str,
-                    settled_at: datetime, state: str = "SETTLED") -> bool:
+                    settled_at: datetime, state: str = "SETTLED",
+                    actual_score: Optional[str] = None,
+                    score_source: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     def update_pick_closing(self, dedupe_key: str, closing_odds: float,
@@ -125,7 +133,8 @@ class Storage:
     def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
         return []
 
-    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+    def manual_settle_match(self, match_id: str, result: str = "WIN",
+                            actual_score: Optional[str] = None) -> int:
         return 0
 
     def is_system_paused(self) -> bool:
@@ -254,13 +263,19 @@ class InMemoryStorage(Storage):
         ]
 
     def settle_pick(self, dedupe_key: str, result: str,
-                    settled_at: datetime, state: str = "SETTLED") -> bool:
+                    settled_at: datetime, state: str = "SETTLED",
+                    actual_score: Optional[str] = None,
+                    score_source: Optional[str] = None) -> bool:
         row = self._picks.get(dedupe_key)
         if row is None or row["state"] not in PENDING_STATES:
             return False
         row["state"] = state
         row["result"] = result
         row["settled_at"] = settled_at.isoformat()
+        if actual_score:
+            row["actual_score"] = actual_score
+        if score_source:
+            row["score_source"] = score_source
         return True
 
     def update_pick_closing(self, dedupe_key: str, closing_odds: float,
@@ -290,15 +305,20 @@ class InMemoryStorage(Storage):
     def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
         return sorted(self._audit_logs, key=lambda x: x["timestamp"], reverse=True)[:limit]
 
-    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+    def manual_settle_match(self, match_id: str, result: str = "WIN",
+                            actual_score: Optional[str] = None) -> int:
         count = 0
         now_iso = datetime.now(timezone.utc).isoformat()
         res_upper = result.upper()
         for row in self._picks.values():
-            if row.get("match_id") == match_id or match_id in row.get("dedupe_key", ""):
+            if row.get("state") in PENDING_STATES and (
+                    row.get("match_id") == match_id
+                    or match_id in row.get("dedupe_key", "")):
                 row["state"] = "SETTLED"
                 row["result"] = res_upper
                 row["settled_at"] = now_iso
+                if actual_score:
+                    row["actual_score"] = actual_score
                 count += 1
         return count
 
@@ -393,8 +413,12 @@ class JsonFileStorage(InMemoryStorage):
         return ret
 
     def settle_pick(self, dedupe_key: str, result: str,
-                    settled_at: datetime, state: str = "SETTLED") -> bool:
-        ret = super().settle_pick(dedupe_key, result, settled_at, state=state)
+                    settled_at: datetime, state: str = "SETTLED",
+                    actual_score: Optional[str] = None,
+                    score_source: Optional[str] = None) -> bool:
+        ret = super().settle_pick(dedupe_key, result, settled_at, state=state,
+                                  actual_score=actual_score,
+                                  score_source=score_source)
         if ret:
             self._save()
         return ret
@@ -426,6 +450,8 @@ CREATE TABLE IF NOT EXISTS picks (
     cv            REAL,
     state         TEXT NOT NULL,
     result        TEXT,
+    actual_score  TEXT,
+    score_source  TEXT,
     best_book     TEXT,
     best_odds     REAL,
     best_ev       REAL,
@@ -682,7 +708,8 @@ class SqliteStorage(Storage):
             INSERT OR IGNORE INTO picks (
                 dedupe_key, match_id, sport_key, market, outcome_name, line,
                 home_team, away_team, commence_time, p_true, fair_odds,
-                n_books, stdev, cv, state, result, best_book, best_odds,
+                n_books, stdev, cv, state, result, actual_score, score_source,
+                best_book, best_odds,
                 best_ev, closing_odds, closing_p_true, clv,
                 conviction_score, recommended_stake_pct, recommended_units,
                 created_at, settled_at
@@ -690,7 +717,8 @@ class SqliteStorage(Storage):
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
                 ?, ?, ?,
                 ?, ?
             )
@@ -712,6 +740,8 @@ class SqliteStorage(Storage):
             r.get("cv", 0.0),
             r.get("state", "TRIGGER_ALERT"),
             r.get("result"),
+            r.get("actual_score"),
+            r.get("score_source"),
             r.get("best_book"),
             r.get("best_odds"),
             r.get("best_ev"),
@@ -753,13 +783,19 @@ class SqliteStorage(Storage):
             return [dict(r) for r in cur.fetchall()]
 
     def settle_pick(self, dedupe_key: str, result: str,
-                    settled_at: datetime, state: str = "SETTLED") -> bool:
+                    settled_at: datetime, state: str = "SETTLED",
+                    actual_score: Optional[str] = None,
+                    score_source: Optional[str] = None) -> bool:
         placeholders = ",".join("?" for _ in PENDING_STATES)
         sql = f"""
-            UPDATE picks SET state = ?, result = ?, settled_at = ?
+            UPDATE picks
+            SET state = ?, result = ?, settled_at = ?,
+                actual_score = COALESCE(?, actual_score),
+                score_source  = COALESCE(?, score_source)
             WHERE dedupe_key = ? AND state IN ({placeholders})
         """
-        params = [state, result, settled_at.isoformat(), dedupe_key, *PENDING_STATES]
+        params = [state, result, settled_at.isoformat(), actual_score, score_source,
+                  dedupe_key, *PENDING_STATES]
         with self._tx() as conn:
             cur = conn.execute(sql, params)
             conn.commit()
@@ -923,7 +959,8 @@ class SqliteStorage(Storage):
                        avg(best_ev) AS avg_ev,
                        avg(best_odds) AS avg_odds,
                        avg(n_books) AS avg_books,
-                       avg(clv) AS avg_clv
+                       avg(clv) AS avg_clv,
+                       count(clv) AS clv_n
                 FROM picks
                 WHERE result IN ('WIN','LOSS','VOID')
             """).fetchone()
@@ -1003,7 +1040,12 @@ class SqliteStorage(Storage):
             "avg_best_ev": round(graded["avg_ev"], 5) if graded["avg_ev"] else None,
             "avg_odds": round(graded["avg_odds"], 3) if graded["avg_odds"] else None,
             "avg_books": round(graded["avg_books"], 2) if graded["avg_books"] else None,
+            # avg(clv) ignores NULLs, so it is already a mean over the picks that
+            # actually have an observed close. clv_n is published beside it so a
+            # reader can see how much of the graded book that sample covers
+            # instead of having to assume it is all of them.
             "avg_clv": round(graded["avg_clv"], 4) if graded["avg_clv"] else None,
+            "clv_sample_size": int(graded["clv_n"] or 0),
             "by_market": [{
                 "market": r["market"], "n": int(r["n"] or 0),
                 "wins": int(r["wins"] or 0),
@@ -1236,17 +1278,31 @@ class SqliteStorage(Storage):
             cur = conn.execute(sql, (limit,))
             return [dict(r) for r in cur.fetchall()]
 
-    def manual_settle_match(self, match_id: str, result: str = "WIN") -> int:
+    def manual_settle_match(self, match_id: str, result: str = "WIN",
+                            actual_score: Optional[str] = None) -> int:
+        """Operator-initiated settlement.
+
+        Guarded exactly like :meth:`settle_pick` -- only rows still in a PENDING
+        state are touched. Without this, ``POST /api/admin/picks/settle-match``
+        and the Telegram ``/settle`` command could rewrite an already-SETTLED
+        row, which made the "write-once immutable ledger" claim true of the
+        automated path and false of the operator path.
+        """
         now_iso = datetime.now(timezone.utc).isoformat()
         res_upper = result.upper()
-        sql = """
+        placeholders = ",".join("?" for _ in PENDING_STATES)
+        sql = f"""
             UPDATE picks
-            SET state = 'SETTLED', result = ?, settled_at = ?
-            WHERE match_id = ? OR dedupe_key LIKE ?
+            SET state = 'SETTLED', result = ?, settled_at = ?,
+                actual_score = COALESCE(?, actual_score)
+            WHERE (match_id = ? OR dedupe_key LIKE ?)
+              AND state IN ({placeholders})
         """
         like_pattern = f"%{match_id}%"
+        params = [res_upper, now_iso, actual_score, match_id, like_pattern,
+                  *PENDING_STATES]
         with self._tx() as conn:
-            cur = conn.execute(sql, (res_upper, now_iso, match_id, like_pattern))
+            cur = conn.execute(sql, params)
             conn.commit()
             return cur.rowcount
 
@@ -1492,6 +1548,11 @@ class PostgresStorage(Storage):
         with self.conn.cursor() as cur:
             cur.execute(POSTGRES_DDL)
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS line DOUBLE PRECISION;")
+            # Verification columns: a settled pick must carry the score that
+            # graded it, and the feed that produced it, so a customer can check
+            # the ledger against an independent scoreboard.
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS actual_score VARCHAR(64);")
+            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS score_source VARCHAR(255);")
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_odds DOUBLE PRECISION;")
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_p_true DOUBLE PRECISION;")
             cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS clv DOUBLE PRECISION;")

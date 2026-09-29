@@ -411,60 +411,18 @@
                   </tr>
                 </thead>
                 <tbody id="target-leaderboard-tbody">
-                  <tr>
-                    <td><span class="lb-rank-badge badge-first">1</span></td>
-                    <td class="td-player-cell">
-                      <div class="player-avatar-mini">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                      </div>
-                      <span class="player-name-text">PlayMaker</span>
-                    </td>
-                    <td class="font-mono td-picks">4,532</td>
-                    <td class="font-mono text-lime td-winrate">92%</td>
-                  </tr>
-                  <tr>
-                    <td><span class="lb-rank-badge badge-second">2</span></td>
-                    <td class="td-player-cell">
-                      <div class="player-avatar-mini">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                      </div>
-                      <span class="player-name-text">DropShot</span>
-                    </td>
-                    <td class="font-mono td-picks">4,215</td>
-                    <td class="font-mono text-lime td-winrate">89%</td>
-                  </tr>
-                  <tr>
-                    <td><span class="lb-rank-badge badge-third">3</span></td>
-                    <td class="td-player-cell">
-                      <div class="player-avatar-mini">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                      </div>
-                      <span class="player-name-text">StatKing</span>
-                    </td>
-                    <td class="font-mono td-picks">3,865</td>
-                    <td class="font-mono text-lime td-winrate">86%</td>
-                  </tr>
-                  <tr>
-                    <td><span class="lb-rank-badge">4</span></td>
-                    <td class="td-player-cell">
-                      <div class="player-avatar-mini">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                      </div>
-                      <span class="player-name-text">GoalGetter</span>
-                    </td>
-                    <td class="font-mono td-picks">3,720</td>
-                    <td class="font-mono text-lime td-winrate">82%</td>
-                  </tr>
-                  <tr>
-                    <td><span class="lb-rank-badge">5</span></td>
-                    <td class="td-player-cell">
-                      <div class="player-avatar-mini">
-                        <svg viewBox="0 0 24 24" width="14" height="14" fill="#ccff00"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                      </div>
-                      <span class="player-name-text">AcePicks</span>
-                    </td>
-                    <td class="font-mono td-picks">3,412</td>
-                    <td class="font-mono text-lime td-winrate">78%</td>
+                  <!--
+                    No static rows. The previous version shipped five hardcoded
+                    entries (PlayMaker 4,532 picks / 92%, DropShot 4,215 / 89%, ...)
+                    that JavaScript replaced only *after* first paint, so every
+                    visitor saw invented users with invented track records until
+                    the script ran. A leaderboard of people who do not exist is
+                    not a placeholder, it is a fabrication. The real table is
+                    rendered from graded ledger rows by app.js.
+                  -->
+                  <tr id="leaderboard-empty-row">
+                    <td colspan="4" class="td-empty">No graded selections in the ledger yet. The table is populated
+                      from settled, scored picks &mdash; never from a placeholder.</td>
                   </tr>
                 </tbody>
               </table>
@@ -490,7 +448,11 @@
               </p>
             </div>
 
-            <!-- Part 2: Stats (92.7% & 1.2M+) -->
+            <!-- Part 2: Stats. Ship as "n/a", not a flattering number: the
+                 engine's own measured win rate is 86.7% on 30 graded picks, and
+                 the prediction count is the number of rows in the ledger, not a
+                 marketing total. app.js fills both from /api/dashboard once
+                 graded rows exist. -->
             <div class="bottom-ai-stats">
               <div class="ai-stat-item">
                 <div class="ai-stat-icon">
@@ -501,7 +463,7 @@
                   </svg>
                 </div>
                 <div class="ai-stat-meta">
-                  <div class="ai-stat-val font-mono" id="target-model-acc-val">92.7%</div>
+                  <div class="ai-stat-val font-mono" id="target-model-acc-val">n/a</div>
                   <div class="ai-stat-lbl">MODEL ACCURACY</div>
                 </div>
               </div>
@@ -514,7 +476,7 @@
                   </svg>
                 </div>
                 <div class="ai-stat-meta">
-                  <div class="ai-stat-val font-mono" id="target-predictions-count-val">1.2M+</div>
+                  <div class="ai-stat-val font-mono" id="target-predictions-count-val">n/a</div>
                   <div class="ai-stat-lbl">PREDICTIONS MADE</div>
                 </div>
               </div>
@@ -2125,7 +2087,15 @@
         </form>
       </div>
     </div>
-    <!-- Stripe / Payment Simulation Modal -->
+    <!-- Purchase / Checkout Modal -->
+    <!--
+      This modal collects NO payment details. It is a purchase-intent handoff
+      to the Telegram desk, which is where the actual payment is taken and
+      verified. A card form here would be a lie: there is no gateway wired
+      behind it, the previous version of this modal was a labelled simulation
+      that printed "Privilege elevated" without charging anything, and it said
+      so in a tooltip most customers never saw.
+    -->
     <div class="modal-backdrop" id="checkout-modal" style="display: none;" onclick="window.closeCheckoutModal()">
       <div class="modal-card checkout-card" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -2137,8 +2107,8 @@
             </svg></div>
           <div class="modal-title-wrap">
             <h3 class="modal-heading" id="checkout-modal-title">Upgrade to Tier 2 Pro Trader</h3>
-            <p class="modal-subheading" id="checkout-modal-sub">Unlock all 12 predictions, smart pivots, and 5-fold
-              parlays.</p>
+            <p class="modal-subheading" id="checkout-modal-sub">Unlock the full live board, with the measured price
+              and edge on every selection.</p>
           </div>
           <button type="button" class="modal-close" onclick="window.closeCheckoutModal()"
             aria-label="Close">&times;</button>
@@ -2154,37 +2124,24 @@
               board, with the measured price and edge on every selection.</div>
           </div>
 
-          <form id="form-checkout" onsubmit="window.handleCheckoutSubmit(event)">
-            <div class="auth-form-group">
-              <label class="auth-label">Cardholder Name</label>
-              <input type="text" id="checkout-cardholder" class="auth-input" placeholder="Alex Morgan" required
-                value="Alex Morgan">
-            </div>
+          <div class="checkout-handoff">
+            <p class="checkout-handoff-lede"><strong>Payment is taken on the Telegram desk.</strong></p>
+            <ol class="checkout-handoff-steps">
+              <li>Open the purchase desk in Telegram (<code>@XpredictPremiumBot</code>) and send <code>/buy</code>.</li>
+              <li>Choose your tier and a payment method. You will be given the amount and the verification
+                reference.</li>
+              <li>Send payment. The desk confirms receipt against the payment record <em>before</em> your tier
+                activates &mdash; it is never activated on a self-report.</li>
+              <li>Your account is upgraded and the unlock code is delivered to you directly.</li>
+            </ol>
+            <p class="checkout-handoff-note">No card details are collected or stored on this site.</p>
+          </div>
 
-            <div class="auth-form-group">
-              <label class="auth-label">Card Number (Simulated Stripe Gateway)</label>
-              <input type="text" id="checkout-cardnum" class="auth-input font-mono" placeholder="4242 •••• •••• 4242"
-                required value="4242 •••• •••• 4242">
-            </div>
-
-            <div class="checkout-grid-2col">
-              <div class="auth-form-group">
-                <label class="auth-label">Expires</label>
-                <input type="text" class="auth-input font-mono" placeholder="MM/YY" required value="12/28">
-              </div>
-              <div class="auth-form-group">
-                <label class="auth-label">CVC</label>
-                <input type="text" class="auth-input font-mono" placeholder="CVC" required value="888">
-              </div>
-            </div>
-
-            <button type="submit" class="auth-submit-btn" id="btn-submit-checkout">
-              <span>Confirm Subscription &amp; Unlock Slate</span>
-            </button>
-          </form>
-
-          <div class="modal-guarantee">
-            256-bit Encrypted · Instant Activation · Cancel anytime with 1 click
+          <div class="checkout-handoff-actions">
+            <a class="auth-submit-btn" id="btn-open-telegram"
+              href="https://t.me/XpredictPremiumBot" target="_blank" rel="noopener noreferrer">
+              <span>Continue to Telegram Purchase Desk</span>
+            </a>
           </div>
         </div>
       </div>

@@ -106,7 +106,12 @@ class Settings:
     min_books_alert: int = 5
     max_cv: float = 0.10
     ev_min: float = 0.0
-    require_positive_ev: bool = False
+    # An emitted pick must be backed by a price that beats the leave-one-out
+    # fair price. Off, the gate emitted on certainty alone and then discovered
+    # there was no edge: best_execution was None, exec_odds fell back to
+    # 1/p_top, EV came out exactly 0.0, and Kelly returned "Pass" with a zero
+    # stake. A headline pick with no price and no stake is not a product.
+    require_positive_ev: bool = True
 
     # -- freshness ------------------------------------------------------------
     stale_prematch_sec: int = 4 * 3600
@@ -192,11 +197,36 @@ class Settings:
     # Extra markets cost real credits: 1 per sport for h2h, 3 for
     # h2h+spreads+totals on a single region, 6 across eu+us. They stay off while
     # the pre-match model is being measured for accuracy and precision.
+    #
+    # WHY THIS IS STILL OFF, and what turning it on would actually require:
+    #
+    # The benchmarked competitor's entire edge lives in Over/Under 2.5, BTTS and
+    # handicap markets -- NOT the moneyline. `markets="h2h"` therefore excludes
+    # exactly the markets where the edge is, and enabling spreads+totals is the
+    # single highest-leverage change available to this engine.
+    #
+    # It is not free. The Odds API bills per (sport, region, market-group):
+    #   h2h only, eu+us ......... 1 credit per sport per cycle
+    #   h2h+spreads+totals .... 3 credits per sport per cycle
+    # At credit_budget_daily=50 across SCOPE_LEAGUES (22 sports) that is ~2
+    # full cycles per day on h2h, or well under 1 cycle with all three markets.
+    # Turning it on without raising the budget does not add markets -- it
+    # silently cuts league coverage to a third, which is worse.
+    #
+    # To do this properly: raise credit_budget_daily (and the key count), or
+    # narrow SCOPE_LEAGUES to fewer competitions and poll those more often.
+    # Measure before enabling: a narrower, well-covered sharp league set beats a
+    # broad, one-cycle-per-day set.
     enable_extra_markets: bool = False
     # Model-only goal markets (BTTS, over/under any line, scorelines) cost no
     # extra credits at all: they are derived from the Poisson matrix on fixtures
     # already being polled. They are still gated so a measurement run can be
     # kept to a single well-understood product surface.
+    #
+    # Note these are DERIVED from the h2h consensus (derived.derive_micro_bets),
+    # not from a priced totals line, so they are a model output rather than a
+    # market the books quoted. They are shown on the bulletin as model view; they
+    # are not staked by the pipeline, which only stakes gated h2h executions.
     enable_micro_predictions: bool = False
     # In-play polling costs far more than pre-match: tracking every active
     # league at the live cadence runs 300-500 credits/day, so even when enabled

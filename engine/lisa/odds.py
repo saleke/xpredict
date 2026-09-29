@@ -11,6 +11,32 @@ from typing import Optional
 H2H = "h2h"
 
 
+def _invert_handicap(graded: dict) -> dict:
+    """Flip a home-perspective handicap grade to the opposite side.
+
+    A bet on the away side at line L is the exact complement of a home bet at
+    -L: what was a full win is a full loss, a half win a half loss, and a push
+    is still a push (neither side was right). Quarter balls invert cleanly
+    because the two half-staked sub-lines swap with the sign.
+    """
+    flipped = dict(graded)
+    result = graded.get("result")
+    if result == "WIN":
+        flipped["result"] = "LOSS"
+        flipped["won_fraction"] = 0.0
+    elif result == "LOSS":
+        flipped["result"] = "WIN"
+        flipped["won_fraction"] = graded.get("stake_fraction", 1.0)
+    elif result == "HALF_WIN":
+        flipped["result"] = "HALF_LOSS"
+        flipped["won_fraction"] = 0.0
+    elif result == "HALF_LOSS":
+        flipped["result"] = "HALF_WIN"
+        flipped["won_fraction"] = graded.get("stake_fraction", 0.5)
+    # PUSH / VOID is unchanged: it was undecided on both sides.
+    return flipped
+
+
 def utcnow() -> datetime:
     """Test-friendly single source of "now" (UTC)."""
     return datetime.now(timezone.utc)
@@ -103,15 +129,19 @@ class Score:
             if line is None:
                 return None
             total = self.home_score + self.away_score
-            diff = total - line
-            if abs(diff) < 1e-6:
-                return "VOID"
             name_lower = outcome_name.strip().lower()
+            # Asian totals can be quarter balls too ("Over 2.5,3.0" is the same
+            # stake split across 2.5 and 3.0), so a whole-ball push test alone
+            # is not enough. markets.grade_total owns that logic.
+            from .markets import grade_total
             if "over" in name_lower:
-                return "WIN" if diff > 0 else "LOSS"
-            if "under" in name_lower:
-                return "WIN" if diff < 0 else "LOSS"
-            return None
+                graded = grade_total(self.home_score, self.away_score, line, "over")
+            elif "under" in name_lower:
+                graded = grade_total(self.home_score, self.away_score, line, "under")
+            else:
+                return None
+            result = graded.get("result")
+            return "VOID" if result == "PUSH" else result
 
         if market == "spreads":
             if line is None:
@@ -124,10 +154,34 @@ class Score:
                 opp_score = self.home_score
             else:
                 return None
-            diff = (team_score + line) - opp_score
-            if abs(diff) < 1e-6:
-                return "VOID"
-            return "WIN" if diff > 0 else "LOSS"
+            # Quarter balls (-0.25, +0.75, ...) are two half-staked lines and
+            # resolve to HALF_WIN / HALF_LOSS, never to a single WIN / LOSS.
+            # Routing through markets.grade_asian_handicap makes this the one
+            # grading implementation in the codebase; the inline arithmetic that
+            # used to live here silently rounded a quarter ball to a whole one,
+            # so a -0.25 bet that half-lost was graded as a full loss.
+            from .markets import grade_asian_handicap
+            # ``line`` here is the OUTCOME's own handicap, not the home team's.
+            # markets.grade_asian_handicap always reads the line as the home
+            # team's point, so an away bet is graded by mirroring it: settle
+            # ``-line`` from the home perspective and invert the result.
+            #
+            # The previous inline arithmetic here used the outcome's own line
+            # directly, which was right, but routing it through markets naively
+            # (side="away" with the same line) is wrong: markets negates the
+            # whole delta, including the line, so Knicks at +8.0 graded as a
+            # LOSS when it is a PUSH.
+            is_home = outcome_name == self.home_team
+            graded = grade_asian_handicap(self.home_score, self.away_score,
+                                          line if is_home else -line, "home")
+            if not is_home:
+                graded = _invert_handicap(graded)
+            result = graded.get("result")
+            # markets grades an exactly-on-the-line bet as PUSH. The ledger's
+            # terminal vocabulary is WIN / LOSS / VOID, so translate at the
+            # boundary rather than widening the storage contract to accept both
+            # spellings of the same thing.
+            return "VOID" if result == "PUSH" else result
 
         if market in ("btts", "both_teams_to_score"):
             name_lower = outcome_name.strip().lower()

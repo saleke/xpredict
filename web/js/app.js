@@ -54,8 +54,12 @@ let state = {
   activeCategoryFilter: 'all',
   activeSportFilter: 'all',
   activeTab: 'overview',
-  currentTier: localStorage.getItem('lisa_tier') || 'free',
-  isTelegramUnlocked: localStorage.getItem('lisa_telegram_unlocked') === 'true',
+  // Tier is a *display* value only, sourced from the server. It used to be read
+  // from localStorage, which meant `localStorage.setItem('lisa_tier','tier3')`
+  // unlocked the entire paid product in the UI. The server now masks picks on
+  // /api/dashboard regardless; this must not be a second, weaker authority.
+  currentTier: 'free',
+  isTelegramUnlocked: false,
   selectedBooks: {},
   activeAccuBook: 'sportybet',
   picksSearchQuery: '',
@@ -446,6 +450,14 @@ async function loadData() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
     state.dashboard = state.data;
+    // Adopt the tier the server resolved for this caller. The server masks
+    // picks by that same tier, so the UI must not carry an independent one.
+    if (state.data && state.data.viewer_tier) {
+      state.currentTier = state.data.viewer_tier;
+    }
+    if (state.data && typeof state.data.is_telegram_verified === 'boolean') {
+      state.isTelegramUnlocked = state.data.is_telegram_verified;
+    }
     renderProvenanceBanner();
     renderLiveStatusBanner();
 
@@ -514,6 +526,10 @@ function startDashboardPolling() {
         console.log('[LISA] New pipeline cycle detected:', freshGen);
         state.data = freshData;
         state.dashboard = freshData;
+        if (freshData.viewer_tier) state.currentTier = freshData.viewer_tier;
+        if (typeof freshData.is_telegram_verified === 'boolean') {
+          state.isTelegramUnlocked = freshData.is_telegram_verified;
+        }
         renderAll();
       }
     } catch (e) {
@@ -1155,9 +1171,12 @@ function renderTierControls() {
   }
 }
 
+// Reflect the tier the SERVER resolved. This is not an entitlement setter: it
+// updates the display only. Entitlement is decided in the /api/dashboard
+// handler, which strips the selection, price and edge from locked rows. Nothing
+// here can unlock anything.
 window.setTier = function (tier) {
   state.currentTier = tier;
-  localStorage.setItem('lisa_tier', tier);
   renderTierControls();
   renderPicks();
 
@@ -2539,47 +2558,48 @@ window.switchBoardTab = function(tab) {
   loadDailyBoard(tab);
 };
 
-window.loadDailyBoard = async function(tab) {
+window.loadDailyBoard = async function (tab) {
   const contentDiv = document.getElementById('daily-board-content');
   if (!contentDiv) return;
 
   contentDiv.innerHTML = '<div class="board-loading">Loading matches...</div>';
 
   try {
-    // In production, this would fetch from the API
-    // const response = await fetch(`/api/daily-board?tab=${tab}`);
-    // const data = await response.json();
+    // Real fixtures from the live ingestion daemon via /api/daily-board.
+    //
+    // This used to render a hardcoded list -- Arsenal v Chelsea @1.85, Real v
+    // Barca @2.10 and so on -- with the real call commented out one line above.
+    // Those were invented fixtures at invented prices on the highest-traffic
+    // nav item, while /api/daily-board returned real odds the entire time. One
+    // customer cross-checking a single price would have ended the business.
+    const DAYS = { today: 0, tomorrow: 1, week: 7 };
+    const days = DAYS[tab] === undefined ? 0 : DAYS[tab];
+    const response = await fetch(`/api/daily-board?days_ahead=${days}`);
+    if (!response.ok) throw new Error(`board request failed: ${response.status}`);
+    const data = await response.json();
 
-    // For now, show placeholder
-    const mockData = {
-      today: [
-        { time: '15:00', league: 'Premier League', home: 'Arsenal', away: 'Chelsea', odds: '1.85' },
-        { time: '17:30', league: 'La Liga', home: 'Real Madrid', away: 'Barcelona', odds: '2.10' },
-        { time: '20:00', league: 'Serie A', home: 'Juventus', away: 'AC Milan', odds: '1.95' },
-      ],
-      tomorrow: [
-        { time: '14:00', league: 'Bundesliga', home: 'Bayern', away: 'Dortmund', odds: '1.75' },
-      ],
-      week: [
-        { time: 'Sat 15:00', league: 'Premier League', home: 'Liverpool', away: 'Man City', odds: '2.50' },
-      ],
-    };
+    const groups = data.groups || data;
+    const rows = [];
+    Object.keys(groups || {}).forEach((bucket) => {
+      (groups[bucket] || []).forEach((m) => rows.push(m));
+    });
 
-    const matches = mockData[tab] || [];
-
-    if (matches.length === 0) {
-      contentDiv.innerHTML = '<div class="board-empty">No matches found for this period.</div>';
+    if (rows.length === 0) {
+      contentDiv.innerHTML = '<div class="board-empty">No priced fixtures in the live feed for this '
+        + 'period. Nothing is listed here unless the ingestion daemon has a real price for it.</div>';
       return;
     }
 
     let html = '<div class="board-matches">';
-    matches.forEach(m => {
+    rows.forEach((m) => {
+      const kickoff = m.kickoff_human || m.commence_time || '';
+      const odds = m.best_odds != null ? Number(m.best_odds).toFixed(2) : null;
       html += `
         <div class="board-match">
-          <div class="board-match-time">${esc(m.time)}</div>
-          <div class="board-match-league">${esc(m.league)}</div>
-          <div class="board-match-teams">${esc(m.home)} vs ${esc(m.away)}</div>
-          <div class="board-match-odds">${esc(m.odds)}</div>
+          <div class="board-match-time">${esc(kickoff)}</div>
+          <div class="board-match-league">${esc(m.league_label || m.sport_key || '')}</div>
+          <div class="board-match-teams">${esc(m.home_team || '')} vs ${esc(m.away_team || '')}</div>
+          <div class="board-match-odds">${odds ? esc(odds) : '<span class="board-match-noprice">no price</span>'}</div>
         </div>
       `;
     });
@@ -2587,7 +2607,10 @@ window.loadDailyBoard = async function(tab) {
 
     contentDiv.innerHTML = html;
   } catch (err) {
-    contentDiv.innerHTML = '<div class="board-error">Failed to load matches.</div>';
+    // An empty state that admits the feed is down beats a plausible list of
+    // fixtures that were never real.
+    contentDiv.innerHTML = '<div class="board-error">Live fixture feed unavailable. '
+      + 'No fixtures are shown rather than showing unverified ones.</div>';
   }
 };
 
@@ -2665,10 +2688,12 @@ function onVerificationSuccess() {
 }
 
 window.relockTelegram = function () {
-  state.currentTier = 'free';
+  // Clears the local mirror only. It is a display reset, not a security
+  // control -- Telegram verification is decided server-side in
+  // /api/dashboard, and a client that re-fetches will get the server's answer.
   state.isTelegramUnlocked = false;
-  localStorage.setItem('lisa_tier', 'free');
   localStorage.removeItem('lisa_telegram_unlocked');
+  window.setTier('free');
 };
 
 // Interactive Model Inference Scenarios
@@ -3270,15 +3295,27 @@ function setupAuthUI() {
     showToast('Signed out of terminal.', 'info');
   });
 
-  // Global switchUserTier
+  // Global switchUserTier — DISPLAY ONLY.
+  //
+  // This previously called auth.updateTier() and then set local state, and the
+  // web checkout called it straight after a fake card form, so the UI announced
+  // "Privilege elevated to Tier 2 Pro Trader!" for a purchase that never
+  // happened. The server's /api/auth/update-tier correctly 403s (the payment
+  // webhook secret is unset, so there is no automated grant path at all).
+  //
+  // Nothing here grants anything. The tier shown comes back from the server on
+  // the next /api/dashboard load, and entitlement is enforced in that handler.
   window.switchUserTier = async (tier) => {
     dropdown?.classList.remove('show');
     userPill?.classList.remove('active');
-    if (auth.isAuthenticated()) {
-      await auth.updateTier(tier);
+    if (!auth.isAuthenticated()) {
+      showToast('Sign in to manage your subscription.', 'info');
+      return;
     }
-    window.setTier(tier);
-    showToast(`Switched active tier to ${tier.toUpperCase()}`, 'success');
+    showToast(
+      'Tier changes are handled on the Telegram purchase desk. Your current tier is shown above.',
+      'info',
+    );
   };
 
   // Listen for auth state changes
@@ -3606,28 +3643,21 @@ window.closeCheckoutModal = function () {
   if (modal) modal.style.display = 'none';
 };
 
+// Payment is NOT taken on this site. This handler no longer exists as a
+// card-submission path: the previous version slept 600ms, called
+// switchUserTier(), and toasted "Privilege elevated to Tier 2!" for a purchase
+// that never happened and a tier that was never persisted server-side. Anyone
+// reading the markup could see it was a simulation; anyone who did not was
+// told their card was accepted.
+//
+// The tier is granted only after the Telegram desk verifies the payment
+// against the payment record. Until then it is not granted at all.
 window.handleCheckoutSubmit = async function (event) {
   if (event) event.preventDefault();
-  const btn = document.getElementById('btn-submit-checkout');
-  const origHtml = btn ? btn.innerHTML : '';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<span>Processing Encrypted Simulation...</span>';
-  }
-
-  // Realistic gateway latency simulation
-  await new Promise(r => setTimeout(r, 600));
-
-  await window.switchUserTier(checkoutPendingTier);
-  window.closeCheckoutModal();
-
-  if (btn) {
-    btn.disabled = false;
-    btn.innerHTML = origHtml;
-  }
-
-  const info = TIER_PRICING[checkoutPendingTier] || TIER_PRICING.tier1;
-  showToast(`Privilege elevated to ${info.name}! Institutional slate unlocked.`, 'success');
+  showToast(
+    'Payment is handled on the Telegram purchase desk — no card details are taken here.',
+    'info',
+  );
 };
 
 // Account Settings & Security Modal
@@ -3653,8 +3683,16 @@ window.openAccountSettingsModal = function () {
   }
 
   if (tokenEl) {
-    const rawToken = localStorage.getItem('lisa_auth_token') || 'lsp_live_' + (user?.id ? String(user.id).slice(0, 12) : '8849201948ae');
+    // Show the caller's real session token, or nothing. The previous fallback
+    // invented one -- 'lsp_live_' plus a slice of the user id, or a literal
+    // '8849201948ae' when there was no user at all -- and rendered it as if it
+    // were a working API credential. A displayed credential that is not one is
+    // worse than an empty field.
+    const rawToken = localStorage.getItem('lisa_auth_token') || '';
     tokenEl.value = rawToken;
+    if (!rawToken) {
+      tokenEl.placeholder = 'Sign in to reveal your session token';
+    }
   }
 
   if (tgInput && user?.telegram_username) {

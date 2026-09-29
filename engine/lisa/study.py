@@ -201,14 +201,29 @@ class MarketStudyEngine:
         }
 
     def _model_btts_calibration(self) -> list[dict[str, Any]]:
-        """Independent Poisson-model BTTS probability vs reality (no odds used)."""
-        ordered = [
-            {"league": g["sport_key"], "home": g["home_team"], "away": g["away_team"],
-             **({"home_score": s.home_score, "away_score": s.away_score,
-                  "match_id": g["id"]} if
-                 (s := self._scores.get(g["id"])) and s.completed else {})}
-            for g in HISTORICAL_ODDS
-        ]
+        """Independent Poisson-model BTTS probability vs reality (no odds used).
+
+        The fixture list is sorted by kickoff before the model is walked forward.
+        ``HISTORICAL_ODDS`` is built season-major and league-minor (all of
+        2021/22 EPL, then all of 2021/22 La Liga, ...), so iterating it in
+        construction order meant an EPL club could be rated using results from
+        up to nine months later in its own calendar. The model would then be
+        evaluated on a prediction it had already been trained past -- an
+        in-sample number published as out-of-sample calibration.
+        """
+        ordered = sorted(
+            [
+                {"league": g["sport_key"], "home": g["home_team"], "away": g["away_team"],
+                 "commence_time": g.get("commence_time"),
+                 **({"home_score": s.home_score, "away_score": s.away_score,
+                      "match_id": g["id"]} if
+                     (s := self._scores.get(g["id"])) and s.completed else {})}
+                for g in HISTORICAL_ODDS
+            ],
+            # Undated fixtures sink to the end so they are scored before any
+            # observation, never after a dated one they postdate.
+            key=lambda m: (m.get("commence_time") is None, str(m.get("commence_time") or "")),
+        )
         model = EloPoissonModel()
         buckets: dict[int, list[tuple[float, bool, bool]]] = {}
         for m in ordered:

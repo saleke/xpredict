@@ -8,7 +8,11 @@ import pytest
 NOW = datetime(2026, 9, 20, 15, 0, 0, tzinfo=timezone.utc)
 
 
-def test_cycle_counts_and_suppression_reasons(pipeline):
+def test_cycle_counts_and_suppression_reasons(legacy_pipeline):
+    # Legacy gate: this test is about which *suppression reason* each fixture
+    # hits, so it needs the certainty-only gate to see below_threshold and
+    # high_dispersion branches at all.
+    pipeline = legacy_pipeline
     reports = pipeline.run_cycle(now=NOW)
 
     assert len(reports) == 3
@@ -44,7 +48,8 @@ def test_run_cycle_rejects_out_of_scope_sport(pipeline):
         pipeline.run_cycle(("chess_open",))
 
 
-def test_notifier_fires_exactly_once_per_pick(pipeline, notifier):
+def test_notifier_fires_exactly_once_per_pick(legacy_pipeline, notifier):
+    pipeline = legacy_pipeline
     pipeline.run_cycle(now=NOW)
     assert len(notifier.messages) == 4     # 2 NBA + 1 La Liga + 1 Bundesliga
     assert "Celtics" in notifier.messages[0]
@@ -90,10 +95,11 @@ def test_no_pick_after_kickoff(pipeline, storage, notifier):
     assert not [p for p in storage.list_pending_picks() if p["match_id"] == "nba-g"]
 
 
-def test_failed_alert_is_retried_not_lost(fixture_client, storage, settings):
+def test_failed_alert_is_retried_not_lost(fixture_client, storage, legacy_settings):
     """Ledger-before-dispatch means delivery must be retried, never dropped."""
     from lisa.notify import Notifier
     from lisa.pipeline import Pipeline
+    settings = legacy_settings
 
     class Flaky(Notifier):
         def __init__(self, failures: int):
@@ -124,10 +130,11 @@ def test_failed_alert_is_retried_not_lost(fixture_client, storage, settings):
     assert storage.list_pending_notifications() == []
 
 
-def test_storage_without_outbox_still_dispatches(fixture_client, settings):
+def test_storage_without_outbox_still_dispatches(fixture_client, legacy_settings):
     from lisa.notify import Notifier
     from lisa.pipeline import Pipeline
     from lisa.storage import InMemoryStorage
+    settings = legacy_settings
 
     class Bare(InMemoryStorage):
         enqueue_notification = None
@@ -193,10 +200,11 @@ def test_cycle_caches_raw_payloads_for_the_forecast_board(pipeline, storage):
     assert entry["observed_at"] > 0
 
 
-def test_cache_write_failure_does_not_block_picks(pipeline):
+def test_cache_write_failure_does_not_block_picks(legacy_pipeline):
     """The cache only backs the UI, so a storage fault must not stop picks."""
     from lisa.dashboard import LIVE_ODDS_PREFIX
 
+    pipeline = legacy_pipeline
     real_upsert = pipeline.storage.upsert_live
 
     def explode_if_forecast(key, *args, **kwargs):
@@ -255,9 +263,10 @@ def test_a_quota_blocked_cycle_keeps_the_last_observation(pipeline, storage):
         assert "quota floor" in entry["error"]
 
 
-def test_a_rollup_failure_does_not_break_the_cycle(pipeline):
+def test_a_rollup_failure_does_not_break_the_cycle(legacy_pipeline):
     from lisa.dashboard import LIVE_SNAPSHOT_KEY
 
+    pipeline = legacy_pipeline
     real_upsert = pipeline.storage.upsert_live
 
     def explode_if_snapshot(key, *args, **kwargs):

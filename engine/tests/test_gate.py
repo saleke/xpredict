@@ -30,9 +30,26 @@ def test_gate_passes_with_ev_execution():
 
 
 def test_gate_confident_but_no_execution():
-    res = evaluate(_consensus("nba-e"), threshold=0.75, min_books=5, max_cv=0.10)
+    """Opting out of the EV requirement yields a pick with no execution.
+
+    This is the behaviour the production default exists to prevent: a confident
+    consensus where no book beats fair price. Kept as an explicit opt-in test so
+    the escape hatch stays covered, but nothing in production should reach it.
+    """
+    res = evaluate(_consensus("nba-e"), threshold=0.75, min_books=5, max_cv=0.10,
+                   require_positive_ev=False)
     assert res.reason == "ok"
     assert res.pick.best_execution is None  # no book beats fair price
+    # ...and a pick with no execution cannot be sized, because the fallback
+    # price is 1/p_top, which makes EV exactly zero by construction.
+    assert res.pick.recommended_stake_pct == 0.0
+
+
+def test_gate_requires_positive_ev_is_the_default():
+    """The default gate must demand an edge, not just certainty."""
+    res = evaluate(_consensus("nba-e"), threshold=0.75, min_books=5, max_cv=0.10)
+    assert res.pick is None
+    assert res.reason == "no_positive_ev"
 
 
 def test_gate_requires_positive_ev():
@@ -40,6 +57,24 @@ def test_gate_requires_positive_ev():
                    require_positive_ev=True)
     assert res.pick is None
     assert res.reason == "no_positive_ev"
+
+
+def test_gate_sizes_on_the_probability_the_ev_was_measured_against():
+    """A priced pick must be staked from the same probability that justified it.
+
+    The gate judged the book against the leave-one-out ``p_ref`` but used to
+    hand Kelly the self-inclusive ``p_top`` -- two different probabilities for
+    one bet, one of which had already been ruled out. On nba-a bet365 is the
+    only book with positive EV; the stake must reflect that reference.
+    """
+    res = evaluate(_consensus("nba-a"), threshold=0.75, min_books=5, max_cv=0.10,
+                   require_positive_ev=True)
+    assert res.reason == "ok"
+    exec_ = res.pick.best_execution
+    assert exec_ is not None and exec_.ev > 0.0
+    # A positive-EV execution must produce a positive stake, which is only
+    # possible if Kelly saw an edge rather than the zero-EV fallback.
+    assert res.pick.recommended_stake_pct > 0.0
 
 
 def test_gate_below_threshold():

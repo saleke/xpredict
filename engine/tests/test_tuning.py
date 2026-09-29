@@ -53,16 +53,44 @@ def test_tune_sweep_is_deterministic_and_schemed():
 
 def test_tuning_reproduces_backtest_baseline():
     """The 0.75 / all-leagues cell must exactly match the production backtest's
-    executed ledger — so tuning can never silently disagree with the audit."""
+    executed ledger — so tuning can never silently disagree with the audit.
+
+    The absolute counts are pinned to the shipped configuration, which now
+    requires a positive-EV execution. Under the previous certainty-only gate the
+    cell executed 380 bets; requiring an edge cuts that to 30, and this test
+    exists to catch the moment the two drift apart again.
+    """
     engine = BacktestEngine(initial_bankroll=10000.0, flat_stake_unit=100.0)
     baseline = engine.run()
 
     rep = tune_subsets(thresholds=(0.75,), league_options=(None,))
     cell = [r for r in rep["grid"] if r["window"] == "ALL" and r["leagues"] is None][0]
 
-    assert cell["bets"] == baseline.executed_bets == 380
-    assert cell["wins"] == baseline.wins == 303
+    assert cell["bets"] == baseline.executed_bets == 30
+    assert cell["wins"] == baseline.wins == 26
     assert cell["roi_pct"] == pytest.approx(baseline.flat_roi_pct, abs=0.1)
+
+
+def test_tuning_reflects_the_production_edge_requirement():
+    """Tuning must not describe a strategy the product will not actually run.
+
+    ``tune_subsets`` used to hardcode ``require_positive_ev=False`` while the
+    engine shipped ``True``, so the whole grid was tuning a certainty-only book
+    that production never emitted.
+    """
+    with_edge = tune_subsets(thresholds=(0.75,), league_options=(None,))
+    cell = [r for r in with_edge["grid"]
+            if r["window"] == "ALL" and r["leagues"] is None][0]
+
+    without_edge = tune_subsets(thresholds=(0.75,), league_options=(None,),
+                                require_positive_ev=False)
+    legacy_cell = [r for r in without_edge["grid"]
+                   if r["window"] == "ALL" and r["leagues"] is None][0]
+
+    # Requiring an edge can only ever shrink the executed set.
+    assert cell["bets"] <= legacy_cell["bets"]
+    assert cell["bets"] == 30
+    assert legacy_cell["bets"] == 380
 
 
 def test_kelly_sim_bounds_loss():

@@ -873,8 +873,95 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 pass
         self._send_json(payload)
 
+    def _resolve_viewer_tier(self) -> tuple[Optional[dict], str, bool, str]:
+        """Resolve (auth_user, effective_tier, is_telegram_verified, user_id).
+
+        The single authority for "what may this caller see". Both /api/dashboard
+        and /api/picks route through it so the two can never disagree about who
+        is entitled to what.
+        """
+        auth_user, _ = self._get_current_user_and_session()
+        requested_tier = "free"
+        if auth_user:
+            is_admin = (auth_user.get("tier") == "admin"
+                        or (self.bot and self.bot.is_admin(
+                            str(auth_user.get("telegram_id", "")))))
+            if is_admin:
+                requested_tier = "admin"
+                tier = "tier3"
+            else:
+                tier = auth_user.get("tier", "free") or "free"
+            return auth_user, tier, bool(auth_user.get("telegram_verified")), auth_user["id"]
+        return None, requested_tier, False, ""
+
+    def _mask_picks_for_tier(self, raw_picks: list[dict], *, tier: str,
+                             is_ver: bool) -> list[dict]:
+        """Apply the entitlement ladder to a pick list, positionally.
+
+        Index 0 is free, index 1 is unlocked by Telegram membership, indices 2-4
+        are Tier 1, and everything beyond is Tier 2. A locked row has its
+        selection, price and edge stripped rather than merely hidden in the UI,
+        so a caller who ignores `is_locked` still cannot read them.
+        """
+        out: list[dict] = []
+        for idx, pick in enumerate(raw_picks):
+            p = dict(pick)
+            # The frontend keyed its lock state off `p.rank`, which no payload
+            # ever set -- so every pick fell through to the last branch and a
+            # default visitor saw 100% of picks locked, including the free one.
+            p["rank"] = idx + 1
+
+            if idx == 0:
+                p["is_locked"] = False
+                p["tier_level"] = "FREE"
+            elif idx == 1:
+                p["tier_level"] = "TELEGRAM_UNLOCK"
+                unlocked = is_ver or tier in ("tier1", "tier2", "tier3", "all")
+                p["is_locked"] = not unlocked
+                if not unlocked:
+                    p["outcome_name"] = "\U0001f512 Join Telegram to Unlock Match #2"
+                    p["best_odds"] = None
+                    p["fair_odds"] = None
+                    p["best_ev"] = None
+                    p["gauge_text"] = "Telegram Unlock Required"
+                    p["booking_codes"] = {}
+                    p["deep_links"] = {}
+            elif idx in (2, 3, 4):
+                p["tier_level"] = "TIER_1"
+                unlocked = tier in ("tier1", "tier2", "tier3", "all")
+                p["is_locked"] = not unlocked
+                if not unlocked:
+                    p["outcome_name"] = "\U0001f512 Sharp Starter (Tier 1 Required)"
+                    p["best_odds"] = None
+                    p["fair_odds"] = None
+                    p["best_ev"] = None
+                    p["gauge_text"] = "Tier 1 Subscription Required"
+                    p["booking_codes"] = {}
+                    p["deep_links"] = {}
+            else:
+                p["tier_level"] = p.get("tier_level") or "TIER_2"
+                unlocked = tier in ("tier2", "tier3", "all")
+                p["is_locked"] = not unlocked
+                if not unlocked:
+                    p["outcome_name"] = "\U0001f512 Pro Trader (Tier 2 Required)"
+                    p["best_odds"] = None
+                    p["fair_odds"] = None
+                    p["best_ev"] = None
+                    p["gauge_text"] = "Tier 2 Subscription Required"
+                    p["booking_codes"] = {}
+                    p["deep_links"] = {}
+            out.append(p)
+        return out
+
     def _handle_dashboard(self):
-        """Real dashboard payload: ledger + last live observation only."""
+        """Real dashboard payload: ledger + last live observation only.
+
+        Entitlement is enforced HERE, server-side, and not left to the client.
+        The frontend read the tier from ``localStorage`` and this route returned
+        every pick unmasked, so ``localStorage.setItem('lisa_tier','tier3')``
+        unlocked the entire paid product. ``web/DESIGN.md`` and
+        ``FRONTEND_DEV_GUIDE.md`` both claimed the server enforced this.
+        """
         from .dashboard import build_dashboard
 
         settings = self.settings or cfg.load_settings()
@@ -884,6 +971,18 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             logger.warning("dashboard build failed: %r", exc)
             self._send_json({"error": "dashboard unavailable", "detail": str(exc)}, status=503)
             return
+
+        auth_user, tier, is_ver, user_id = self._resolve_viewer_tier()
+        active = payload.get("active_picks")
+        if isinstance(active, list):
+            payload["active_picks"] = self._mask_picks_for_tier(
+                active, tier=tier, is_ver=is_ver)
+        payload["viewer_tier"] = tier
+        payload["is_telegram_verified"] = is_ver
+        payload["is_authenticated"] = auth_user is not None
+        if user_id:
+            payload["user_id"] = user_id
+
         self._send_json(payload)
 
     def _bot_username(self) -> str:
@@ -1067,31 +1166,21 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
     def _handle_picks(self, parsed: urllib.parse.ParseResult):
         qs = urllib.parse.parse_qs(parsed.query)
-        user_id = qs.get("user_id", [""])[0].strip()
+        user_id_param = qs.get("user_id", [""])[0].strip()
         requested_tier = qs.get("tier", ["free"])[0].strip().lower()
 
-        auth_user, _ = self._get_current_user_and_session()
-        is_ver = False
-        tier = "free"
+        auth_user, tier, is_ver, user_id = self._resolve_viewer_tier()
 
-        if auth_user:
-            user_id = auth_user["id"]
-            if auth_user.get("telegram_verified"):
-                is_ver = True
-            is_admin = auth_user.get("tier") == "admin" or (self.bot and self.bot.is_admin(str(auth_user.get("telegram_id", ""))))
-            if is_admin:
-                tier = requested_tier if requested_tier in ("free", "tier1", "tier2", "tier3") else "tier3"
-            else:
-                tier = auth_user.get("tier", "free")
-        elif user_id.startswith("user_seed_") or user_id.startswith("test_"):
+        if auth_user is None and user_id_param.startswith(("user_seed_", "test_")):
             # Seed and test rows are a fixture convenience, not an entitlement.
             # Honouring a `tier` parameter on them let any anonymous caller
             # request `?user_id=test_x&tier=tier3` and receive every masked pick
             # unmasked, which defeated the tiering entirely. They stay on the
             # free view; the tests that need a paid view authenticate instead.
             tier = "free"
-        else:
-            tier = "free"
+            user_id = user_id_param
+        elif auth_user is None:
+            user_id = user_id_param
 
         if not is_ver and user_id:
             if self.storage and hasattr(self.storage, "is_user_verified"):
@@ -1105,55 +1194,8 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         if self.storage:
             raw_picks = self.storage.list_pending_picks()
 
-        processed_picks = []
-        for idx, pick in enumerate(raw_picks):
-            p = dict(pick)
-            tier_level = p.get("tier_level")
-
-            if idx == 0:
-                p["is_locked"] = False
-                p["tier_level"] = "FREE"
-            elif idx == 1:
-                p["tier_level"] = "TELEGRAM_UNLOCK"
-                if is_ver or tier in ("tier1", "tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Join Telegram to Unlock Match #2"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Telegram Unlock Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-            elif idx in (2, 3, 4):
-                p["tier_level"] = "TIER_1"
-                if tier in ("tier1", "tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Sharp Starter (Tier 1 Required)"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Tier 1 Subscription Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-            else:
-                p["tier_level"] = tier_level or "TIER_2"
-                if tier in ("tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Pro Trader (Tier 2 Required)"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Tier 2 Subscription Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-
-            processed_picks.append(p)
+        processed_picks = self._mask_picks_for_tier(
+            raw_picks, tier=tier, is_ver=is_ver)
 
         self._send_json({
             "active_picks": processed_picks,
@@ -1183,15 +1225,28 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         except (TypeError, ValueError):
             limit = 200
         limit = max(1, min(limit, 1000))
+
+        # Offset paging. Capping `limit` at 1000 without an `offset` made the
+        # record unreachable past the first thousand settled picks -- the ledger
+        # is the product's main trust asset, so it cannot be the part that runs
+        # out. Page through it instead.
+        try:
+            offset = int(urllib.parse.parse_qs(parsed.query).get("offset", ["0"])[0])
+        except (TypeError, ValueError):
+            offset = 0
+        offset = max(0, offset)
+
         total = len(settled)
-        page = settled[:limit]
+        page = settled[offset:offset + limit]
 
         self._send_json({
             "settled_ledger": page,
             "count": len(page),
             "total": total,
-            "truncated": total > len(page),
+            "offset": offset,
             "limit": limit,
+            "has_more": offset + len(page) < total,
+            "next_offset": offset + len(page) if offset + len(page) < total else None,
         })
 
 

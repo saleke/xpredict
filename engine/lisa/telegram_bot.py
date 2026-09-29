@@ -541,7 +541,8 @@ def format_diamond_alert_html(pick: Pick) -> str:
         f"⚖️ <b>Fair Consensus Odds:</b> <code>{pick.fair_odds:.2f}</code>\n"
         f"⚡ <b>Best Market Line:</b> <code>{best_odds:.2f}</code> @ {best_book} (<b>{ev:+.1%} EV</b>)\n"
         f"🛡️ <b>Consensus Stability:</b> CV <code>{pick.cv:.2%}</code> ({pick.n_books} books)\n"
-        f"🎖️ <b>Conviction Score:</b> {conviction:.1f}/10.0 {conviction_bars}\n"
+        f"🎖️ <b>Conviction Score:</b> {conviction:.1f} {conviction_bars}\n"
+        f"    <i>((p_true − 75%) ÷ CV) × (1 + EV). Higher is stronger; not bounded.</i>\n"
         f"💰 <b>Bankroll Sizing:</b> <code>{units:.1f}u</code> ({pct:.1f}% Kelly)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔒 <i>Protected signal. Pass before kickoff if CV spikes &gt; 5%.</i>"
@@ -1024,6 +1025,7 @@ class TelegramBot:
         bot_username: str = "",
         admin_telegram_ids: Optional[Iterable[str]] = None,
         storage: Optional[Any] = None,
+        auth_store: Optional[Any] = None,
     ):
         self.token = token
         self.channel_chat_id = channel_chat_id or "@lisa_sports_alpha"
@@ -1031,6 +1033,12 @@ class TelegramBot:
         self.bot_username = bot_username or os.environ.get("LISA_TELEGRAM_BOT_USERNAME", "XpredictPremiumBot")
         self.timeout = timeout
         self.mock = mock
+        # Optional user store. Read at line ~2592 by the /picks handler, but it
+        # was never assigned here, so reaching that branch raised
+        # AttributeError: 'TelegramBot' object has no attribute 'auth'. It is
+        # currently unreachable because /picks returns earlier, which is exactly
+        # what makes it dangerous -- a one-line refactor turns it into a crash.
+        self.auth = auth_store
         self.last_update_id: int = 0
         self.outbox: list[dict[str, Any]] = []
         self.registry = verification_registry or registry
@@ -1831,9 +1839,20 @@ class TelegramBot:
         else:
             result = "WIN"
 
+        # When the operator typed a scoreline, persist it so the ledger row can
+        # be checked against an independent scoreboard later.
+        score_text = None
+        if "-" in clean_res:
+            parts = clean_res.split("-")
+            try:
+                score_text = f"{int(parts[0].strip())}:{int(parts[1].strip())}"
+            except Exception:
+                score_text = None
+
         updated = 0
         if self.storage and hasattr(self.storage, "manual_settle_match"):
-            updated = self.storage.manual_settle_match(clean_match, result=result)
+            updated = self.storage.manual_settle_match(
+                clean_match, result=result, actual_score=score_text)
 
         audit_id = 0
         if self.storage and hasattr(self.storage, "log_admin_action"):
@@ -2708,39 +2727,45 @@ class TelegramBot:
             return ("❌ Invalid payment method. Please try again.", None)
 
     def _handle_payment_confirmation(self, method: str, tier: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
-        """Handle payment confirmation - generate and send the one-time key."""
-        from .payments import generate_payment_key, key_store, get_tier_price
+        """Record a payment self-report and queue it for operator verification.
 
-        # Generate the payment key
-        payment_key = generate_payment_key(tier, user_id)
-        key_store.store(payment_key)
+        This used to mint a redeemable activation key on the spot, which made
+        every tier free: one button press, no money, real Tier 3. It also
+        printed "PAYMENT CONFIRMED!" before anything had been confirmed.
+
+        A self-report is now exactly that -- a claim. No key is issued here. The
+        operator reconciles it against the payment record and provisions the
+        tier, which is the only path that can be trusted until a payment
+        provider is wired to verify automatically.
+        """
+        from .payments import get_tier_price, record_payment_claim
 
         price = get_tier_price(tier)
-
-        # Format expiry time
-        from datetime import datetime, timezone
-        expiry_time = datetime.fromtimestamp(payment_key.expires_at, tz=timezone.utc).strftime("%H:%M UTC")
+        ref = record_payment_claim(user_id=user_id, tier=tier, method=method,
+                                   amount_ngn=price.ngn)
 
         text = (
-            f"🎉 <b>PAYMENT CONFIRMED!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📨 <b>PAYMENT REPORTED — PENDING VERIFICATION</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Tier: <b>{tier.upper()}</b>\n"
-            f"Amount: <code>₦{price.ngn:,}</code>\n\n"
-            f"🔑 <b>Your One-Time Activation Key:</b>\n"
-            f"<code>{payment_key.key}</code>\n\n"
-            f"⏰ <b>Expires:</b> {expiry_time} (1 hour)\n"
-            f"⚠️ <b>Single use only.</b> Do not share this key.\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👇 <b>Next Steps:</b>\n"
-            f"1. Copy the key above\n"
-            f"2. Go to <b>http://localhost:8080</b>\n"
-            f"3. Log in to your account\n"
-            f"4. Paste the key in the 'Activate Tier' section\n\n"
-            f"<i>Once redeemed, this key is permanently burned.</i>"
+            f"Amount due: <code>₦{price.ngn:,}</code>\n"
+            f"Method: <b>{method}</b>\n"
+            f"Your reference: <code>{ref}</code>\n\n"
+            "🔎 <b>We are verifying receipt.</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📌 <b>What happens next</b>\n"
+            "1. Send the payment using the instructions for your method.\n"
+            "2. Include your reference <code>" + ref + "</code> as the memo/note.\n"
+            "3. The desk reconciles it against the payment record.\n"
+            "4. Your tier is activated and your unlock code is sent here.\n\n"
+            "⏳ <i>Activation is not automatic. It happens after the payment is\n"
+            "confirmed against the record, not when you say it was sent. This is\n"
+            "why we do not issue an activation key on a self-report.</i>"
         )
 
         markup = {
             "inline_keyboard": [
+                [{"text": "📨 Contact the desk", "url": "https://t.me/XpredictPremiumBot"}],
                 [{"text": "🌐 Open Website", "url": "http://localhost:8080"}],
             ]
         }
@@ -3014,6 +3039,15 @@ class TelegramBot:
             )
             return (text, quick_nav_markup)
 
+        # The measured calibration line, or an explicit refusal to state one.
+        # This bot also serves /stats, which deliberately publishes no win rate
+        # below MIN_SETTLED_FOR_STATS. A hardcoded 84.0% in the greeting
+        # contradicted that guard on the same bot: a prospect who said "hi" and
+        # then "what's your win rate" was told 84%.
+        calibration_line = self._calibration_status_line()
+        has_stats = (self._load_dashboard_summary() or {}).get("win_rate") is not None
+        stats_menu_label = ("Audit the verified performance ledger"
+                            if has_stats else "Performance ledger (building)")
         status_phrases = ["how are you", "how are you doing", "how do you do", "how is it going", "hows it going", "what's up", "whats up", "hows everything", "system status", "health check"]
         if any(p in clean for p in status_phrases):
             text = (
@@ -3021,7 +3055,7 @@ class TelegramBot:
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
                 "🟢 <b>Pipeline Status:</b> Operational (Peak Efficiency)\n"
                 "📡 <b>Market Ingestion:</b> Live consensus monitoring across 9 global leagues\n"
-                "🎯 <b>Calibration:</b> Audited 84.0% win rate across settled Diamond selections\n"
+                f"{calibration_line}"
                 "🛡️ <b>Risk Guard:</b> Sucker-bet traps actively screened & suppressed\n"
                 f"👤 <b>Active Terminal Session:</b> {tier_badge}\n\n"
                 "Market liquidity is active. Tap below to inspect today's mathematical edges."
@@ -3042,7 +3076,7 @@ class TelegramBot:
                 "• <b>/picks</b> — View today's active diamond value selections\n"
                 "• <b>/bankroll</b> — Configure your personalized Kelly staking profile\n"
                 "• <b>/parlay</b> — Review high-probability algorithmic accumulator\n"
-                "• <b>/stats</b> — Audit verified 84.0% performance ledger\n"
+                f"• <b>/stats</b> — {stats_menu_label}\n"
                 "• <b>/vip</b> — Review membership tiers & Alpha perks\n\n"
                 "<i>You can also ask: 'How does it work?', 'What sports?', 'What is my tier?'</i>"
             )
@@ -3337,6 +3371,31 @@ class TelegramBot:
         if brier_terms:
             summary["brier_score"] = sum(brier_terms) / len(brier_terms)
         return summary
+
+    def _calibration_status_line(self) -> str:
+        """One line describing the *measured* win rate, or the refusal to state one.
+
+        Returns a status-emoji line for the health reply. When fewer than
+        ``MIN_SETTLED_FOR_STATS`` picks have been graded it states that plainly
+        rather than quoting a number, which is the same contract
+        ``format_stats_html`` enforces.
+        """
+        summary = self._load_dashboard_summary() or {}
+        settled = summary.get("settled")
+        win_rate = summary.get("win_rate")
+        try:
+            have = int(settled) if settled is not None else 0
+        except (TypeError, ValueError):
+            have = 0
+
+        if have < MIN_SETTLED_FOR_STATS or win_rate is None:
+            return ("🎯 <b>Calibration:</b> building — "
+                    f"{have}/{MIN_SETTLED_FOR_STATS} picks graded. No rate published yet.\n")
+        try:
+            rate = float(win_rate) * 100.0
+        except (TypeError, ValueError):
+            return "🎯 <b>Calibration:</b> graded, ledger published via /stats\n"
+        return f"🎯 <b>Calibration:</b> {rate:.1f}% win rate across {have} graded picks\n"
 
     def _load_dashboard_summary(self) -> dict[str, Any]:
         """Return measured performance metrics, or ``{}`` when none exist.

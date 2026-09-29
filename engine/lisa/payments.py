@@ -10,11 +10,20 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+
+logger = logging.getLogger("lisa.payments")
+
+# Self-reported payments awaiting operator reconciliation. Process-local on
+# purpose: these are unauthenticated claims, so losing them on restart is the
+# correct failure mode (the payer re-reports) rather than the other one
+# (a stale claim silently becoming a grant).
+_PAYMENT_CLAIMS: dict[str, dict[str, Any]] = {}
 
 # ============================================================================
 # TIER PRICING (NGN base; payment layer converts to local currency)
@@ -163,6 +172,70 @@ def generate_payment_key(tier: str, telegram_id: str) -> PaymentKey:
         created_at=now,
         expires_at=now + KEY_EXPIRY_SECONDS,
     )
+
+
+def record_payment_claim(*, user_id: str, tier: str, method: str,
+                         amount_ngn: float) -> str:
+    """Record a user's self-reported payment and return their reference code.
+
+    A claim is a claim. It is deliberately *not* a grant: no activation key is
+    issued here, because the only thing that has happened is that someone
+    pressed a button. The operator reconciles the claim against the payment
+    record and provisions the tier, which is the only path that can be trusted
+    while no payment provider is wired up.
+
+    Returns a short human-quotable reference so a payer can put it in the
+    memo/note field and the desk can match the two halves.
+    """
+    ref = "PAY-" + _generate_segment(6)
+    now = time.time()
+    _PAYMENT_CLAIMS[ref] = {
+        "reference": ref,
+        "user_id": str(user_id),
+        "tier": str(tier).lower(),
+        "method": str(method),
+        "amount_ngn": float(amount_ngn),
+        "claimed_at": now,
+        # An operator flips this once the payment is reconciled.
+        "verified": False,
+        "verified_at": None,
+        "payment_key": None,
+    }
+    logger.info(
+        "Payment claim recorded (UNVERIFIED): ref=%s user=%s tier=%s method=%s amount=%.0f",
+        ref, user_id, tier, method, amount_ngn,
+    )
+    return ref
+
+
+def list_unverified_claims() -> list[dict[str, Any]]:
+    """Claims still awaiting operator reconciliation, oldest first."""
+    return sorted(
+        (c for c in _PAYMENT_CLAIMS.values() if not c["verified"]),
+        key=lambda c: c["claimed_at"],
+    )
+
+
+def verify_claim(reference: str) -> Optional[dict[str, Any]]:
+    """Mark a claim reconciled and issue its activation key.
+
+    This is the only path that mints a key from a payment claim, and it is
+    operator-initiated. Returns the updated claim, or None if the reference is
+    unknown.
+    """
+    claim = _PAYMENT_CLAIMS.get(reference)
+    if claim is None:
+        return None
+    if claim["verified"]:
+        return claim
+    key = generate_payment_key(claim["tier"], claim["user_id"])
+    key_store.store(key)
+    claim["verified"] = True
+    claim["verified_at"] = time.time()
+    claim["payment_key"] = key.key
+    logger.info("Payment claim verified and key issued: ref=%s user=%s tier=%s",
+                reference, claim["user_id"], claim["tier"])
+    return claim
 
 
 def verify_key(key: str, tier: str, telegram_id: str) -> tuple[bool, str]:

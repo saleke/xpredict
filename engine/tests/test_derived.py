@@ -34,34 +34,42 @@ def test_double_chance_normalizes_unscaled_inputs():
 
 def test_solve_poisson_lambda_total_inversion():
     # Over/Under 2.5 goals with 50% under
-    lam = solve_poisson_lambda_total(0.50, 2.5)
+    lam, converged = solve_poisson_lambda_total(0.50, 2.5)
     assert 2.67 < lam < 2.68
+    assert converged is True
     # Invert back to confirm CDF matches 0.50
     assert _poisson_cdf(2, lam) == pytest.approx(0.50, abs=1e-5)
 
 
 def test_solve_poisson_lambda_total_monotonicity():
     # Higher Under probability implies lower expected goals
-    lam_high_under = solve_poisson_lambda_total(0.70, 2.5)
-    lam_low_under = solve_poisson_lambda_total(0.30, 2.5)
+    lam_high_under, _ = solve_poisson_lambda_total(0.70, 2.5)
+    lam_low_under, _ = solve_poisson_lambda_total(0.30, 2.5)
     assert lam_high_under < lam_low_under
+
+
+def test_solve_poisson_lambda_total_reports_non_convergence():
+    # An unreachable tolerance must be reported, not silently returned as a fit.
+    _, converged = solve_poisson_lambda_total(0.50, 2.5, tol=1e-30)
+    assert converged is False
 
 
 def test_solve_poisson_split_symmetry():
     # Symmetric match P_H == P_A -> equal lambdas
-    lam_h, lam_a = solve_poisson_split(2.6, 0.35, 0.35)
+    lam_h, lam_a, converged = solve_poisson_split(2.6, 0.35, 0.35)
+    assert converged is True
     assert lam_h == pytest.approx(lam_a, abs=1e-3)
     assert lam_h + lam_a == pytest.approx(2.6, abs=1e-5)
 
 
 def test_solve_poisson_split_favorite():
     # Heavy home favorite P_H > P_A -> lambda_home > lambda_away
-    lam_h, lam_a = solve_poisson_split(2.8, 0.75, 0.10)
+    lam_h, lam_a, _ = solve_poisson_split(2.8, 0.75, 0.10)
     assert lam_h > lam_a
     assert lam_h + lam_a == pytest.approx(2.8, abs=1e-5)
 
     # Away favorite P_A > P_H -> lambda_away > lambda_home
-    lam_h2, lam_a2 = solve_poisson_split(2.4, 0.15, 0.65)
+    lam_h2, lam_a2, _ = solve_poisson_split(2.4, 0.15, 0.65)
     assert lam_a2 > lam_h2
     assert lam_h2 + lam_a2 == pytest.approx(2.4, abs=1e-5)
 

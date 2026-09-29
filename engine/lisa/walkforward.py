@@ -11,7 +11,18 @@ through the historical archive. It cannot answer one central question:
 This module answers it with a strictly chronological walk forward. Every
 match is processed in real time order: predictions are produced from state
 that existed *before* the match, then scored, then state is updated. There is
-no look-ahead and no hindsight re-weighting. The three competing strategies
+no look-ahead and no hindsight re-weighting.
+
+SCOPE LIMIT (be precise about what this does not test)
+------------------------------------------------------
+The strategies compared here are ``market_follower`` and ``model_value``.
+``gate.evaluate`` is NOT invoked in this module, so the LISA quality gate is
+not one of the arms. This answers "does the market's favourite beat the model,
+and does the model find positive-EV value bets" -- it does not yet answer
+"does the gate add value", which is what the first paragraph above implies.
+Adding the gated strategy as a third arm is the outstanding work.
+
+The three competing strategies
 
     1. Market Follower  — bet the strongest implied favourite at the best
        recorded price (a naive, no-model baseline).
@@ -175,11 +186,19 @@ def walk_forward(
         pred = model.predict_log(match["league"], match["home"], match["away"])
         probs = {"home": pred["p_home"], "draw": pred["p_draw"], "away": pred["p_away"]}
         actual = _settled_outcome(match)
+        # `p_true` is the probability assigned to the outcome that ACTUALLY
+        # happened and `result` is that outcome's real result. The previous
+        # version stored the probability of the correct answer alongside a
+        # hardcoded "WIN", so every record scored as a confident, correct
+        # prediction: Brier became mean((1 - p_actual)^2) and ECE was measured
+        # against a 100% observed win rate. That is a confidence-on-matches-it-
+        # got-right measure, not a calibration, and it was being printed under
+        # the heading "INDEPENDENT MODEL CALIBRATION".
         settled_predictions.append({
             "match_id": match["match_id"],
             "league": match["league"],
             "p_true": probs[actual],
-            "result": "WIN",
+            "result": "WIN" if actual == "home" else "LOSS",
         })
         # Multi-class Brier over the full 1X2 distribution.
         brier_i = sum((probs[o] - (1.0 if o == actual else 0.0)) ** 2 for o in OUTCOMES)

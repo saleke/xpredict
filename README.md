@@ -308,7 +308,7 @@ PYTHONPATH=engine python3 -m lisa.cli tune --export-json /tmp/tune.json
 PYTHONPATH=engine python3 -m lisa.cli tune --thresholds 0.75,0.80 --leagues soccer_epl --json
 ```
 
-**Verdict (honest): no config is robustly profitable on this archive.** Full-sample ROI is negative for most settings (e.g. 0.75/ALL: −1.7%); the handful of positive cells (e.g. 0.80/EPL +5.5%, n=75) each have at least one **losing season** (EPL 0.80's 2022/23 was −8.0%) and *every cell loses to the closing line* (negative CLV across the board). The Kelly simulation stakes ≈0 for the recommended config because the model's `p_true` on these favourites implies positive-fraction-of-Kelly ≈ 0 — prices sit at or above fair. Treat the positive cells strictly as hypotheses to re-validate on fresh matches; do not ship a "profitable" claim from this archive.
+**Verdict (honest): no config is robustly profitable on this archive.** The shipped gate requires a book to beat the leave-one-out fair price, which on this archive yields **30 executed bets at 86.7% and +5.2% flat ROI — on a sample where n=30 and t=0.67.** The 95% Wilson interval on the win rate is [70.3%, 94.7%]; its lower bound sits *below* the ~82.2% breakeven this price band requires. **That is not evidence of an edge.** For contrast, the previous certainty-only gate executed 380 bets, won 79.7% of them, and returned **−1.7%** — a high win rate losing money, because its average price of 1.237 demanded an 81.1% hit rate. Treat all of it strictly as hypotheses to re-validate on fresh matches; do not ship a "profitable" claim from this archive. See `docs/CHANGELOG_FTIPSTER_RESPONSE.md` §1 and reproduce with `engine/edge_gate_study.py`.
 
 ### `lisa study`
 
@@ -361,13 +361,16 @@ PYTHONPATH=engine python3 -m lisa.cli walkforward --json --export-json /tmp/wf.j
 
 ### Reference results (as shipped)
 
-| Strategy | Bets | Win % | ROI @ best price | ROI @ avg price |
-|---|---|---|---|---|
-| Gated 🛡️ Conservative Singles (`backtest`) | 380 | 79.7% | −1.8% | — |
-| Market Favourites baseline (`walkforward`) | 7,155 | 53.9% | −0.8% | −2.8% |
-| Independent Elo/Poisson model value | 4,910 | 40.5% | −6.5% | −8.9% |
+| Strategy | Bets | Win % | 95% CI | ROI @ flat | Significance |
+|---|---|---|---|---|---|
+| Gated 🛡️ Conservative Singles (`backtest`) | **30** | 86.7% | [70.3, 94.7] | +5.2% | t = 0.67 — **not significant** |
+| …the same gate, before it required an edge | 380 | 79.7% | [75.4, 83.5] | −1.7% | t = −0.68 |
+| Market Favourites baseline (`walkforward`) | 7,155 | 53.9% | — | −2.8% @ avg price | — |
+| Independent Elo/Poisson model value | 4,910 | 40.5% | — | −8.9% @ avg price | — |
 
-The honest headline: the archive spans a market-efficient period — a quality-gated 79.7% win-rate book still produced **negative ROI at closing prices**, and neither baseline nor an independent model beat the market. Calibration metrics are reported openly (Brier, ECE, reliability curve) rather than curated.
+The honest headline: the archive spans a market-efficient period in sharp leagues (EPL, La Liga, Serie A, Bundesliga, Ligue 1), where neither a quality-gated book nor an independent model beat the market. Requiring a genuine edge shrinks the executed set from 380 bets to 30 and turns the return positive — but **n=30 with a confidence interval straddling breakeven is an absence of evidence, not evidence of an edge.** The honest conclusion is that this archive cannot demonstrate profitability, and that the leagues the engine covers are the wrong ones: the profitable trades in this space live in thin, low-liquidity competitions that a sharp-money archive does not contain. Calibration metrics are reported openly (Brier, ECE, reliability curve) rather than curated.
+
+A competitive teardown of a tipster site running +13.1% ROI (t = 7.50 over 841 published bets) is in `docs/COMPETITIVE_TEARDOWN_FTIPSTER.md`; the response to it is in `docs/CHANGELOG_FTIPSTER_RESPONSE.md`.
 
 ### Un-gameable test suite
 

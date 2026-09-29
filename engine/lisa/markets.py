@@ -109,19 +109,43 @@ def grade_total(home_goals: int, away_goals: int, line: float,
                 side: str) -> dict[str, object]:
     """Grade an Over/Under total against a final scoreline.
 
-    ``side`` is ``"over"`` or ``"under"``. Integer lines may push (void)
-    when the total lands exactly on the line.
+    ``side`` is ``"over"`` or ``"under"``. Integer lines push (void) when the
+    total lands exactly on the line.
+
+    A quarter line is a split stake across the two neighbouring lines, exactly
+    as on a handicap: ``Over 2.5,3.0`` stakes half on Over 2.5 and half on Over
+    3.0, so 3 goals is a HALF_WIN and 2 goals a HALF_LOSS. That combination is
+    ~22% of the published picks on the competitor site being benchmarked, and
+    the previous implementation graded it as a plain WIN or LOSS, overstating
+    both the win count and the money on those bets.
     """
     total = home_goals + away_goals
+
+    def _one(margin: float) -> tuple[float, float, str]:
+        m = round(margin, 6)
+        if abs(m) < 1e-9:
+            return 0.0, 0.0, "PUSH"
+        return 0.5, (0.5 if m > 0 else 0.0), ("WIN" if m > 0 else "LOSS")
+
+    direction = 1.0 if side == "over" else -1.0
+    quarter_count = int(round(float(line) / QUARTER_STEP))
+    if abs(quarter_count) % 2 == 1:
+        # Quarter ball: resolve both half-staked sub-lines.
+        a = _one(direction * (total - (float(line) - QUARTER_STEP)))
+        b = _one(direction * (total - (float(line) + QUARTER_STEP)))
+        combined = a[2] + b[2]
+        result = _split_result_pair(combined)
+        stake = a[0] + b[0]
+        won = (a[1] if a[2] == "WIN" else 0.0) + (b[1] if b[2] == "WIN" else 0.0)
+        return {"result": result, "decided": stake > 0,
+                "stake_fraction": stake, "won_fraction": won, "line": line}
+
     diff = total - float(line)
     if abs(round(diff, 6)) < 1e-6:
         return {"result": "PUSH", "decided": False, "stake_fraction": 0.0,
                 "won_fraction": 0.0, "line": line}
-    won = diff > 0
-    if side == "over":
-        result = "WIN" if won else "LOSS"
-    else:
-        result = "WIN" if not won else "LOSS"
+    won_over = diff > 0
+    result = "WIN" if (won_over if side == "over" else not won_over) else "LOSS"
     return {"result": result, "decided": True,
             "stake_fraction": 1.0, "won_fraction": 1.0 if result == "WIN" else 0.0,
             "line": line}

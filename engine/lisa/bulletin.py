@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from .consensus import Consensus, refine
+from .derived import derived_btts_probability, derived_total_probability
 from .history import HISTORICAL_ODDS
 from .model import EloPoissonModel
 from .odds import H2H, Book, Match
@@ -237,24 +238,14 @@ def _poisson_tail(home_goals: float, away_goals: float, line: float,
     """
     if home_goals <= 0 or away_goals <= 0 or line < 0:
         return None
-    target = int(line) + 1  # "over 2.5" means 3+ goals
-    # Sum of two Poissons is Poisson with the summed mean.
-    total = home_goals + away_goals
-    cumulative = 0.0
-    term = pow(2.718281828459045, -total)  # e ** -total
-    for k in range(0, target):
-        cumulative += term
-        term = term * (total / (k + 1))
-    over_p = max(0.0, min(1.0, 1.0 - cumulative))
-    return over_p if over else 1.0 - over_p
+    return derived_total_probability(home_goals, away_goals, line, over=over)
 
 
 def _btts_probability(home_goals: float, away_goals: float) -> Optional[float]:
     """P(both teams score at least once) from the model goal rates."""
     if home_goals <= 0 or away_goals <= 0:
         return None
-    e = 2.718281828459045
-    return (1.0 - pow(e, -home_goals)) * (1.0 - pow(e, -away_goals))
+    return derived_btts_probability(home_goals, away_goals)
 
 
 def _micro_opportunities(match_id: str, matrix: dict[str, Any],

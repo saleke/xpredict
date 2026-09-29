@@ -62,11 +62,18 @@ def tune_subsets(
     thresholds: Sequence[float] = DEFAULT_THRESHOLDS,
     league_options: Sequence[Optional[tuple[str, ...]]] = DEFAULT_LEAGUES,
     flat_stake: float = 100.0,
+    require_positive_ev: bool = True,
 ) -> dict[str, Any]:
-    """Full threshold x league sweep with per-season splits and a Kelly risk sim."""
+    """Full threshold x league sweep with per-season splits and a Kelly risk sim.
+
+    ``require_positive_ev`` must match the production backtest or this tunes a
+    strategy the product does not run. It previously defaulted to False while
+    the engine shipped True, so every cell in the grid described a certainty-only
+    book that production would never emit.
+    """
 
     # Defaults mirror the production backtest engine so the 0.75/ALL cell
-    # reproduces its baseline ledger exactly (380 Grade A executes).
+    # reproduces its baseline ledger exactly.
     min_books: int = 3
     gate_min_books: int = 5
     max_cv: float = 0.1
@@ -108,7 +115,7 @@ def tune_subsets(
                     threshold=threshold,
                     min_books=gate_min_books,
                     max_cv=max_cv,
-                    require_positive_ev=False,
+                    require_positive_ev=require_positive_ev,
                 )
                 if gate.pick is None:
                     continue

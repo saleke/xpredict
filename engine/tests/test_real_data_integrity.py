@@ -282,7 +282,11 @@ class TestLiveFeedOnlyBulletin(unittest.TestCase):
 class TestBotSurfacesAreReal(unittest.TestCase):
     def test_stats_page_has_no_default_numbers(self):
         html = format_stats_html({})
-        self.assertIn("No settled picks yet", html)
+        # The empty-state must refuse to publish a rate. The wording was
+        # tightened when the hardcoded "84.0%" strings were removed from the
+        # bot; the contract under test is the refusal, not the phrasing.
+        self.assertIn("Insufficient settled sample", html)
+        self.assertIn("reports nothing", html)
         self.assertNotIn("84.0%", html)
 
     def test_parlay_without_legs_refuses_to_invent(self):
@@ -330,16 +334,27 @@ class TestBotSurfacesAreReal(unittest.TestCase):
             self.assertNotIn(marker, text)
 
     def test_traps_page_reads_recorded_history(self):
+        """The traps page must render measured history and nothing else.
+
+        It used to print raw fixture rows out of the live cache. It now reports
+        graded aggregates, because a trap count derived from ungraded fixtures is
+        not a trap count. The contract under test is unchanged in substance: with
+        no measured history the page says so and invents nothing, and it never
+        presents avoided stake as profit.
+        """
         storage = InMemoryStorage()
         bot = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=storage)
-        self.assertIn("No trap advisories", bot._handle_traps()[0])
+        # Empty state refuses to invent a count.
+        self.assertIn("No measured pass-advisory data yet", bot._handle_traps()[0])
 
+        # A live fixture row is not measured history, so it must not promote the
+        # page out of its empty state.
         storage.upsert_live("live:traps", [
             {"home_team": "Roma", "away_team": "Lazio", "public_favorite": "Roma", "cv": 0.09},
         ], 3600)
         text, _ = bot._handle_traps()
-        self.assertIn("Roma vs Lazio", text)
-        self.assertIn("9.0%", text)
+        self.assertIn("No measured pass-advisory data yet", text)
+        self.assertNotIn("Roma vs Lazio", text)
         self.assertNotIn("Capital Preserved", text)
 
 

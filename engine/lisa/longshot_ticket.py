@@ -248,5 +248,12 @@ class LongshotTicketManager:
         return daily_picks
 
 
-# Global manager instance
-longshot_manager = LongshotTicketManager(storage=None)  # Will be initialized with storage when needed
+# Global manager instance.
+#
+# NOTE: this is constructed with storage=None and nothing imports this module,
+# so it is currently unreachable. It was previously annotated "will be
+# initialised with storage when needed" and would have raised AttributeError on
+# first use. Until something actually wires it, the module should not be sold
+# as a Tier 3 feature -- see tiers.py, where longshot/parlay entitlements must
+# not be advertised while this is dead.
+longshot_manager = LongshotTicketManager(storage=None)

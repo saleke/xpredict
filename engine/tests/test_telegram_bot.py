@@ -110,7 +110,12 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("Arsenal vs Wolverhampton", html)
         self.assertIn("81.0%", html)
         self.assertIn("Pinnacle", html)
-        self.assertIn("8.5/10.0", html)
+        # Conviction is ((p_true - 0.75) / cv) * (1 + ev) -- an unbounded ratio
+        # that reaches ~27 on a real pick. It was previously labelled "8.5/10.0",
+        # which is a scale the formula cannot produce.
+        self.assertIn("Conviction Score:", html)
+        self.assertNotIn("/10.0", html)
+        self.assertIn("not bounded", html)
         self.assertIn("1.5u", html)
 
     def test_format_trap_advisory_html(self):
@@ -922,7 +927,11 @@ class TestTelegramBot(unittest.TestCase):
         reply = self.bot.process_one_update(upd)
         self.assertIn("SYSTEM HEALTH", reply)
         self.assertIn("Operational", reply)
-        self.assertIn("84.0%", reply)
+        # Must not assert a calibration figure it has not measured. This reply
+        # used to hardcode "84.0%" while the same bot's /stats command
+        # deliberately refuses to publish a rate below MIN_SETTLED_FOR_STATS.
+        self.assertNotIn("84.0%", reply)
+        self.assertIn("No rate published yet", reply)
 
     def test_conversational_identity_and_ip_shield(self):
         for phrase in ["who are you", "what is lisa", "tell me about yourself"]:

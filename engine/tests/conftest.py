@@ -30,6 +30,20 @@ def settings() -> cfg.Settings:
 
 
 @pytest.fixture
+def legacy_settings() -> cfg.Settings:
+    """Settings with the pre-fix ``require_positive_ev=False`` behaviour.
+
+    Several tests assert on *suppression reasons* and on the raw contents of the
+    emitted set. Under the production default the gate now requires a book to
+    beat the leave-one-out fair price, so fixtures that were chosen to exercise
+    the certainty/CV branches emit nothing and those tests cannot see the
+    branch they are about. Those tests opt back in explicitly rather than
+    weakening the production default.
+    """
+    return cfg.Settings(sports=FIXTURE_SPORTS, require_positive_ev=False)
+
+
+@pytest.fixture
 def fixture_client() -> FixtureClient:
     return FixtureClient(ODDS_PAYLOADS, SCORES_PAYLOADS)
 
@@ -47,6 +61,12 @@ def notifier() -> CollectNotifier:
 @pytest.fixture
 def pipeline(fixture_client, storage, settings, notifier):
     return Pipeline(fixture_client, storage, settings, notifier=notifier)
+
+
+@pytest.fixture
+def legacy_pipeline(fixture_client, storage, legacy_settings, notifier):
+    """Pipeline pinned to the pre-fix certainty-only gate."""
+    return Pipeline(fixture_client, storage, legacy_settings, notifier=notifier)
 
 
 def insert_postponed_pick(storage, match_id: str = "nba-g", home: str = "Spurs",

@@ -67,6 +67,41 @@ class DerivedMicroBets:
     away_over_1_5: Optional[float] = None
 
 
+def derived_total_probability(lam_home: float, lam_away: float, line: float,
+                              *, over: bool) -> Optional[float]:
+    """P(total goals over/under ``line``) from two independent Poissons.
+
+    Canonical implementation. ``bulletin`` previously carried a private copy of
+    this; the two have to agree, because the same number is priced against a
+    real book line in more than one place.
+
+    ``line`` is the standard O/U line, so ``2.5`` means "3 goals or more" and
+    the crossing test is ``floor(line) + 1`` goals.
+    """
+    if lam_home <= 0 or lam_away <= 0 or line < 0:
+        return None
+    target = int(line) + 1
+    # The sum of two independent Poissons is Poisson with the summed mean.
+    total = lam_home + lam_away
+    cumulative = 0.0
+    term = math.exp(-total)
+    for k in range(0, target):
+        cumulative += term
+        term = term * (total / (k + 1))
+    over_p = max(0.0, min(1.0, 1.0 - cumulative))
+    return over_p if over else 1.0 - over_p
+
+
+def derived_btts_probability(lam_home: float, lam_away: float) -> Optional[float]:
+    """P(both teams score at least once) under independent Poisson goal rates.
+
+    Canonical implementation; see :func:`derived_total_probability`.
+    """
+    if lam_home <= 0 or lam_away <= 0:
+        return None
+    return (1.0 - math.exp(-lam_home)) * (1.0 - math.exp(-lam_away))
+
+
 def derive_double_chance(p_home: float, p_draw: float, p_away: float) -> DoubleChanceProbs:
     """Derive exact Double Chance probabilities from 3-way outcome probabilities."""
     total = p_home + p_draw + p_away
@@ -110,19 +145,31 @@ def _poisson_pmf_vector(lam: float, max_goals: int = MAX_GOALS) -> list[float]:
 
 
 def _home_away_diff(lam_h: float, lam_a: float, max_goals: int = MAX_GOALS) -> float:
-    """Compute P(Home Win) - P(Away Win) for independent Poisson variables."""
+    """Compute P(Home Win) - P(Away Win) for independent Poisson variables.
+
+    Returns ``(diff, mass_in_grid)``. The joint grid is truncated at
+    ``max_goals`` per side, so some probability mass falls outside it. The
+    caller needs the captured mass because a low total-goal lambda leaves very
+    little outside the grid while a high one does not, and a split solved
+    against a badly-truncated grid is a split against the wrong distribution.
+    """
     pmf_h = _poisson_pmf_vector(lam_h, max_goals)
     pmf_a = _poisson_pmf_vector(lam_a, max_goals)
     p_h_win = sum(pmf_h[x] * pmf_a[y] for x in range(max_goals + 1) for y in range(x))
     p_a_win = sum(pmf_h[x] * pmf_a[y] for y in range(max_goals + 1) for x in range(y))
-    return p_h_win - p_a_win
+    captured = sum(pmf_h) * sum(pmf_a)
+    return p_h_win - p_a_win, captured
 
 
 def solve_poisson_lambda_total(p_under: float, line: float,
-                               max_iter: int = 50, tol: float = 1e-8) -> float:
+                               max_iter: int = 50, tol: float = 1e-8
+                               ) -> tuple[float, bool]:
     """Invert the Poisson CDF to find lambda_total such that P(Goals <= line) = p_under.
 
-    Guaranteed monotonic bisection convergence.
+    Returns ``(lambda_total, converged)``. Bisection on a monotone CDF cannot
+    diverge, but it can exhaust ``max_iter`` without reaching ``tol``; the flag
+    lets the caller tell a solved lambda from a merely-plausible one instead of
+    assuming every answer is good.
     """
     k = int(math.floor(line))
     p_target = min(max(p_under, 0.001), 0.999)
@@ -132,19 +179,26 @@ def solve_poisson_lambda_total(p_under: float, line: float,
         mid = 0.5 * (lo + hi)
         val = _poisson_cdf(k, mid)
         if abs(val - p_target) < tol:
-            return mid
+            return mid, True
         # CDF decreases as lambda increases
         if val > p_target:
             lo = mid
         else:
             hi = mid
 
-    return 0.5 * (lo + hi)
+    return 0.5 * (lo + hi), False
 
 
 def solve_poisson_split(lambda_total: float, p_home: float, p_away: float,
-                        max_iter: int = 40, tol: float = 1e-6) -> tuple[float, float]:
-    """Split lambda_total into (lambda_home, lambda_away) calibrated to P_home - P_away."""
+                        max_iter: int = 40, tol: float = 1e-6
+                        ) -> tuple[float, float, bool]:
+    """Split lambda_total into (lambda_home, lambda_away) calibrated to P_home - P_away.
+
+    Returns ``(lambda_home, lambda_away, converged)``. ``best_alpha`` is only
+    advanced to a value that was actually evaluated: the previous version
+    reassigned it on every pass, so an exhausted loop returned the final
+    midpoint indistinguishable from a converged solve.
+    """
     target_diff = p_home - p_away
     lo_alpha, hi_alpha = 0.05, 0.95
 
@@ -153,11 +207,10 @@ def solve_poisson_split(lambda_total: float, p_home: float, p_away: float,
         mid_alpha = 0.5 * (lo_alpha + hi_alpha)
         lh = mid_alpha * lambda_total
         la = (1.0 - mid_alpha) * lambda_total
-        diff = _home_away_diff(lh, la)
+        diff, _captured = _home_away_diff(lh, la)
 
         if abs(diff - target_diff) < tol:
-            best_alpha = mid_alpha
-            break
+            return lh, la, True
         # Home advantage increases as alpha increases
         if diff < target_diff:
             lo_alpha = mid_alpha
@@ -167,7 +220,7 @@ def solve_poisson_split(lambda_total: float, p_home: float, p_away: float,
 
     lh = best_alpha * lambda_total
     la = (1.0 - best_alpha) * lambda_total
-    return lh, la
+    return lh, la, False
 
 
 def derive_micro_bets(h2h_consensus: Consensus,
@@ -203,12 +256,17 @@ def derive_micro_bets(h2h_consensus: Consensus,
         p_under = 1.0 - p_over
 
     line = totals_consensus.line
-    lambda_total = solve_poisson_lambda_total(p_under, line)
-    lambda_home, lambda_away = solve_poisson_split(lambda_total, p_home, p_away)
-    poisson_fit = PoissonFit(lambda_total, lambda_home, lambda_away, converged=True)
+    lambda_total, total_converged = solve_poisson_lambda_total(p_under, line)
+    lambda_home, lambda_away, split_converged = solve_poisson_split(
+        lambda_total, p_home, p_away)
+    # Propagate the bisection convergence flags. Hardcoding True made a failed
+    # solve indistinguishable from a good one, and a failed solve returns the
+    # last midpoint tried -- a real lambda, just not the one the line implies.
+    poisson_fit = PoissonFit(lambda_total, lambda_home, lambda_away,
+                             converged=bool(total_converged and split_converged))
 
     # Calibrate derivative micro-bets
-    btts_yes = (1.0 - math.exp(-lambda_home)) * (1.0 - math.exp(-lambda_away))
+    btts_yes = derived_btts_probability(lambda_home, lambda_away) or 0.0
     btts_no = 1.0 - btts_yes
 
     home_clean_sheet = math.exp(-lambda_away)

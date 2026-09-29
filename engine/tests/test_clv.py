@@ -147,8 +147,12 @@ def test_pipeline_prekickoff_clv_snapshot_and_locking() -> None:
     key = pick_key("m-clv", "h2h", "TeamA")
     row_1 = storage._picks[key]
     assert row_1["best_odds"] == 1.45
-    assert row_1["closing_odds"] == 1.45
-    assert row_1["clv"] == 0.0
+    # At emission there is no observed close yet. Seeding closing_odds from
+    # best_odds made an unrepriced pick look like it had exactly matched the
+    # close (clv == 0.0), which reads as "beat the close perfectly" in every
+    # mean that folds it in. Unobserved stays NULL until a close is seen.
+    assert row_1["closing_odds"] is None
+    assert row_1["clv"] is None
 
     # Cycle 2: T-30m before kickoff, Pinnacle line moves down to 1.25!
     b_spike = [
