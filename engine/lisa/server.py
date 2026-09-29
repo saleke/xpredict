@@ -323,6 +323,16 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._handle_ledger(parsed)
             return
 
+        # Read-only board endpoints. These belong on GET: the dashboard fetches
+        # them with fetch(), so registering them in do_POST left them 404ing.
+        if path == "/api/daily-board":
+            self._handle_daily_board()
+            return
+
+        if path == "/api/curated-picks":
+            self._handle_curated_picks()
+            return
+
         super().do_GET()
 
     def do_POST(self):
@@ -354,14 +364,6 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/activate-tier":
             self._handle_activate_tier()
-            return
-
-        if path == "/api/daily-board":
-            self._handle_daily_board()
-            return
-
-        if path == "/api/curated-picks":
-            self._handle_curated_picks()
             return
 
         if path == "/api/auth/link-telegram":
