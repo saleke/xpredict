@@ -1,0 +1,35 @@
+[project]
+name = "parse-integration"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "0x777helsor", email = "kingsleyamorie365@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "parse-apis",
+    "parse-sdk>=0.2.0",
+]
+
+[project.scripts]
+parse-integration = "parse_integration:main"
+
+[build-system]
+requires = ["uv_build>=0.12.20,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+parse-apis = { path = "parse_apis", editable = true }
+
+# Managed by the parse CLI (`parse add` / `parse remove` / `parse sync`).
+# Edit `apis` to curate which of your account APIs this repo syncs;
+# an absent `apis` key means all of them.
+[tool.parse]
+
+[[tool.parse.marketplace]]
+scraper_id = "8e652912-d760-4522-85ce-071e539a9c12"
+slug = "sportybet_com_ng_api"
+version = 9
+listing_id = "b0c4782f-8591-441b-92ee-6cf4b190317b"
+source_url = "https://www.sportybet.com.ng"

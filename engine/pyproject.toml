@@ -20,3 +20,8 @@ include = ["lisa*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.uv.workspace]
+members = [
+    "integrations/parse",
+]

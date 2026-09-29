@@ -1,0 +1,17 @@
+# Deny-by-default: only the scaffold below is meant to be committed.
+# Everything else is generated per-API-key and reveals your account's API inventory.
+#
+#   committed : pyproject.toml, AGENTS.md, CLAUDE.md,
+#               src/parse_apis/__init__.py, src/parse_apis/py.typed
+#   generated : src/parse_apis/_manifest.json
+#               src/parse_apis/<slug>/            (typed client, README, example)
+#               src/parse_apis/AGENTS.md          (cross-API index)
+#               src/parse_apis/CLAUDE.md          (cross-API index)
+#
+# Re-create the generated payload any time with:  uv run parse sync
+# Add a CI drift check with:                        uv run parse sync --check
+
+/src/parse_apis/_manifest.json
+/src/parse_apis/AGENTS.md
+/src/parse_apis/CLAUDE.md
+/src/parse_apis/*/

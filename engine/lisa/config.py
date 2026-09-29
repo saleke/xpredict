@@ -123,6 +123,18 @@ class Settings:
     settle_grace_hours: float = 24.0
     settle_scores_days: int = 3
 
+    # -- BetExplorer backfill (Parse) ----------------------------------------
+    # Re-grades pending picks from archived day pages, which carry a final
+    # score and a closing 1X2 line. Off by default: it spends Parse credits
+    # (one per calendar day fetched) and the settle poll already covers the
+    # recent window, so this earns its keep only once history is being
+    # backfilled into accuracy_tracker.
+    enable_betexplorer_backfill: bool = False
+    parse_api_key: str = ""              # read from PARSE_API_KEY when empty
+    backfill_lookback_days: int = 7       # calendar days of page history to walk
+    backfill_min_interval_sec: float = 1.0
+    backfill_dry_run: bool = True         # compute and report, write nothing
+
     # -- notifications --------------------------------------------------------
     telegram_token: str = ""
     telegram_chat_id: str = ""
@@ -283,6 +295,14 @@ def load_settings() -> Settings:
         settle_after_hours=_float("LISA_SETTLE_AFTER_HOURS", Settings.settle_after_hours),
         settle_grace_hours=_float("LISA_SETTLE_GRACE_HOURS", Settings.settle_grace_hours),
         settle_scores_days=_int("LISA_SETTLE_SCORES_DAYS", Settings.settle_scores_days),
+        enable_betexplorer_backfill=_bool("LISA_ENABLE_BETEXPLORER_BACKFILL",
+                                         Settings.enable_betexplorer_backfill),
+        parse_api_key=os.environ.get("PARSE_API_KEY", Settings.parse_api_key),
+        backfill_lookback_days=_int("LISA_BACKFILL_LOOKBACK_DAYS",
+                                   Settings.backfill_lookback_days),
+        backfill_min_interval_sec=_float("LISA_BACKFILL_MIN_INTERVAL_SEC",
+                                         Settings.backfill_min_interval_sec),
+        backfill_dry_run=_bool("LISA_BACKFILL_DRY_RUN", Settings.backfill_dry_run),
         telegram_token=os.environ.get("LISA_TELEGRAM_TOKEN", ""),
         telegram_chat_id=os.environ.get("LISA_TELEGRAM_CHAT_ID", ""),
         tier2_telegram_chat_id=os.environ.get("LISA_TIER2_TELEGRAM_CHAT_ID", ""),

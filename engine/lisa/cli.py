@@ -17,6 +17,8 @@ from pathlib import Path
 
 from . import __version__
 from . import config as cfg
+from .backfill import SettlementBackfiller, backfill_report_summary
+from .betexplorer import BetExplorerClient, BetExplorerError
 from .client import FixtureClient, OddsApiClient
 from .fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from .notify import LogNotifier
@@ -128,6 +130,46 @@ def _cmd_settle(args: argparse.Namespace) -> int:
     settlement = run_settlement(client, storage, settings)
     print(json.dumps({"settlement": _settlement_dict(settlement)}, indent=2))
     return 0
+
+
+def _cmd_backfill(args: argparse.Namespace) -> int:
+    """Re-grade pending picks from archived BetExplorer day pages.
+
+    Dry run unless --write: even a read-only pass spends Parse credits and
+    reaches a third party, and it can move CLV on live rows.
+    """
+    settings = cfg.load_settings()
+    if not settings.parse_api_key:
+        print("PARSE_API_KEY is not set.", file=sys.stderr)
+        print("  export PARSE_API_KEY=pmx_...  (parse.bot -> Settings -> API Keys)",
+              file=sys.stderr)
+        return 1
+
+    try:
+        client = BetExplorerClient(
+            api_key=settings.parse_api_key,
+            min_interval_sec=settings.backfill_min_interval_sec,
+        )
+    except BetExplorerError as exc:
+        print(f"client unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    dry_run = settings.backfill_dry_run and not args.write
+    lookback = args.lookback_days or settings.backfill_lookback_days
+    print(f"backfill: lookback={lookback}d dry_run={dry_run} "
+          f"driver={settings.storage_driver}")
+
+    backfiller = SettlementBackfiller(storage=_make_storage(settings), client=client)
+    report = backfiller.run(lookback_days=lookback, dry_run=dry_run)
+
+    print(backfill_report_summary(report))
+    if args.verbose and report.settled_picks:
+        print(json.dumps(report.settled_picks, indent=2, default=str))
+    elif dry_run and report.settled_picks:
+        print(f"  ({len(report.settled_picks)} would settle; pass --write to apply)")
+    for err in report.errors:
+        print(f"  error: {err}", file=sys.stderr)
+    return 2 if report.errors else 0
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -833,6 +875,18 @@ def main(argv: list[str] | None = None) -> int:
     settle.add_argument("--fixtures", action="store_true",
                         help="use bundled fixture data instead of the live API")
 
+    bf = sub.add_parser(
+        "backfill",
+        help="grade pending picks from archived BetExplorer results (CLV + settlement)")
+    bf.add_argument("--lookback-days", type=int, default=None,
+                    help="calendar days of page history to walk "
+                         "(default: LISA_BACKFILL_LOOKBACK_DAYS)")
+    bf.add_argument("--write", action="store_true",
+                    help="actually settle picks and update CLV "
+                         "(default is a dry run)")
+    bf.add_argument("--verbose", action="store_true",
+                    help="print the full per-pick detail as JSON")
+
     run = sub.add_parser("run", help="run the scheduler loop (adapted cadence)")
     run.add_argument("--duration", type=float, default=None,
                      help="stop after N hours (default: run forever)")
@@ -982,6 +1036,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run_cycle(args)
     if args.cmd == "settle":
         return _cmd_settle(args)
+    if args.cmd == "backfill":
+        return _cmd_backfill(args)
     if args.cmd == "run":
         return _cmd_run(args)
     if args.cmd == "report":
