@@ -616,10 +616,17 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
                 "basketball_nba",
             ]
-            board = daily_board_builder.build_from_leagues(sport_keys, days_ahead=7)
+            # 14 days, not 7: the major leagues' fixture slates routinely sit
+            # 10-14 days out, so a 7-day window returns an empty board even
+            # with a healthy key. The Odds API returns the whole slate in one
+            # call, so widening this is a client-side filter and costs nothing.
+            board = daily_board_builder.build_from_leagues(sport_keys, days_ahead=14)
             self._send_json({
                 "success": True,
                 "board": board.to_dict(),
+                # Surfaced so an empty board is diagnosable from the response
+                # rather than looking like a data problem.
+                "odds_api_credits_remaining": match_router.credits_remaining,
             })
         except Exception as exc:
             self._send_json({"success": False, "error": str(exc)}, status=500)

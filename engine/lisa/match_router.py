@@ -10,6 +10,7 @@ This ensures we only spend API credits on leagues with paying subscribers.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from typing import Any, Optional
 from . import config as cfg
 from .flashscore import FlashscoreClient, FlashscoreMatch, flashscore_client
 from .odds import Match, Score, utcnow
+from .parsing import parse_odds_payload
 
 logger = logging.getLogger(__name__)
 
@@ -248,11 +250,50 @@ class MatchRouter:
     """
 
     def __init__(self, *, flashscore: Optional[FlashscoreClient] = None,
-                 cache_ttl: int = 300):
+                 cache_ttl: int = 300, odds_client: Any = None,
+                 regions: str = "eu,us", odds_cache_ttl: int = 900,
+                 credit_floor: int = 20):
         self.flashscore = flashscore or flashscore_client
         self.cache_ttl = cache_ttl
+        # Odds data is expensive and the daily board is a public, unauthenticated
+        # endpoint. A short TTL here means a page refresh spends a credit, so
+        # fixture lists are held far longer than league classifications.
+        self.odds_cache_ttl = odds_cache_ttl
+        # Never spend the last N requests. The Odds API answers an exhausted
+        # quota with 401 OUT_OF_USAGE_CREDITS, and this is reached by ordinary
+        # browsing, not just by the pipeline.
+        self.credit_floor = credit_floor
+        self.regions = regions
+        # The Odds API client is created lazily: a router used only for league
+        # classification (or with Flashscore) should not require an API key.
+        self._odds_client = odds_client
+        self._odds_client_resolved = odds_client is not None
         self._cache: dict[str, tuple[float, Any]] = {}
         self._league_tiers: dict[str, LeagueTier] = {}
+
+    @property
+    def credits_remaining(self) -> Optional[int]:
+        """Requests left on the Odds API key, or None if never observed."""
+        client = self._odds_client
+        return getattr(client, "last_remaining", None) if client else None
+
+    def _get_odds_client(self) -> Any:
+        """Return the Odds API client, building it from config on first use.
+
+        Returns None when no key is configured, so callers degrade to the
+        Flashscore path instead of raising.
+        """
+        if not self._odds_client_resolved:
+            self._odds_client_resolved = True
+            key = os.environ.get("THE_ODDS_API_KEY", "")
+            if key:
+                from .client import OddsApiClient
+                self._odds_client = OddsApiClient(api_key=key)
+            else:
+                logger.warning(
+                    "match_router: THE_ODDS_API_KEY not set; Tier A leagues "
+                    "will fall back to Flashscore (which may return nothing)")
+        return self._odds_client
 
     def _get_cached(self, key: str) -> Optional[Any]:
         """Get cached value if not expired."""
@@ -265,9 +306,9 @@ class MatchRouter:
             return None
         return value
 
-    def _set_cached(self, key: str, value: Any) -> None:
-        """Cache a value with TTL."""
-        self._cache[key] = (time.time() + self.cache_ttl, value)
+    def _set_cached(self, key: str, value: Any, *, ttl: Optional[int] = None) -> None:
+        """Cache a value with TTL, defaulting to the router's cache_ttl."""
+        self._cache[key] = (time.time() + (self.cache_ttl if ttl is None else ttl), value)
 
     def classify_league(self, sport_key: str) -> LeagueTier:
         """Classify a league into tier A, B, or C."""
@@ -304,13 +345,15 @@ class MatchRouter:
         self._league_tiers[sport_key] = tier
         return tier
 
-    def get_matches(self, sport_key: str, *, days_ahead: int = 7,
+    def get_matches(self, sport_key: str, *, days_ahead: int = 14,
                     source: str = "auto") -> list[Match]:
         """Get matches for a league from the best available source.
 
         Args:
             sport_key: League identifier
-            days_ahead: Number of days ahead to fetch
+            days_ahead: How many days of fixtures to return. The Odds API
+                returns the full upcoming slate in one call regardless, so this
+                is a client-side filter and costs nothing extra to widen.
             source: "auto", "odds_api", or "flashscore"
 
         Returns:
@@ -325,22 +368,71 @@ class MatchRouter:
         matches: list[Match] = []
 
         if source == "odds_api" or (source == "auto" and tier.tier == "A"):
-            # Use The Odds API (handled by existing pipeline)
-            # This is a placeholder — the actual Odds API call is in pipeline.py
-            pass
+            matches = self._matches_from_odds_api(sport_key, days_ahead)
+            ttl = self.odds_cache_ttl
+        else:
+            ttl = self.cache_ttl
 
-        if source == "flashscore" or (source == "auto" and tier.tier in ("B", "C")):
-            # Use Flashscore
-            if tier.flashscore_id is not None:
-                fs_matches = self.flashscore.get_league_matches(
-                    tier.flashscore_id,
-                    league_name=sport_key,
-                    days_ahead=days_ahead,
-                )
-                matches = [self.flashscore.to_domain_match(m) for m in fs_matches]
+        if not matches and (source == "flashscore"
+                            or (source == "auto" and tier.tier in ("B", "C"))):
+            matches = self._matches_from_flashscore(tier, days_ahead)
 
-        self._set_cached(cache_key, matches)
+        self._set_cached(cache_key, matches, ttl=ttl)
         return matches
+
+    def _matches_from_odds_api(self, sport_key: str,
+                               days_ahead: int) -> list[Match]:
+        """Fetch fixtures from The Odds API.
+
+        Costs one credit per league per uncached call. Two guards make that
+        safe on a public endpoint: the credit floor below, and the long cache
+        TTL. Any failure returns an empty list rather than propagating, so the
+        board degrades to showing less instead of 500ing.
+        """
+        client = self._get_odds_client()
+        if client is None:
+            return []
+
+        remaining = getattr(client, "last_remaining", None)
+        if remaining is not None and remaining <= self.credit_floor:
+            logger.warning(
+                "match_router: skipping %s — only %d Odds API request(s) left "
+                "(floor is %d)", sport_key, remaining, self.credit_floor)
+            return []
+
+        try:
+            payload = client.get_odds(sport_key, regions=self.regions,
+                                      markets="h2h")
+        except Exception as exc:
+            logger.warning("match_router: odds API fetch failed for %s: %r",
+                           sport_key, exc)
+            return []
+
+        matches = parse_odds_payload(payload, market_keys=("h2h",))
+        if not matches:
+            return []
+
+        # The board groups by calendar day, so drop anything outside the window
+        # rather than letting the caller page through weeks of stale fixtures.
+        cutoff = utcnow() - timedelta(hours=2)
+        horizon = utcnow() + timedelta(days=days_ahead)
+        return [m for m in matches if cutoff <= m.commence_time <= horizon]
+
+    def _matches_from_flashscore(self, tier: LeagueTier,
+                                 days_ahead: int) -> list[Match]:
+        if tier.flashscore_id is None:
+            return []
+        try:
+            fs_matches = self.flashscore.get_league_matches(
+                tier.flashscore_id,
+                league_name=tier.sport_key,
+                days_ahead=days_ahead,
+            )
+        except Exception as exc:
+            logger.warning("match_router: flashscore fetch failed for %s: %r",
+                           tier.sport_key, exc)
+            return []
+        return [self.flashscore.to_domain_match(m) for m in fs_matches]
 
     def get_live_matches(self, sport_key: str) -> list[Match]:
         """Get currently live matches for a league."""
