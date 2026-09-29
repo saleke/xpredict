@@ -589,6 +589,35 @@ function renderTargetLandingData() {
     return teamCrestSvg(teamName);
   }
 
+  // Blanks a matchup card when there is no real pick to put in it.
+  //
+  // Both cards ship with hardcoded placeholder content in index.html
+  // (Ravens/Chiefs at 63%, records 6-4 and 8-2). The render functions below
+  // only ever *overwrite* that markup on the `if (m)` path, so with an empty
+  // ledger the placeholders stayed on screen: a visitor landing on the page saw
+  // two specific NFL and NBA fixtures with specific win probabilities and a
+  // working "PREDICT NOW" button, none of which came from any feed. An empty
+  // ledger is a normal state, not an error, so it needs a real empty state.
+  function clearMatchCard(n) {
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const width = (id, w) => { const el = document.getElementById(id); if (el) el.style.width = w; };
+    set(`target-m${n}-league`, 'NO PICKS');
+    set(`target-m${n}-time`, 'Ledger empty');
+    set(`target-m${n}-home-name`, 'AWAITING');
+    set(`target-m${n}-away-name`, 'FIRST PICK');
+    set(`target-m${n}-home-record`, '—');
+    set(`target-m${n}-away-record`, '—');
+    set(`target-m${n}-prob-home`, 'n/a');
+    set(`target-m${n}-prob-away`, '—');
+    width(`target-m${n}-fill-home`, '0%');
+    width(`target-m${n}-fill-away`, '0%');
+    const vis = document.getElementById(`target-m${n}-visual`);
+    if (vis) vis.innerHTML = '<span class="mct-vs-label">NO DATA</span>';
+    const btn = document.getElementById(`target-m${n}-btn-predict`);
+    // A dead button that still looks clickable is worse than no button.
+    if (btn) { btn.onclick = null; btn.setAttribute('aria-disabled', 'true'); btn.classList.add('is-disabled'); }
+  }
+
   // 1. Dynamic Matchup Card 1
   const m1 = picks[0];
   if (m1) {
@@ -649,6 +678,8 @@ function renderTargetLandingData() {
         }, 150);
       };
     }
+  } else {
+    clearMatchCard(1);
   }
 
   // 2. Dynamic Matchup Card 2
@@ -684,18 +715,25 @@ function renderTargetLandingData() {
       rA2.textContent = m2.quotes ? 'see quotes' : 'n/a';
     }
 
-    // Win probabilities
-    const p2Home = Math.round((m2.p_true || 0.58) * 100);
-    const p2Away = Math.max(1, 100 - p2Home);
+    // Win probability: the model value for this selection only.
+    //
+    // Two defects were here. `m2.p_true || 0.58` invented a 58% probability
+    // whenever the feed omitted one, so a card could display a confident number
+    // that no model produced. And the away figure was computed as
+    // `100 - p2Home`, which is only valid if a draw is impossible -- on a 1X2
+    // market it silently converts the draw probability into away win
+    // probability. Card 1 already renders the away side as an em dash for this
+    // reason; card 2 now matches it.
+    const p2Home = typeof m2.p_true === 'number' ? m2.p_true * 100 : null;
     const ph2 = document.getElementById('target-m2-prob-home');
-    if (ph2) ph2.textContent = `${p2Home}%`;
+    if (ph2) ph2.textContent = p2Home == null ? 'n/a' : `${p2Home.toFixed(1)}%`;
     const pa2 = document.getElementById('target-m2-prob-away');
-    if (pa2) pa2.textContent = `${p2Away}%`;
+    if (pa2) pa2.textContent = '—';
 
     const fh2 = document.getElementById('target-m2-fill-home');
-    if (fh2) fh2.style.width = `${p2Home}%`;
+    if (fh2) fh2.style.width = `${p2Home == null ? 0 : Math.min(100, p2Home)}%`;
     const fa2 = document.getElementById('target-m2-fill-away');
-    if (fa2) fa2.style.width = `${p2Away}%`;
+    if (fa2) fa2.style.width = '0%';
 
     // Action button
     const btn2 = document.getElementById('target-m2-btn-predict');
@@ -708,6 +746,8 @@ function renderTargetLandingData() {
         }, 150);
       };
     }
+  } else {
+    clearMatchCard(2);
   }
 
   // 3. Ledger leaderboard — real graded records only, no invented members.

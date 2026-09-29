@@ -7540,6 +7540,23 @@ body {
   box-shadow: 0 0 16px rgba(204, 255, 0, 0.4);
 }
 
+/* Empty-ledger state: there is nothing to predict, so the button must not look
+   actionable. Same layout, muted colour, no hover, no pointer events. */
+.btn-mct-predict-now.is-disabled,
+.btn-mct-predict-now[aria-disabled="true"] {
+  border-color: #3a4038;
+  color: #6b7268;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn-mct-predict-now.is-disabled:hover,
+.btn-mct-predict-now[aria-disabled="true"]:hover {
+  background: transparent;
+  color: #6b7268;
+  box-shadow: none;
+}
+
 /* Leaderboard Card */
 .lb-target-title {
   font-size: 12px;

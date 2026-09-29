@@ -284,7 +284,7 @@
             </div>
             <div class="feature-bar-text">
               <div class="feature-bar-title">SMART PICKS</div>
-              <div class="feature-bar-sub">Data-driven predictions, proven to win.</div>
+              <div class="feature-bar-sub">Model-derived probabilities, graded in public.</div>
             </div>
           </div>
 
@@ -300,7 +300,7 @@
             </div>
             <div class="feature-bar-text">
               <div class="feature-bar-title">COMPETITION</div>
-              <div class="feature-bar-sub">Join a community of winners and climb the leaderboard.</div>
+              <div class="feature-bar-sub">Climb the leaderboard as real matches settle.</div>
             </div>
           </div>
         </div>
@@ -311,42 +311,40 @@
           <div class="match-card-target card-border-lime" id="target-m1-card">
             <div class="mct-header">
               <div class="mct-league-time">
-                <span class="mct-badge-league text-lime" id="target-m1-league">NFL</span>
-                <span class="mct-time-text" id="target-m1-time">Today 2:30 PM</span>
+                <span class="mct-badge-league text-lime" id="target-m1-league">NO PICKS</span>
+                <span class="mct-time-text" id="target-m1-time">Ledger empty</span>
               </div>
               <a href="#view-forecast" class="mct-link-analysis" id="target-m1-analysis" onclick="window.switchTab('forecast')">VIEW ANALYSIS →</a>
             </div>
 
             <div class="mct-teams-vs-row">
               <div class="mct-team-col left">
-                <div class="mct-team-name" id="target-m1-home-name">BALTIMORE<br>RAVENS</div>
-                <div class="mct-team-record font-mono" id="target-m1-home-record">6-4</div>
+                <div class="mct-team-name" id="target-m1-home-name">AWAITING<br>FIRST PICK</div>
+                <div class="mct-team-record font-mono" id="target-m1-home-record">—</div>
               </div>
               <div class="mct-helmets-vs" id="target-m1-visual">
-                <img src="assets/ravens_trans.png" alt="Ravens" class="mct-helmet-img">
-                <span class="mct-vs-label">VS</span>
-                <img src="assets/chiefs_trans.png" alt="Chiefs" class="mct-helmet-img">
+                <span class="mct-vs-label">NO DATA</span>
               </div>
               <div class="mct-team-col right">
-                <div class="mct-team-name" id="target-m1-away-name">KANSAS CITY<br>CHIEFS</div>
-                <div class="mct-team-record font-mono" id="target-m1-away-record">8-2</div>
+                <div class="mct-team-name" id="target-m1-away-name">LEDGER<br>EMPTY</div>
+                <div class="mct-team-record font-mono" id="target-m1-away-record">—</div>
               </div>
             </div>
 
             <div class="mct-prob-box">
               <div class="mct-prob-title">WIN PROBABILITY</div>
               <div class="mct-prob-bar-row">
-                <span class="mct-prob-val val-left font-mono text-lime" id="target-m1-prob-home">63%</span>
+                <span class="mct-prob-val val-left font-mono text-lime" id="target-m1-prob-home">n/a</span>
                 <div class="mct-prob-track">
-                  <div class="mct-prob-fill-left" id="target-m1-fill-home" style="width: 63%;"></div>
-                  <div class="mct-prob-fill-right" id="target-m1-fill-away" style="width: 37%;"></div>
+                  <div class="mct-prob-fill-left" id="target-m1-fill-home" style="width: 0%;"></div>
+                  <div class="mct-prob-fill-right" id="target-m1-fill-away" style="width: 0%;"></div>
                 </div>
-                <span class="mct-prob-val val-right font-mono" id="target-m1-prob-away">37%</span>
+                <span class="mct-prob-val val-right font-mono" id="target-m1-prob-away">—</span>
               </div>
             </div>
 
-            <button type="button" class="btn-mct-predict-now" id="target-m1-btn-predict" onclick="window.switchTab('picks')">
-              PREDICT NOW
+            <button type="button" class="btn-mct-predict-now is-disabled" id="target-m1-btn-predict" aria-disabled="true">
+              NO PICKS YET
             </button>
           </div>
 
@@ -354,42 +352,40 @@
           <div class="match-card-target card-border-amber" id="target-m2-card">
             <div class="mct-header">
               <div class="mct-league-time">
-                <span class="mct-badge-league text-lime" id="target-m2-league">NBA</span>
-                <span class="mct-time-text" id="target-m2-time">Today 7:00 PM</span>
+                <span class="mct-badge-league text-lime" id="target-m2-league">NO PICKS</span>
+                <span class="mct-time-text" id="target-m2-time">Ledger empty</span>
               </div>
               <a href="#view-forecast" class="mct-link-analysis" id="target-m2-analysis" onclick="window.switchTab('forecast')">VIEW ANALYSIS →</a>
             </div>
 
             <div class="mct-teams-vs-row">
               <div class="mct-team-col left">
-                <div class="mct-team-name" id="target-m2-home-name">DENVER<br>NUGGETS</div>
-                <div class="mct-team-record font-mono" id="target-m2-home-record">5-3</div>
+                <div class="mct-team-name" id="target-m2-home-name">NO<br>PICKS</div>
+                <div class="mct-team-record font-mono" id="target-m2-home-record">—</div>
               </div>
               <div class="mct-helmets-vs" id="target-m2-visual">
-                <img src="assets/nuggets_trans.png" alt="Nuggets" class="mct-helmet-img">
-                <span class="mct-vs-label">VS</span>
-                <img src="assets/lakers_trans.png" alt="Lakers" class="mct-helmet-img">
+                <span class="mct-vs-label">NO DATA</span>
               </div>
               <div class="mct-team-col right">
-                <div class="mct-team-name" id="target-m2-away-name">LOS ANGELES<br>LAKERS</div>
-                <div class="mct-team-record font-mono" id="target-m2-away-record">6-2</div>
+                <div class="mct-team-name" id="target-m2-away-name">YET<br>GRADED</div>
+                <div class="mct-team-record font-mono" id="target-m2-away-record">—</div>
               </div>
             </div>
 
             <div class="mct-prob-box">
               <div class="mct-prob-title">WIN PROBABILITY</div>
               <div class="mct-prob-bar-row">
-                <span class="mct-prob-val val-left font-mono text-lime" id="target-m2-prob-home">58%</span>
+                <span class="mct-prob-val val-left font-mono text-lime" id="target-m2-prob-home">n/a</span>
                 <div class="mct-prob-track">
-                  <div class="mct-prob-fill-left" id="target-m2-fill-home" style="width: 58%;"></div>
-                  <div class="mct-prob-fill-right" id="target-m2-fill-away" style="width: 42%;"></div>
+                  <div class="mct-prob-fill-left" id="target-m2-fill-home" style="width: 0%;"></div>
+                  <div class="mct-prob-fill-right" id="target-m2-fill-away" style="width: 0%;"></div>
                 </div>
-                <span class="mct-prob-val val-right font-mono" id="target-m2-prob-away">42%</span>
+                <span class="mct-prob-val val-right font-mono" id="target-m2-prob-away">—</span>
               </div>
             </div>
 
-            <button type="button" class="btn-mct-predict-now" id="target-m2-btn-predict" onclick="window.switchTab('picks')">
-              PREDICT NOW
+            <button type="button" class="btn-mct-predict-now is-disabled" id="target-m2-btn-predict" aria-disabled="true">
+              NO PICKS YET
             </button>
           </div>
 
@@ -494,8 +490,8 @@
                 <span class="text-lime">COMPETITION</span>
               </h3>
               <p class="comp-desc">
-                Join thousands of players making smarter<br>
-                picks and climbing the leaderboard.
+                Every pick graded in a public ledger.<br>
+                The leaderboard fills in as real matches settle.
               </p>
             </div>
           </div>
@@ -533,7 +529,7 @@
                 <div class="contrast-divider">vs</div>
                 <div class="contrast-item good">
                   <span class="contrast-tag good">LISA DISCIPLINE</span>
-                  <span class="contrast-text">Unbiased probability models, 100% public ledger, Kelly sizing</span>
+                  <span class="contrast-text">Unbiased probability models, public ledger, fractional Kelly sizing</span>
                 </div>
               </div>
             </div>
@@ -556,7 +552,7 @@
                 <ul class="pillar-signal-list">
                   <li>
                     <span class="signal-dot cyan"></span>
-                    <span><strong>Historical Data:</strong> 10,000+ fixtures analyzed across 5 major leagues</span>
+                    <span><strong>Historical Data:</strong> 7,155 fixtures analyzed across 5 major leagues</span>
                   </li>
                   <li>
                     <span class="signal-dot cyan"></span>
@@ -565,7 +561,7 @@
                   </li>
                 </ul>
                 <div class="pillar-footer">
-                  <span class="pillar-metric-tag font-mono">10,000+ Audited Fixtures</span>
+                  <span class="pillar-metric-tag font-mono">7,155 Audited Fixtures</span>
                 </div>
               </div>
 
