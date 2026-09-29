@@ -55,6 +55,11 @@ let state = {
   activeSportFilter: 'all',
   activeTab: 'overview',
   currentTier: localStorage.getItem('lisa_tier') || 'free',
+  // Operator-only tier preview. Non-empty means "render the board as this
+  // tier" without changing the account. Persisted so a reload does not
+  // silently drop an operator back to their real tier mid-inspection.
+  tierPreview: localStorage.getItem('lisa_tier_preview') || '',
+  isOperator: false,
   isTelegramUnlocked: localStorage.getItem('lisa_telegram_unlocked') === 'true',
   selectedBooks: {},
   activeAccuBook: 'sportybet',
@@ -534,6 +539,14 @@ function renderProvenanceBanner() {
 }
 
 function renderAll() {
+  // Re-assert a persisted operator preview on every full render. Without this,
+  // a reload would show the account's real tier until something else happened
+  // to call setTier, which is exactly the "locked to one tier" confusion this
+  // control exists to remove.
+  if (state.tierPreview && state.currentTier !== state.tierPreview) {
+    state.currentTier = state.tierPreview;
+  }
+  renderTierPreviewControls();
   renderTargetLandingData();
   renderKPIs();
   renderTierControls();
@@ -1146,11 +1159,30 @@ function renderTierControls() {
     badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.5)';
     textEl.innerHTML = `Full VIP Access: All ${totalPicks} predictions, early line movement alerts, and deep match analysis.`;
     if (ctaBox) {
-      ctaBox.innerHTML = `
-        <span style="font-size: 12px; font-weight: 700; color: var(--accent-gold); padding: 6px 14px; background: rgba(245, 158, 11, 0.15); border-radius: var(--radius-pill); border: 1px solid rgba(245, 158, 11, 0.3);">
-          Active VIP Member
-        </span>
-      `;
+      // This used to be a static "Active VIP Member" pill, which was a dead
+      // end: at the top tier there was no control left to move anywhere else.
+      // Operators previewing a tier always get a way back, and anyone who is
+      // previewing is told plainly that this is not their real access.
+      ctaBox.innerHTML = state.tierPreview
+        ? `<button class="btn-upgrade-glow" onclick="window.setTierPreview('')">
+             Exit preview · back to my real tier
+           </button>`
+        : `<span class="tier-cta-static">Active VIP Member</span>`;
+    }
+  }
+
+  // A preview must never be mistakable for real access.
+  const previewNote = document.getElementById('tier-preview-banner');
+  if (previewNote) {
+    if (state.tierPreview) {
+      previewNote.hidden = false;
+      previewNote.innerHTML =
+        'Previewing the <strong>' + state.tierPreview.toUpperCase() +
+        '</strong> experience — your account and access are unchanged. ' +
+        '<button type="button" onclick="window.setTierPreview(\'\')">Exit preview</button>';
+    } else {
+      previewNote.hidden = true;
+      previewNote.innerHTML = '';
     }
   }
 }
@@ -1165,6 +1197,41 @@ window.setTier = function (tier) {
     switchTab('alpha');
   }
 };
+
+// The tier actually being rendered: the preview when one is active,
+// otherwise the locally selected tier. Every gating decision should read
+// this rather than state.currentTier directly.
+window.effectiveTier = function () {
+  return state.tierPreview || state.currentTier;
+};
+
+window.setTierPreview = function (tier) {
+  const valid = ['', 'free', 'tier1', 'tier2', 'tier3'];
+  if (valid.indexOf(tier) === -1) tier = '';
+  state.tierPreview = tier;
+  if (tier) {
+    localStorage.setItem('lisa_tier_preview', tier);
+  } else {
+    localStorage.removeItem('lisa_tier_preview');
+  }
+  // Re-render against the preview, and repaint the operator controls.
+  window.setTier(window.effectiveTier());
+  renderTierPreviewControls();
+  document.querySelectorAll('[data-preview-tier]').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-preview-tier') === tier);
+  });
+  if (tier) {
+    showToast(`Previewing the ${tier.toUpperCase()} experience. Your account is unchanged.`, 'info');
+  } else {
+    showToast('Tier preview off. Showing your real access.', 'info');
+  }
+};
+
+function renderTierPreviewControls() {
+  const section = document.getElementById('tier-preview-section');
+  if (!section) return;
+  section.hidden = !state.isOperator;
+}
 
 function renderPicks() {
   const grid = document.getElementById('picks-grid');
@@ -3319,6 +3386,17 @@ function setupAuthUI() {
   window.switchUserTier = async (tier) => {
     dropdown?.classList.remove('show');
     userPill?.classList.remove('active');
+
+    // An operator browsing tiers is inspecting the product, not buying it.
+    // Writing the real account tier here used to be destructive: the account
+    // tier IS the operator credential for anyone not email-allowlisted, so
+    // picking a paid tier silently removed their own console access. Operators
+    // therefore switch a local preview and never touch the account.
+    if (state.isOperator) {
+      window.setTierPreview(tier);
+      return;
+    }
+
     if (auth.isAuthenticated()) {
       await auth.updateTier(tier);
     }
@@ -3376,11 +3454,23 @@ function setupAuthUI() {
         profileTierTag.className = `user-tier-tag tier-tag-${tierKey}`;
       }
 
-      // If user has higher tier than current, elevate view tier
-      if (user.tier && user.tier !== 'free') {
+      // Operator status drives the Tier Preview control. It is recomputed on
+      // every auth notification because the server is the only authority on it.
+      state.isOperator = !!user.is_operator;
+      renderTierPreviewControls();
+      document.querySelectorAll('[data-preview-tier]').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-preview-tier') === state.tierPreview);
+      });
+
+      // If user has higher tier than current, elevate view tier -- but never
+      // while an operator preview is active, or every auth refresh would
+      // yank them out of the tier they are inspecting.
+      if (user.tier && user.tier !== 'free' && !state.tierPreview) {
         state.currentTier = user.tier;
         renderTierControls();
         renderPicks();
+      } else if (state.tierPreview) {
+        window.setTier(window.effectiveTier());
       }
       if (user.telegram_verified) {
         state.isTelegramUnlocked = true;

@@ -8234,3 +8234,90 @@ body {
   font-size: 14px;
   min-height: 20px;
 }
+/* ── Operator tier preview ───────────────────────────────────────────────
+   Operator-only affordance for inspecting what each tier is given. It only
+   ever changes what this browser renders, so it is visually walled off from
+   the real entitlement UI to avoid any chance of it reading as purchase. */
+.dropdown-preview {
+  margin: 10px 0 4px;
+  padding: 10px;
+  border: 1px dashed rgba(6, 182, 212, 0.35);
+  border-radius: 10px;
+  background: rgba(6, 182, 212, 0.06);
+}
+.dropdown-preview-note {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-3, #8b98a5);
+  margin-bottom: 8px;
+}
+.dropdown-preview-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.dropdown-preview-btn {
+  flex: 1 1 auto;
+  min-width: 44px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2, #c3ccd6);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill, 999px);
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+.dropdown-preview-btn:hover {
+  color: #fff;
+  border-color: rgba(6, 182, 212, 0.5);
+}
+.dropdown-preview-btn.active {
+  color: #04121a;
+  background: var(--accent-cyan, #06b6d4);
+  border-color: var(--accent-cyan, #06b6d4);
+}
+.dropdown-preview-btn--off.active {
+  background: #6b7684;
+  border-color: #6b7684;
+  color: #fff;
+}
+
+.tier-cta-static {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-gold, #fbbf24);
+  padding: 6px 14px;
+  background: rgba(245, 158, 11, 0.15);
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.tier-preview-banner {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #cfe9f5;
+  background: rgba(6, 182, 212, 0.10);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  border-radius: 8px;
+}
+.tier-preview-banner strong {
+  color: var(--accent-cyan, #06b6d4);
+  letter-spacing: 0.04em;
+}
+.tier-preview-banner button {
+  margin-left: 8px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #04121a;
+  background: var(--accent-cyan, #06b6d4);
+  border: 0;
+  border-radius: var(--radius-pill, 999px);
+  cursor: pointer;
+}

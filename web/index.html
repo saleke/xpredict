@@ -188,6 +188,27 @@
                 </button>
               </div>
 
+              <!-- Operator-only tier preview. Renders the board exactly as a
+                   given tier sees it without touching the account's real
+                   tier, so monitoring a tier can never cost operator access. -->
+              <div class="dropdown-preview" id="tier-preview-section" hidden>
+                <div class="dropdown-section-title">
+                  <span>Tier Preview</span>
+                  <span class="dropdown-title-hint">VIEW ONLY</span>
+                </div>
+                <div class="dropdown-preview-note">
+                  Previewing a tier only changes what this browser displays. Your
+                  account keeps its real tier and access.
+                </div>
+                <div class="dropdown-preview-grid" id="tier-preview-options">
+                  <button type="button" class="dropdown-preview-btn" data-preview-tier="free" onclick="window.setTierPreview('free')">Free</button>
+                  <button type="button" class="dropdown-preview-btn" data-preview-tier="tier1" onclick="window.setTierPreview('tier1')">T1</button>
+                  <button type="button" class="dropdown-preview-btn" data-preview-tier="tier2" onclick="window.setTierPreview('tier2')">T2</button>
+                  <button type="button" class="dropdown-preview-btn" data-preview-tier="tier3" onclick="window.setTierPreview('tier3')">T3</button>
+                  <button type="button" class="dropdown-preview-btn dropdown-preview-btn--off" data-preview-tier="" onclick="window.setTierPreview('')">Off</button>
+                </div>
+              </div>
+
               <div class="dropdown-divider"></div>
 
               <button type="button" class="dropdown-btn-item" onclick="window.openAccountSettingsModal()">
@@ -1299,6 +1320,10 @@
           </button>
         </div>
       </div>
+
+      <!-- Operator tier-preview notice. Hidden unless a preview is active, so
+           a previewed tier can never be mistaken for real access. -->
+      <div class="tier-preview-banner" id="tier-preview-banner" hidden></div>
 
       <!-- Predictions Multi-Axis Command Console -->
       <div class="picks-command-console">

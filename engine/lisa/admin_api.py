@@ -152,6 +152,35 @@ def _search_term(query: dict[str, list[str]]) -> str:
     return _first(query, "q") or _first(query, "search")
 
 
+def operator_role(user: Optional[dict]) -> Optional[str]:
+    """Canonical operator/owner resolution for an account.
+
+    This is the single source of truth, shared by the admin console and the
+    public API, so the two can never disagree about who is an operator.
+
+    ``owner`` is granted only by an explicit email allowlist: it is the one
+    control that has to survive a compromised Telegram bot, and the only one
+    that survives a tier change. ``admin`` is granted by the account's own
+    tier or a linked Telegram id in the operator allowlist, matching how the
+    bot already gates its ``admin:`` commands.
+
+    Kept as a free function (not a method) so callers that have no control
+    plane -- the public site, the HTTP handler -- can still resolve a role
+    without depending on the console being wired up.
+    """
+    if not user:
+        return None
+    email = str(user.get("email") or "").strip().lower()
+    if email and email in {e.lower() for e in _env_tuple("LISA_ADMIN_EMAILS")}:
+        return "owner"
+    telegram_id = str(user.get("telegram_id") or "").strip()
+    if telegram_id and telegram_id in _env_tuple("ADMIN_TELEGRAM_IDS"):
+        return "admin"
+    if str(user.get("tier") or "") == "admin":
+        return "admin"
+    return None
+
+
 class AdminAPI:
     """Request handling for the console. One instance per server."""
 
@@ -248,25 +277,8 @@ class AdminAPI:
         return None
 
     def role_for(self, user: Optional[dict]) -> Optional[str]:
-        """Resolve a role, or None when the account may not use the console.
-
-        ``owner`` is granted only by an explicit email allowlist: it is the one
-        control that has to survive a compromised Telegram bot. ``admin`` is
-        granted by the account's own tier or a linked Telegram id in the
-        operator allowlist, matching how the bot already gates its ``admin:``
-        commands, so both interfaces answer "is this an operator" the same way.
-        """
-        if not user:
-            return None
-        email = str(user.get("email") or "").strip().lower()
-        if email and email in {e.lower() for e in _env_tuple("LISA_ADMIN_EMAILS")}:
-            return "owner"
-        telegram_id = str(user.get("telegram_id") or "").strip()
-        if telegram_id and telegram_id in _env_tuple("ADMIN_TELEGRAM_IDS"):
-            return "admin"
-        if str(user.get("tier") or "") == "admin":
-            return "admin"
-        return None
+        """Resolve a role, or None when the account may not use the console."""
+        return operator_role(user)
 
     def identify(self, handler) -> tuple[Optional[dict], Optional[dict], Optional[str]]:
         """Return ``(user, session, role)``. Any None means not permitted."""

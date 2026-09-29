@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from . import __version__
 from . import config as cfg
-from .admin_api import AdminAPI
+from .admin_api import AdminAPI, operator_role
 from .auth import AuthManager
 from .dashboard import LIVE_ODDS_PREFIX
 from .gate import Pick
@@ -422,12 +422,34 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         self._send_json({"error": "Endpoint not found"}, status=404)
 
+    def _operator_role(self, user: Optional[dict]) -> Optional[str]:
+        """Resolve this account's console role, or None if it is not an operator.
+
+        Delegates to the console's own rule so the public site and /admin can
+        never disagree about who is an operator. Called as a free function
+        rather than through the control plane, so this still answers correctly
+        when no control is wired. Swallowed failures return None: a status flag
+        must never become an availability problem.
+        """
+        if not user:
+            return None
+        try:
+            return operator_role(user)
+        except Exception:
+            return None
+
     def _handle_auth_me(self):
         user, sess = self._get_current_user_and_session()
         if user:
+            # validate_session() already projects a safe column list (no
+            # password material), so copying and annotating it cannot leak.
+            safe = dict(user)
+            role = self._operator_role(user)
+            safe["is_operator"] = role is not None
+            safe["role"] = role
             self._send_json({
                 "authenticated": True,
-                "user": user,
+                "user": safe,
                 "session_id": sess["session_id"] if sess else None,
             })
         else:
@@ -581,6 +603,27 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         if tier not in valid_tiers:
             self._send_json({"success": False, "error": f"Invalid tier: {tier}. Must be one of {valid_tiers}"}, status=400)
             return
+
+        # An operator changing their OWN tier from the public site used to be
+        # silently destructive: picking a paid tier rewrote the real account,
+        # and for anyone whose operator access came from the tier column (not
+        # the email allowlist) that removed their console access with no way
+        # back. Probe the real rule and refuse only when access is genuinely
+        # lost -- an email-allowlisted owner still resolves to "owner" here, so
+        # they are unaffected.
+        if tier != "admin" and user and target_user_id == str(user.get("id") or ""):
+            probe = dict(user)
+            probe["tier"] = tier
+            if self._operator_role(probe) is None:
+                self._send_json({
+                    "success": False,
+                    "error": (
+                        "Refusing to remove your own operator access. Use the "
+                        "Tier Preview control in the profile menu to view another "
+                        "tier, or ask an owner to change this account."
+                    ),
+                }, status=403)
+                return
 
         try:
             if self.auth:
