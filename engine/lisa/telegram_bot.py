@@ -184,17 +184,26 @@ _PAID_ROW_NAV = [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}
 _ROW_LEDGER = [{"text": "📈 Accuracy Ledger"}, {"text": "🛡️ Trap Advisories"}]
 _ROW_CODES = [{"text": "🎟️ Bookmaker Codes"}, {"text": "⚡ 5-Fold Parlay"}]
 
+# The admin keyboard is assembled from the same shared rows as the paid and free
+# keyboards, and nothing more.
+#
+# It previously inlined literal copies of _ADMIN_ROW_NAV, _ROW_LEDGER and
+# _ROW_CODES and *then* appended those same constants, so an admin saw
+# "📊 Active Top Picks", "🏦 My Bankroll", "📈 Accuracy Ledger" and
+# "🛡️ Trap Advisories" twice each -- 18 buttons for 14 destinations. It also
+# carried two alias labels, "⚡ Live Accumulator" and "🎟️ Execution Guide",
+# which are the same destinations as "⚡ 5-Fold Parlay" (slug ``parlay``) and
+# "🎟️ Bookmaker Codes" (slug ``codes``) but were absent from BUTTON_SLUGS, so
+# tapping them fell through to the conversational fallback instead of routing.
+# Both aliases are dropped in favour of the canonical labelled buttons.
 ADMIN_REPLY_KEYBOARD = {
     "keyboard": [
-        [{"text": "📊 Active Top Picks"}, {"text": "🏦 My Bankroll"}],
-        [{"text": "📈 Accuracy Ledger"}, {"text": "⚡ Live Accumulator"}],
-        [{"text": "🎟️ Execution Guide"}, {"text": "🛡️ Trap Advisories"}],
-        [{"text": "🛠️ Admin Console"}, {"text": "👤 Grant Access"}],
-        [{"text": "📣 Broadcast"}, {"text": "🟢 Settle Match"}],
         _ADMIN_ROW_NAV,
-        [{"text": "⏸️ Pause System"}, {"text": "📜 Audit Trail"}],
         _ROW_LEDGER,
         _ROW_CODES,
+        [{"text": "🛠️ Admin Console"}, {"text": "👤 Grant Access"}],
+        [{"text": "📣 Broadcast"}, {"text": "🟢 Settle Match"}],
+        [{"text": "⏸️ Pause System"}, {"text": "📜 Audit Trail"}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,

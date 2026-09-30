@@ -4,6 +4,8 @@ from __future__ import annotations
 import secrets
 import time
 import unittest
+from collections import Counter
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from lisa import config as cfg
@@ -18,6 +20,7 @@ from lisa.telegram_bot import (
     BUTTON_SLUGS,
     FREE_REPLY_KEYBOARD,
     MAIN_REPLY_KEYBOARD,
+    MIN_SETTLED_FOR_STATS,
     PAID_REPLY_KEYBOARD,
     BankrollFSMManager,
     TelegramBot,
@@ -262,11 +265,15 @@ class TestTelegramBot(unittest.TestCase):
         reply_empty, _ = self.bot.handle_command("/picks", "user_1", "chat_1")
         self.assertIn("No active signals", reply_empty)
 
+        # /stats with nothing settled refuses to publish, and states the bar
+        # rather than showing a placeholder rate.
         reply_stats_empty, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
-        self.assertIn("No settled picks yet", reply_stats_empty)
+        self.assertIn("Insufficient settled sample to publish a track record", reply_stats_empty)
+        self.assertIn("Settled picks audited:</b> <code>0</code>", reply_stats_empty)
+        self.assertIn("Required for a meaningful ledger:</b> <code>20</code>", reply_stats_empty)
 
         reply_traps_empty, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
-        self.assertIn("No trap advisories recorded yet", reply_traps_empty)
+        self.assertIn("No measured pass-advisory data yet", reply_traps_empty)
 
         # With a real ledger row the genuine board is rendered.
         storage = self.storage
@@ -280,6 +287,15 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("LISA INSTITUTIONAL MEMBERSHIP TIERS", reply_vip)
 
     def test_command_stats_from_settled_ledger(self):
+        """One graded pick must NOT produce a 100% win rate.
+
+        This test previously asserted that settling a single pick published
+        "100.0%" and "1/1". A 1-sample win rate is the single most misleading
+        number a betting bot can show: it reads as a perfect record and is
+        exactly what a customer screenshots. /stats now requires
+        MIN_SETTLED_FOR_STATS (20) graded rows and refuses below that, so the
+        assertion is inverted -- the bar is shown, the rate is not.
+        """
         storage = self.storage
         self.bot._picks_cache = ({}, 0.0)
         storage.insert_pick(self.sample_pick)
@@ -287,22 +303,69 @@ class TestTelegramBot(unittest.TestCase):
         storage.settle_pick(key, "WIN", datetime.now(timezone.utc))
 
         reply, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
-        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
-        self.assertIn("100.0%", reply)
-        self.assertIn("1/1", reply)
+        self.assertIn("Insufficient settled sample", reply)
+        self.assertIn("<code>1</code>", reply)   # the true count is disclosed
+        self.assertIn("<code>20</code>", reply)  # and the bar it must clear
+        self.assertNotIn("100.0%", reply)        # but no rate is published yet
 
-    def test_command_traps_from_real_history(self):
+    def test_command_stats_publishes_once_sample_is_meaningful(self):
+        """At the threshold the real rate is published, and it is arithmetic.
+
+        The inverse of the test above: once MIN_SETTLED_FOR_STATS graded rows
+        exist, withholding the win rate would be its own kind of dishonesty.
+        24 rows with 18 wins must report 75.0%, not a flattering placeholder.
+        """
         storage = self.storage
-        storage.upsert_live("live:traps", [{
-            "home_team": "Real Madrid",
-            "away_team": "Sevilla",
-            "public_favorite": "Real Madrid",
-            "cv": 0.11,
-        }], 3600)
+        self.bot._picks_cache = ({}, 0.0)
+        n = MIN_SETTLED_FOR_STATS + 4
+        for i in range(n):
+            pick = replace(self.sample_pick, match_id=f"m{i:03d}")
+            storage.insert_pick(pick)
+            k = f"{pick.match_id}::{pick.market}::{pick.outcome_name}"
+            storage.settle_pick(
+                k, "WIN" if i < 18 else "LOSS", datetime.now(timezone.utc)
+            )
+
+        reply, _ = self.bot.handle_command("/stats", "user_1", "chat_1")
+        self.assertNotIn("Insufficient settled sample", reply)
+        self.assertIn("75.0%", reply)
+
+    def test_command_traps_reports_gross_and_net_together(self):
+        """/traps must show the honest pair, and must not show a single flattering number.
+
+        The gross "capital preserved" figure is the trap avoided times the stake
+        -- roughly $310,500 on the archive. The net counterfactual is what those
+        avoided bets would actually have returned: +$5,448, because most of them
+        would have won. Showing only the gross is the single most misleading
+        thing this command could do, so both appear and the pairing is explained.
+        """
+        self.bot._summary_cache = ({
+            "total_matches_evaluated": 6729,
+            "grade_c_traps_avoided": 6699,
+            "grade_c_traps_that_won": 3594,
+            "grade_c_traps_that_lost": 3105,
+            "capital_preserved_dollars": 310500.0,
+            "net_counterfactual_value": 5448.0,
+        }, time.time() + 3600)
+
         reply, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
         self.assertIn("LISA CAPITAL PRESERVATION DESK", reply)
-        self.assertIn("Real Madrid", reply)
-        self.assertIn("11.0%", reply)
+        self.assertIn("Matches Evaluated", reply)
+        self.assertIn("<code>6699</code>", reply)
+        # The split that makes the gross figure interpretable.
+        self.assertIn("<code>3594 won</code>", reply)
+        self.assertIn("<code>3105 lost</code>", reply)
+        self.assertIn("$310,500", reply)
+        self.assertIn("$+5,448", reply)
+        self.assertIn("Read the two figures together", reply)
+
+    def test_command_traps_with_no_measured_data(self):
+        """No summary means no trap counts -- not an illustrative figure."""
+        self.bot._summary_cache = ({}, 0.0)
+        reply, _ = self.bot.handle_command("/traps", "user_1", "chat_1")
+        self.assertIn("LISA CAPITAL PRESERVATION DESK", reply)
+        self.assertIn("No measured pass-advisory data yet", reply)
+        self.assertNotIn("$", reply)
 
     def test_command_unlock(self):
         reply_gen, _ = self.bot.handle_command("/unlock", "user_1", "chat_1")
@@ -398,6 +461,45 @@ class TestTelegramBot(unittest.TestCase):
         # advertised on the free keyboard.
         self.assertNotIn("⚡ 5-Fold Parlay", buttons)
         self.assertNotIn("🎟️ Bookmaker Codes", buttons)
+
+    def test_no_keyboard_shows_the_same_menu_item_twice(self):
+        """Guards against replicated entries in the persistent reply keyboards.
+
+        The admin keyboard inlined literal copies of _ADMIN_ROW_NAV,
+        _ROW_LEDGER and _ROW_CODES and then appended those same constants, so
+        an operator saw "📊 Active Top Picks", "🏦 My Bankroll",
+        "📈 Accuracy Ledger" and "🛡️ Trap Advisories" twice each: 18 buttons
+        for 14 destinations.
+
+        This also catches the subtler form -- two *different* labels resolving
+        to the same slug, which is how the unroutable "⚡ Live Accumulator" and
+        "🎟️ Execution Guide" aliases survived alongside the canonical
+        "⚡ 5-Fold Parlay" and "🎟️ Bookmaker Codes" buttons they duplicate.
+        """
+        for name, keyboard in (
+            ("admin", ADMIN_REPLY_KEYBOARD),
+            ("paid", PAID_REPLY_KEYBOARD),
+            ("free", FREE_REPLY_KEYBOARD),
+        ):
+            labels = [b["text"] for row in keyboard["keyboard"] for b in row]
+
+            counts = Counter(labels)
+            for label, n in counts.items():
+                self.assertEqual(
+                    n, 1,
+                    f"{name} keyboard repeats {label!r} {n} times",
+                )
+
+            by_slug: dict[str, list[str]] = {}
+            for label in labels:
+                if label in BUTTON_SLUGS:
+                    by_slug.setdefault(BUTTON_SLUGS[label], []).append(label)
+            for slug, alts in by_slug.items():
+                self.assertEqual(
+                    len(alts), 1,
+                    f"{name} keyboard routes {alts} all to {slug!r}; "
+                    f"{alts[0]!r} is an alias that should be dropped",
+                )
 
     def test_every_keyboard_button_resolves_to_a_slug(self):
         """Guards against a button label that the router cannot match.
@@ -988,7 +1090,14 @@ class TestTelegramBot(unittest.TestCase):
             self.assertNotIn("+4.18%", reply)
             self.assertIn("no configuration is claimed to be profitable", reply)
 
-    def test_conversational_faq_accuracy_reports_graded_rows(self):
+    def test_conversational_faq_refuses_win_rate_on_one_sample(self):
+        """Asking "win rate" must not produce "100.0%" from a single settled bet.
+
+        This is the most exposed version of the problem: a prospect types
+        "win rate" into a conversational bot and gets a perfect record back,
+        with no sample size attached. The reply must state the real count, the
+        bar it has to clear, and decline to publish a rate.
+        """
         storage = InMemoryStorage()
         bot = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=storage)
         pick = self.sample_pick
@@ -997,9 +1106,29 @@ class TestTelegramBot(unittest.TestCase):
             f"{pick.match_id}::{pick.market}::{pick.outcome_name}", "WIN", self.now)
         upd = TelegramUpdate(119, 219, "chat_conv", "user_free", "trader_joe", text="win rate")
         reply = bot.process_one_update(upd)
-        self.assertIn("LISA AUDITED PERFORMANCE AUDIT", reply)
-        self.assertIn("100.0%", reply)
-        self.assertIn("1/1", reply)
+        self.assertIn("AUDITED PERFORMANCE & LEDGER", reply)
+        self.assertIn("<code>1</code>", reply)
+        self.assertIn("<code>20</code>", reply)
+        self.assertNotIn("100.0%", reply)
+        self.assertNotIn("1/1", reply)
+
+    def test_conversational_faq_answers_win_rate_once_meaningful(self):
+        """Past the threshold the conversational answer is the real rate."""
+        storage = InMemoryStorage()
+        bot = TelegramBot(token="", channel_chat_id="@t", mock=True, storage=storage)
+        n = MIN_SETTLED_FOR_STATS + 4
+        for i in range(n):
+            p = replace(self.sample_pick, match_id=f"m{i:03d}")
+            storage.insert_pick(p)
+            storage.settle_pick(
+                f"{p.match_id}::{p.market}::{p.outcome_name}",
+                "WIN" if i < 18 else "LOSS",
+                self.now,
+            )
+        upd = TelegramUpdate(119, 219, "chat_conv", "user_free", "trader_joe", text="win rate")
+        reply = bot.process_one_update(upd)
+        self.assertNotIn("Insufficient settled sample", reply)
+        self.assertIn("75.0%", reply)
 
     def test_conversational_tier_inquiry(self):
         upd_free = TelegramUpdate(110, 210, "chat_conv", "user_100", "free_user", text="my tier")
