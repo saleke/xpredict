@@ -41,13 +41,49 @@ class TestKeyCollection(unittest.TestCase):
                     os.environ.pop(k, None)
             os.environ.update(saved)
 
-    def test_operators_real_env_yields_both_keys(self):
+    def test_a_second_configured_key_is_loaded_not_just_the_first(self):
+        """Every configured key reaches the pool, not only the primary.
+
+        This is the regression the real-env check below used to cover, but that
+        check asserted the *operator's* .env happens to hold two keys. The key
+        count is the operator's business -- this repo's .env holds one -- so the
+        assertion could only ever fail for reasons unrelated to the loader it was
+        written to protect. Here both keys come from the test.
+        """
+        import os
+        saved = {k: v for k, v in os.environ.items() if "API_KEY" in k}
+        try:
+            for k in list(saved):
+                os.environ.pop(k, None)
+            os.environ["THE_ODDS_API_KEY"] = "primary-key"
+            os.environ["THE_ODDS_API_KEY_2"] = "second-key"
+            settings = cfg.load_settings()
+            self.assertEqual(settings.odds_api_keys, ("primary-key", "second-key"))
+            # The single-key accessor must stay the head of the pool: the rest
+            # of the engine still reads settings.odds_api_key.
+            self.assertEqual(settings.odds_api_key, "primary-key")
+        finally:
+            for k in list(os.environ):
+                if "API_KEY" in k:
+                    os.environ.pop(k, None)
+            os.environ.update(saved)
+
+    def test_operators_real_env_keys_are_all_usable(self):
+        """Whatever the operator has configured, every key is usable.
+
+        Deliberately agnostic about *how many* keys exist -- that depends on the
+        machine. What must hold for any of them: the legacy single-key accessor
+        is the head of the pool, and nothing is blank or listed twice (a
+        duplicate would silently halve the pool's effective budget).
+        """
         settings = cfg.load_settings()
-        self.assertGreaterEqual(
-            len(settings.odds_api_keys), 2,
-            "both .env keys must be loaded, not just the first",
-        )
+        if not settings.odds_api_keys:
+            self.skipTest("no Odds API key configured in this environment")
         self.assertEqual(settings.odds_api_key, settings.odds_api_keys[0])
+        self.assertEqual(len(set(settings.odds_api_keys)), len(settings.odds_api_keys),
+                         "a key listed twice would spend its share twice over")
+        for key in settings.odds_api_keys:
+            self.assertTrue(key.strip(), "a blank key must not enter the pool")
 
 
 class TestRotation(unittest.TestCase):

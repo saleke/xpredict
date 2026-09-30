@@ -239,24 +239,41 @@ that does not exist is what survives a chargeback conversation. Either implement
 
 ```
 29 slow-suite tests (backtest / walkforward / study / tuning) ....... all pass
-Rest of the suite ................................................. 7 failures, all pre-existing
+Rest of the suite ................................................................ all pass
 ```
 
-The 7 were verified pre-existing by stashing all changes and re-running against the original
-tree, where they fail identically:
+The last 2 failures were both tests asserting something the code had since stopped doing, not
+defects in the code. They were verified pre-existing by stashing all changes and re-running
+against the original tree, where they fail identically:
 
-| Test | Cause | Pre-existing |
+| Test | Real cause | Fix |
 |---|---|---|
-| `test_key_pool::test_operators_real_env_yields_both_keys` | Only one Odds API key in `.env`; an environment fact, not a defect | ✓ |
-| `test_security_regressions::test_payment_webhook_rejects_wrong_and_unsigned` | `LISA_WEBHOOK_SECRET` is empty, so the webhook returns 503 before it can reject a bad signature | ✓ |
-| `test_telegram_bot` × 5 | Bot copy and keyboard labels drifted from the tests | ✓ |
+| `test_key_pool::test_operators_real_env_yields_both_keys` | Asserted the *operator's* `.env` holds two Odds API keys. This repo's holds one. The key count is the operator's business; the assertion could only ever fail for reasons unrelated to the loader it was written to protect. | Replaced with a hermetic test that two keys set by the test both reach the pool, plus an environment-agnostic check that whatever keys exist are usable (primary accessor is the pool head, none blank, none duplicated). |
+| `test_security_regressions::test_payment_webhook_rejects_wrong_and_unsigned` | The test set `LISA_WEBHOOK_SECRET="correct-horse"` — **13 characters**, under the 32-character floor in `server._webhook_secret()`. The endpoint correctly answered 503 "disabled" instead of 401. | Uses a 32+ character secret. |
 
-The webhook one is worth noting: it fails *because* the payment webhook is disabled. Fixing it
-means setting `LISA_WEBHOOK_SECRET` and wiring a real provider — which is the difference between
-a business and a demo, and is the next thing to do.
+**Correction to the earlier note in this document.** It previously blamed the webhook failure on
+`LISA_WEBHOOK_SECRET` being empty in `.env`, and concluded "it fails *because* the payment webhook
+is disabled". That was wrong. `monkeypatch.setenv` replaces the value outright, so the test fails
+identically on a fully provisioned machine; the empty `.env` was a coincidence. The real lesson is
+the reverse of the one recorded: the *test* was under-specified, and the production check that
+rejected it is the hardening working as intended.
+
+That check is now pinned rather than left implicit. `test_payment_webhook_disabled_by_a_weak_secret`
+sends a 13-character secret, the historical hardcoded default `lisa_internal_secret_2026`, and a
+31-character string — each as both the configured secret *and* the presented credential — and
+requires 503 in every case. It fails (200) if the length floor is lowered or the placeholder list
+is emptied, which is the shape of the original exploit.
+
+**On the empty `LISA_WEBHOOK_SECRET` itself: it is still correct to leave it unset.** Setting it
+does not create a payment path, it creates a *shared static secret* that grants any tier to any
+email address to whoever presents it. The endpoint's current posture — disabled, with the operator
+reconciliation desk in `payments.py` as the only tier-granting path — is the honest one. A real
+provider with signature verification is the change that turns this into revenue; a populated
+`LISA_WEBHOOK_SECRET` on its own would just re-open the hole the hardening closed.
 
 **No test was weakened to make a change pass.** Where behaviour genuinely changed (the gate
 default, the ledger's `clv` initial value, the removed trap-page fixture rows), the tests were
 updated to assert the *new* contract, with the reason recorded in the docstring — and the gate
 change additionally gained new tests that assert the edge requirement holds and that the result
-is not presented as profitable.
+is not presented as profitable. Each fix above was mutation-checked: breaking the invariant the
+new test protects makes it fail.
