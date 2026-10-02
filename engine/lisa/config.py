@@ -35,6 +35,19 @@ def _tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma-separated list, tolerating an unset or blank variable.
+
+    An unset ``LISA_BOARD_LEAGUES`` is the supported "auto" mode, not an error,
+    so it must not be confused with a variable that was set to an empty string by
+    a deployment script.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 DEFAULT_API_BASE_URL = "https://api.the-odds-api.com"
 
 SCOPE_LEAGUES: tuple[str, ...] = (
@@ -85,7 +98,66 @@ def validate_sports(sports: tuple[str, ...]) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Settings:
-    # -- Stage 1: data source ------------------------------------------------
+    # -- Free data stack -----------------------------------------------------
+    # No paid odds API. Discovery and results come from free tiers; prices are
+    # optional and only ever used to *compare against* the model, never to
+    # manufacture a probability.
+    #
+    #   OpenLigaDB          no key, no published limit -- German football
+    #   football-data.org   free token, 12 tier-one comps, 10 req/min
+    #   TheSportsDB         public key "3", clipped to a handful of rows
+    #   SharpAPI            free key, DraftKings + FanDuel, 12 req/min, 60s delay
+    football_data_token: str = ""
+    sportsdb_key: str = "3"
+    #: The only price source. Without it the model still ranks fixtures, but
+    #: every pick is unpriced and the earning ladder is structurally empty.
+    sharpapi_key: str = ""
+    enable_openligadb: bool = True
+    enable_sportsdb: bool = True
+    enable_sharpapi: bool = True
+    provider_timeout_sec: float = 15.0
+    #: How far ahead of a fixture's kickoff a book event may start and still be
+    #: the same match. See SharpApiOddsProvider.match.
+    sharpapi_max_kickoff_gap_h: float = 6.0
+    #: Page cap per cycle. The free tier allows twelve requests a minute, so
+    #: this bounds a cycle to at most a quarter of the budget.
+    sharpapi_max_pages: int = 6
+    #: Canonical league keys, comma-separated in the env. Empty means "use
+    #: whatever works with no credentials" (German football via OpenLigaDB).
+    board_leagues: tuple[str, ...] = ()
+    #: The product window. 24h is the priority; 48h is the outer bound.
+    board_window_hours: float = 24.0
+    #: Matches to deliver per cycle. A shortfall is reported, never hidden.
+    board_volume_target: int = 12
+
+    # -- Independent model ----------------------------------------------------
+    model_base_mu: float = 1.35       # league-average goals per team
+    model_home_adv: float = 0.24      # log-scale home advantage
+    model_shrinkage: float = 8.0      # pseudo-games of league-average prior
+    model_xi: float = 0.55            # time decay per year
+
+    # -- Board selection ------------------------------------------------------
+    board_min_ev: float = 0.03
+    board_min_model_prob: float = 0.12
+    board_min_fair_odds: float = 1.05
+    board_min_accumulator_prob: float = 0.02
+    board_kelly_fraction: float = 0.25
+    board_max_stake: float = 0.02
+    board_accumulator_sizes: tuple[int, ...] = (2, 3, 4, 5)
+    board_max_total_line: float = 5.5
+    # A full free-stack cycle costs a few seconds of network time, so the API
+    # caches the board rather than re-running the feed on every dashboard poll.
+    board_cache_ttl_sec: float = 300.0
+
+    # -- Legacy: The Odds API -------------------------------------------------
+    # Retained only so the old refinery path still imports and the existing test
+    # suite keeps passing. No new code reads these; see providers/ and feed.py.
+    #
+    # `odds_api_enabled` is the kill switch. The payload is OFF by default and
+    # must be opted into with LISA_ENABLE_ODDS_API=1, so a stale key sitting in
+    # .env can never silently spend credits. See client.OddsApiClient._get,
+    # which refuses to build a request at all while this is False.
+    odds_api_enabled: bool = False
     odds_api_key: str = ""
     odds_api_keys: tuple[str, ...] = ()
     api_base_url: str = DEFAULT_API_BASE_URL
@@ -207,7 +279,16 @@ _DOTENV_LOADED = False
 
 
 def _load_dotenv(filepath: str = ".env", force: bool = False) -> None:
-    """Zero-dependency .env loader that populates os.environ if key not already set."""
+    """Zero-dependency .env loader that populates os.environ if key not already set.
+
+    Standard one-shot semantics: the file is read at most once per process, so
+    ``.env`` never fights the live environment. The corollary is a test hazard
+    -- the first ``load_settings()`` in a session decides the environment, and
+    a test that ``setenv``s a variable *before* that first call causes the file
+    to skip it, after which the monkeypatch teardown deletes it and it stays
+    invisible for the rest of the session. Tests that mutate credentials must
+    therefore force the load first (see ``tests/test_odds_api_disabled.py``).
+    """
     global _DOTENV_LOADED
     if _DOTENV_LOADED and not force:
         return
@@ -266,6 +347,35 @@ def load_settings() -> Settings:
     sports = validate_sports(_tuple("LISA_SPORTS", Settings.sports))
     api_keys = _collect_api_keys()
     return Settings(
+        # -- free data stack
+        football_data_token=os.getenv("FOOTBALL_DATA_TOKEN", "").strip(),
+        sportsdb_key=os.getenv("LISA_SPORTSDB_KEY", "3").strip() or "3",
+        sharpapi_key=os.getenv("SHARPAPI_KEY", "").strip(),
+        enable_openligadb=_bool("LISA_ENABLE_OPENLIGADB", True),
+        enable_sportsdb=_bool("LISA_ENABLE_SPORTSDB", True),
+        enable_sharpapi=_bool("LISA_ENABLE_SHARPAPI", True),
+        provider_timeout_sec=_float("LISA_PROVIDER_TIMEOUT_SEC", 15.0),
+        sharpapi_max_kickoff_gap_h=_float("LISA_SHARPAPI_MAX_KICKOFF_GAP_H", 6.0),
+        sharpapi_max_pages=_int("LISA_SHARPAPI_MAX_PAGES", 6),
+        board_leagues=_csv("LISA_BOARD_LEAGUES", ()),
+        board_window_hours=_float("LISA_BOARD_WINDOW_HOURS", 24.0),
+        board_volume_target=_int("LISA_BOARD_VOLUME_TARGET", 12),
+        # -- independent model
+        model_base_mu=_float("LISA_MODEL_BASE_MU", 1.35),
+        model_home_adv=_float("LISA_MODEL_HOME_ADV", 0.24),
+        model_shrinkage=_float("LISA_MODEL_SHRINKAGE", 8.0),
+        model_xi=_float("LISA_MODEL_XI", 0.55),
+        # -- board selection
+        board_min_ev=_float("LISA_BOARD_MIN_EV", 0.03),
+        board_min_model_prob=_float("LISA_BOARD_MIN_MODEL_PROB", 0.12),
+        board_min_fair_odds=_float("LISA_BOARD_MIN_FAIR_ODDS", 1.05),
+        board_min_accumulator_prob=_float("LISA_BOARD_MIN_ACCUM_PROB", 0.02),
+        board_kelly_fraction=_float("LISA_BOARD_KELLY_FRACTION", 0.25),
+        board_max_stake=_float("LISA_BOARD_MAX_STAKE", 0.02),
+        board_max_total_line=_float("LISA_BOARD_MAX_TOTAL_LINE", 5.5),
+        board_cache_ttl_sec=_float("LISA_BOARD_CACHE_TTL_SEC", 300.0),
+        # -- legacy
+        odds_api_enabled=_bool("LISA_ENABLE_ODDS_API", False),
         odds_api_key=api_keys[0] if api_keys else "",
         odds_api_keys=api_keys,
         api_base_url=os.getenv("THE_ODDS_API_BASE_URL")

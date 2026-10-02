@@ -41,13 +41,27 @@ class TestKeyCollection(unittest.TestCase):
                     os.environ.pop(k, None)
             os.environ.update(saved)
 
-    def test_operators_real_env_yields_both_keys(self):
-        settings = cfg.load_settings()
-        self.assertGreaterEqual(
-            len(settings.odds_api_keys), 2,
-            "both .env keys must be loaded, not just the first",
-        )
-        self.assertEqual(settings.odds_api_key, settings.odds_api_keys[0])
+    def test_the_primary_key_is_the_first_of_the_pool(self):
+        """The invariant matters; how many keys the operator has does not.
+
+        This used to assert against the developer's own ``.env`` -- it read
+        whatever credentials happened to be lying around and failed or passed
+        depending on who ran it. Setting the environment explicitly tests the
+        same property and makes the result identical everywhere.
+        """
+        import os
+        saved = {k: v for k, v in os.environ.items() if "ODD" in k}
+        try:
+            for k in list(saved):
+                os.environ.pop(k, None)
+            os.environ["THE_ODDS_API_KEYS"] = "first,second,third"
+            settings = cfg.load_settings()
+            self.assertEqual(settings.odds_api_keys, ("first", "second", "third"))
+            self.assertEqual(settings.odds_api_key, "first")
+        finally:
+            for k in list(saved):
+                os.environ.pop(k, None)
+            os.environ.update(saved)
 
 
 class TestRotation(unittest.TestCase):

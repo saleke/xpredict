@@ -55,6 +55,10 @@
           <span>ANALYTICS</span>
           <span class="nav-counter" id="forecast-count-badge" style="display:none;"></span>
         </button>
+        <button class="nav-rail-item" id="tab-btn-model-board" data-view="view-model-board" onclick="window.switchTab('model-board')">
+          <span>MODEL BOARD</span>
+          <span class="nav-counter" id="mb-count-badge" style="display:none;"></span>
+        </button>
         <button class="nav-rail-item" id="tab-btn-ledger" data-view="view-ledger" onclick="window.switchTab('ledger')">
           <span>LEADERBOARD</span>
         </button>
@@ -1245,6 +1249,35 @@
           <p>Loading daily match forecasts...</p>
         </div>
       </div>
+    </section>
+
+    <!-- VIEW: MODEL BOARD
+         The free-stack opportunity board: fixtures from OpenLigaDB and
+         football-data.org, rated by the independent Dixon-Coles model, priced
+         only where a real market quote exists. This is the only surface fed by
+         engine/lisa/board.py; without it the winning/earning ladders, the
+         micro-bets and the accumulators were computed and discarded. -->
+    <section class="view-panel" id="view-model-board">
+      <div class="view-head">
+        <div class="view-head-main">
+          <div class="view-head-kicker">INDEPENDENT MODEL - FREE DATA STACK</div>
+          <h2 class="view-head-title">Model Opportunity Board</h2>
+          <p class="view-head-sub">
+            Two ladders that answer different questions. <strong>Winning</strong> is
+            ranked by model probability. <strong>Earning</strong> is ranked by
+            expected value and is shown empty rather than invented until a real
+            market price exists to compare against.
+          </p>
+        </div>
+        <div class="view-head-meta">
+          <button type="button" class="btn-outline" id="mb-refresh" onclick="window.refreshModelBoard(true)">Rebuild board</button>
+        </div>
+      </div>
+
+      <div id="mb-status"></div>
+      <div id="mb-coverage"></div>
+      <div id="mb-ladders"></div>
+      <div id="mb-accumulators"></div>
     </section>
 
     <!-- VIEW 2: Predictions Slate (Today's Picks) -->

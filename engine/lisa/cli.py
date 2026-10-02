@@ -1,11 +1,17 @@
 """CLI entry points.
 
+  python -m lisa feed           # free-stack cycle: fixtures -> model -> board
+  python -m lisa board          # print the opportunity board as JSON
   python -m lisa demo          # full cycle + settlement on bundled fixtures
-  python -m lisa run-cycle     # one ingestion pass (needs THE_ODDS_API_KEY)
+  python -m lisa run-cycle     # one ingestion pass (legacy; needs THE_ODDS_API_KEY)
   python -m lisa settle        # grade pending ledger rows (needs key or --fixtures)
   python -m lisa run           # scheduler loop (cron-friendly: --once)
   python -m lisa report        # weekly live-validation summary (needs --metrics trail)
   python -m lisa calibrate     # calibration metrics (Brier, ECE) on settled picks
+
+``feed`` and ``board`` are the live path. They use only the free, unmetered
+stack in ``lisa/providers`` and the independent Dixon-Coles model, and they
+never contact the retired The Odds API.
 """
 from __future__ import annotations
 
@@ -17,7 +23,7 @@ from pathlib import Path
 
 from . import __version__
 from . import config as cfg
-from .client import FixtureClient, OddsApiClient
+from .client import DISABLED_HINT, FixtureClient, OddsApiClient
 from .fixtures import FIXTURE_SPORTS, ODDS_PAYLOADS, SCORES_PAYLOADS
 from .notify import LogNotifier
 from .odds import utcnow
@@ -48,12 +54,140 @@ def _make_storage(settings: cfg.Settings):
     return InMemoryStorage()
 
 
+def _cmd_feed(args: argparse.Namespace) -> int:
+    """Run the free-stack cycle and print the opportunity board.
+
+    This is the live ingestion path. It touches only free, unmetered sources
+    (OpenLigaDB, football-data.org, TheSportsDB) and never contacts the
+    retired The Odds API, so it cannot spend a credit.
+    """
+    from .feed import run_feed
+
+    settings = cfg.load_settings()
+    window = float(args.window_hours or settings.board_window_hours)
+    report = run_feed(settings, window_hours=window)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2, default=str))
+        return 0
+
+    print("=" * 68)
+    print("LISA FREE-STACK FEED")
+    print("=" * 68)
+    print(f"  {report.summary()}")
+    print()
+
+    for provider in report.providers:
+        if not provider.configured:
+            state = "skipped"
+        elif provider.degraded:
+            state = "DEGRADED"
+        else:
+            state = "ok"
+        detail = provider.error or (
+            f"{provider.fixtures} fixtures across {len(provider.leagues)} league(s)"
+        )
+        print(f"  [{state:8s}] {provider.name:20s} {detail}")
+    for err in report.errors:
+        print(f"  [ERROR   ] {err}")
+    print()
+
+    if not report.board:
+        print("  No board produced. See the errors above.")
+        return 1
+
+    board = report.board
+    model = report.model
+    print("-" * 68)
+    print("MODEL")
+    print("-" * 68)
+    print(f"  sufficient={model.get('sufficient')} "
+          f"matches={model.get('matches_used', 0)} "
+          f"teams={model.get('teams', 0)} "
+          f"converged={model.get('converged')} "
+          f"prior_dominance={model.get('prior_dominance')} "
+          f"rho={model.get('rho')}")
+    if model.get("converged") is False:
+        print("  [WARN] the fit did not converge -- ratings are provisional")
+    if model.get("rho") is not None and abs(float(model["rho"])) >= 0.29:
+        # RHO_BOUNDS is +/-0.30. Sitting on the bound means the likelihood
+        # wants to push further and the constraint is doing the work, so the
+        # low-score correction is not identified by the data.
+        print(f"  [WARN] rho={model['rho']} is pinned at the parameter bound; "
+              "the low-score correlation is not identified by this data")
+    print()
+
+    def _show(title: str, rows, priced: bool) -> None:
+        print("-" * 68)
+        print(f"{title} ({len(rows)})")
+        print("-" * 68)
+        if not rows:
+            note = ("  none -- no market price is available, so no expected "
+                    "value can be computed" if priced else "  none")
+            print(note)
+            print()
+            return
+        for row in rows:
+            # Accumulator.describe() names each leg by team and kickoff so two
+            # different slips can never render as the same string.
+            print(f"  {row.describe() if hasattr(row, 'describe') else row.to_dict()}")
+        print()
+
+    _show("WINNING -- best probability (model only, no price needed)",
+          board.winning, priced=False)
+    _show("EARNING -- best expected value (requires a real market price)",
+          board.earning, priced=True)
+    _show("MICRO-BETS", board.micro_bets, priced=False)
+    _show("ACCUMULATORS", board.accumulators, priced=True)
+
+    if board.coverage is not None:
+        cov = board.coverage
+        print("-" * 68)
+        print("COVERAGE")
+        print("-" * 68)
+        print(f"  fixtures seen      : {cov.fixtures_seen}")
+        print(f"  modelled (rated)   : {cov.fixtures_modelled}")
+        print(f"  priced (market)    : {cov.fixtures_priced}")
+        print(f"  volume target      : {cov.volume_target} (met={cov.meets_volume_target})")
+        for note in cov.notes:
+            print(f"  note: {note}")
+        print()
+
+    for note in board.notes:
+        print(f"  note: {note}")
+    return 0
+
+
+def _cmd_board(args: argparse.Namespace) -> int:
+    """Print the opportunity board as JSON (for the dashboard or a consumer)."""
+    from .feed import run_feed
+
+    settings = cfg.load_settings()
+    report = run_feed(settings, window_hours=float(args.window_hours or 0) or None)
+    payload = report.board.to_dict() if report.board else None
+    # `notes` carries the cycle's decisions about itself -- notably a widened
+    # look-ahead window. Without it a consumer sees an empty 24h board and
+    # cannot tell that the cycle already looked 48h and still found nothing.
+    print(json.dumps({"health": report.health(), "board": payload,
+                      "window_hours": report.window_hours,
+                      "notes": report.notes,
+                      "prices": report.prices,
+                      "price_match": report.price_match,
+                      "errors": report.errors}, indent=2, default=str))
+    return 0 if payload else 1
+
+
 def _make_client(settings: cfg.Settings, fixtures: bool):
     if fixtures:
         return FixtureClient(ODDS_PAYLOADS, SCORES_PAYLOADS)
     if not settings.odds_api_key:
         raise SystemExit("THE_ODDS_API_KEY is not set (or pass --fixtures)")
-    return OddsApiClient(settings.odds_api_key, base_url=settings.api_base_url)
+    if not settings.odds_api_enabled:
+        # Fail loudly here rather than deep inside the pipeline: this is the
+        # one place the user is actually looking when they type the command.
+        raise SystemExit(DISABLED_HINT)
+    return OddsApiClient(settings.odds_api_key, base_url=settings.api_base_url,
+                         enabled=True)
 
 
 def _report_dict(report: CycleReport) -> dict:
@@ -532,6 +666,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         def _bot_loop():
             print(f"[telegram-bot] Background polling daemon started for @{settings.telegram_bot_username or 'bot'}")
             while True:
+                # A rejected token is permanent. Sleeping on a 250ms tick with
+                # nothing to do burns a core pointlessly for the life of the
+                # process; the daemon was asked to stop, so it stops.
+                if bot_inst.auth_failed:
+                    return
                 had_updates = False
                 try:
                     updates = bot_inst.poll_updates()
@@ -652,7 +791,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # 4. Odds API Connectivity & Quota
     print("\n[4] Sportsbook Odds Data Source:")
-    if settings.odds_api_key:
+    if settings.odds_api_key and not settings.odds_api_enabled:
+        # A key may be present in .env from before the free-stack migration.
+        # Do not probe it: the probe is a live authenticated request, and
+        # "just checking" is exactly how a credit budget quietly disappears.
+        print("  [PASS] The Odds API disabled (LISA_ENABLE_ODDS_API unset) --"
+              " key present but will not be used")
+        print("         Live data comes from the free stack (lisa/feed.py).")
+        passed += 1
+    elif settings.odds_api_key:
         try:
             probe_url = f"{settings.api_base_url}/v4/sports?apiKey={settings.odds_api_key}"
             req = urllib.request.Request(probe_url, headers={"User-Agent": "LISA-Production/1.0"})
@@ -756,6 +903,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
         def _bot_loop():
             print(f"[telegram-bot] Production Gatekeeper daemon running for @{settings.telegram_bot_username or 'bot'}")
             while True:
+                # See the background loop above: a rejected token never recovers.
+                if bot_inst.auth_failed:
+                    return
                 had_updates = False
                 try:
                     updates = bot_inst.poll_updates()
@@ -777,6 +927,15 @@ def _cmd_start(args: argparse.Namespace) -> int:
     # quota floor and per-key daily budget. The Ledger (not the process) stays
     # the source of truth, so a restart resumes cleanly.
     api_keys = tuple(getattr(settings, "odds_api_keys", ()) or ())
+    if api_keys and not getattr(settings, "odds_api_enabled", False):
+        # Old behaviour was to start an adaptive poller whenever a key existed
+        # in the environment. That is the single most expensive thing this
+        # process could do: a background thread spending credits indefinitely
+        # with nobody watching. Refuse to start it.
+        print("[live-ingest] Odds API key(s) present but DISABLED "
+              "(LISA_ENABLE_ODDS_API unset) -- not starting the poller.")
+        print("[live-ingest] Use the free stack instead: `python -m lisa feed`.")
+        api_keys = ()
     if not getattr(args, "no_ingest", False) and api_keys:
         from .key_pool import RotatingOddsClient
         from .scheduler import Scheduler
@@ -786,6 +945,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
             budget_daily=settings.credit_budget_daily,
             credit_warn=settings.credit_warn,
             credit_stop=settings.credit_stop,
+            enabled=True,
         )
         # `runtime` is passed as a provider, not a snapshot: the scheduler asks it
         # for the current settings each time it needs one, which is what makes a
@@ -853,6 +1013,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="lisa", description=f"LISA data-refinery engine v{__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    feed_p = sub.add_parser(
+        "feed", help="free-stack cycle: fixtures -> Dixon-Coles -> opportunity board")
+    feed_p.add_argument("--window-hours", type=float, default=0.0,
+                        help="product window; 0 uses LISA_BOARD_WINDOW_HOURS")
+    feed_p.add_argument("--json", action="store_true",
+                        help="emit the full report as JSON")
+
+    board_p = sub.add_parser("board", help="print the opportunity board as JSON")
+    board_p.add_argument("--window-hours", type=float, default=0.0,
+                         help="product window; 0 uses LISA_BOARD_WINDOW_HOURS")
 
     sub.add_parser("demo", help="run a cycle + settlement on bundled fixtures")
 
@@ -1009,6 +1180,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor(args)
     if args.cmd == "start":
         return _cmd_start(args)
+    if args.cmd == "feed":
+        return _cmd_feed(args)
+
+    if args.cmd == "board":
+        return _cmd_board(args)
+
     if args.cmd == "demo":
         return _cmd_demo(args)
     if args.cmd == "run-cycle":

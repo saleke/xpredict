@@ -22,8 +22,24 @@ services:
     # Matches the host user so ./data stays writable without root. Override in
     # .env (LISA_UID / LISA_GID) if the deployment user differs.
     user: "${LISA_UID:-1000}:${LISA_GID:-1000}"
-    ports:
-      - "8080:8080"
+    # Host networking is a requirement on this host, not a preference.
+    #
+    # CORRECTED 2026-09-29. The previous comment here claimed the opposite of
+    # reality: that IPv4 egress was dead network-wide and only IPv6 worked.
+    # Measured on this host the truth is the reverse --
+    #   IPv4: openligadb.de, api.football-data.org and www.thesportsdb.com all
+    #         complete a TCP connect on 443.
+    #   IPv6: every one of those hosts returns "no address associated with
+    #         hostname", and a direct connect returns ENETUNREACH.
+    # So host networking is still the right call -- it hands the container the
+    # host's stack, which is the one that demonstrably has egress, and it makes
+    # container and host resolve identically. The justification is now the
+    # measured one; do not "fix" this line by trusting the old wording.
+    #
+    # Consequence: `ports:` is meaningless under host networking (the process
+    # binds 0.0.0.0:8080 directly), so it is removed rather than left to be
+    # silently ignored.
+    network_mode: host
     volumes:
       - ./data:/app/data
     env_file:
@@ -31,6 +47,23 @@ services:
     environment:
       - LISA_STORAGE=sqlite
       - LISA_DATABASE_URL=/app/data/lisa.db
+      # The Odds API is retired. Stated explicitly here so the deployment
+      # config is self-documenting: even if a key is still present in .env, the
+      # transport refuses to build a request and no credit can be spent.
+      # Live data comes from the free stack (engine/lisa/feed.py).
+      - LISA_ENABLE_ODDS_API=0
+      # SharpAPI is the price source. On by default: without it the winning
+      # ladder still works, but every pick is unpriced and the earning ladder,
+      # accumulators, slippage and CLV are empty. The key itself is read from
+      # .env (SHARPAPI_KEY) and is deliberately NOT repeated here -- it belongs
+      # in one place, and repeating a secret into a second file is how a
+      # rotation misses one of them.
+      - LISA_ENABLE_SHARPAPI=${LISA_ENABLE_SHARPAPI:-1}
+      # Bounded so one cycle cannot spend the free tier's whole minute: 6 pages
+      # at 12 req/min is 25% of the budget, and the fetch also stops early at
+      # the first page past the window.
+      - LISA_SHARPAPI_MAX_PAGES=${LISA_SHARPAPI_MAX_PAGES:-6}
+      - LISA_SHARPAPI_MAX_KICKOFF_GAP_H=${LISA_SHARPAPI_MAX_KICKOFF_GAP_H:-6}
     # Stopping should be quick and must not leave a half-written database.
     stop_grace_period: 30s
     # Keep the ledger from growing without bound on a long-running deployment.

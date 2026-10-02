@@ -72,7 +72,7 @@ class LiveSettler:
 
     def _fetch_score(self, match: Match) -> Optional[Score]:
         """Fetch the latest score for a match from the data source."""
-        # Try the match router first (Flashscore)
+        # Try the match router first (the free calendar sources)
         try:
             from .match_router import match_router
             score = match_router.get_scores(match.id, match.sport_key)

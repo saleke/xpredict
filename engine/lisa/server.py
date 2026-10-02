@@ -17,6 +17,7 @@ import logging
 import os
 import secrets
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -332,6 +333,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._handle_dashboard()
             return
 
+        if path == "/api/opportunity-board":
+            self._handle_opportunity_board(parsed)
+            return
+
         if path == "/api/auth/me":
             self._handle_auth_me()
             return
@@ -354,6 +359,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/backtest":
             self._handle_backtest()
+            return
+
+        if path == "/api/daily-board":
+            self._handle_daily_board(parsed)
             return
 
         if path == "/api/ledger":
@@ -405,7 +414,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/daily-board":
-            self._handle_daily_board()
+            self._handle_daily_board(parsed)
             return
 
         if path == "/api/curated-picks":
@@ -704,26 +713,119 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self._send_json({"success": False, "error": str(exc)}, status=500)
 
-    def _handle_daily_board(self):
-        """Return the daily board with matches grouped by date."""
+    def _handle_daily_board(self, parsed: Optional[urllib.parse.ParseResult] = None):
+        """Return the daily board with matches grouped by date.
+
+        Does not fabricate matches: an empty board is reported as empty, with
+        provenance of which sources were consulted.
+        """
         from .daily_board import daily_board_builder
-        from .match_router import match_router
 
         try:
-            # Get matches from all leagues
-            sport_keys = [
-                "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
-                "soccer_italy_serie_a", "soccer_france_ligue_one",
-                "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
-                "basketball_nba",
-            ]
+            # Get matches from all leagues the free stack actually covers
+            from .match_router import match_router
+            from .providers.calendar import LEAGUES
+
+            sport_keys = list(LEAGUES.keys())[:20]
             board = daily_board_builder.build_from_leagues(sport_keys, days_ahead=7)
             self._send_json({
                 "success": True,
                 "board": board.to_dict(),
+                "provenance": {
+                    "covered_leagues": len(match_router.get_all_leagues()),
+                    "sources": {
+                        "openligadb": True,
+                        "football_data": True,
+                        "sportsdb": True,
+                    },
+                },
             })
         except Exception as exc:
             self._send_json({"success": False, "error": str(exc)}, status=500)
+
+    def _handle_opportunity_board(self, parsed: urllib.parse.ParseResult):
+        """Return the free-stack opportunity board (winning/earning/micro/accas).
+
+        This is the live path: OpenLigaDB + football-data.org fixtures, rated by
+        the independent Dixon-Coles model, priced only where a real market
+        price exists. It never contacts the retired The Odds API.
+
+        A cycle costs a few seconds of network time, so the result is cached
+        briefly. Without that, every dashboard poll would re-run the whole feed
+        and hammer three public endpoints for no benefit. ``?refresh=1``
+        forces one rebuild, which is what an operator wants after changing
+        settings -- not something every visitor should be able to trigger.
+        """
+        from .feed import run_feed
+
+        qs = urllib.parse.parse_qs(parsed.query)
+        force = qs.get("refresh", ["0"])[0].strip().lower() in {"1", "true", "yes"}
+        ttl = float(getattr(self.settings or cfg.load_settings(),
+                            "board_cache_ttl_sec", 300) or 300)
+
+        # The cache lives on the *server*, not on the handler. A
+        # BaseHTTPRequestHandler instance is created per request, so an
+        # instance attribute is gone before the next poll arrives and the cache
+        # silently never hits. (The forecast cache below had this same bug.)
+        cached = getattr(self.server, "_board_cache", None)
+        if not force and cached and time.time() - cached[0] <= ttl:
+            self._send_json(dict(cached[1], cached=True))
+            return
+
+        # One cycle at a time: the server is threaded, and without this a burst
+        # of dashboard polls would each start their own multi-second fetch
+        # against three public endpoints.
+        lock = getattr(self.server, "_board_lock", None)
+        if lock is None:
+            lock = self.server._board_lock = threading.Lock()
+
+        with lock:
+            # Re-check under the lock: another thread may have just built it.
+            cached = getattr(self.server, "_board_cache", None)
+            if not force and cached and time.time() - cached[0] <= ttl:
+                self._send_json(dict(cached[1], cached=True))
+                return
+
+            settings = self.settings or cfg.load_settings()
+            try:
+                report = run_feed(settings)
+            except Exception as exc:
+                # Never invent a board. If the cycle cannot run, say so, and
+                # fall back to the last good board only if we have one.
+                logger.warning("opportunity board cycle failed: %r", exc)
+                if cached:
+                    self._send_json(dict(cached[1], cached=True,
+                                         stale_reason=str(exc)))
+                else:
+                    self._send_json({
+                        "success": False,
+                        "error": f"board cycle failed: {exc}",
+                        "board": None,
+                    }, status=503)
+                return
+
+            payload = {
+                "success": report.board is not None,
+                "health": report.health(),
+                "generated_at": report.began.isoformat(),
+                "window_hours": report.window_hours,
+                "summary": report.summary(),
+                "model": dict(report.model),
+                "providers": [p.to_dict() for p in report.providers],
+                # What the price source delivered, and what it could not use.
+                # Without this, an empty earning ladder is ambiguous: it looks
+                # identical whether the books offered nothing or the adapter
+                # failed to read a full feed. The drop counters and the match
+                # tally are the only way to tell those apart from outside.
+                "prices": dict(report.prices),
+                "price_match": dict(report.price_match),
+                "notes": list(report.notes),
+                "errors": list(report.errors),
+                "board": report.board.to_dict() if report.board else None,
+            }
+            self.server._board_cache = (time.time(), payload)
+
+        self._send_json(payload)
 
     def _handle_curated_picks(self):
         """Return curated picks for each tier."""
@@ -1068,7 +1170,14 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
                 "channel_configured": bool(settings.telegram_chat_id),
             },
             "odds_feed": {
-                "configured": bool(settings.odds_api_key),
+                # "configured" alone used to imply "live", which is misleading
+                # now that a leftover key in .env cannot make a request. Report
+                # presence and enablement separately so the dashboard never
+                # suggests credits are being spent when nothing is polling.
+                "configured": bool(settings.odds_api_enabled
+                                   and settings.odds_api_key),
+                "key_present": bool(settings.odds_api_key),
+                "enabled": bool(getattr(settings, "odds_api_enabled", False)),
                 "base_url": settings.api_base_url,
                 "sports_count": len(settings.sports),
             }
@@ -1089,7 +1198,10 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         """
         from .bulletin import NO_LIVE_DATA, build_live_bulletin_from_payloads
 
-        cached = getattr(self, "_forecast_cache", None)
+        # Server-scoped, not handler-scoped: a handler instance is created per
+        # request, so an instance attribute would never survive to the next
+        # poll and this 120s cache would silently never hit.
+        cached = getattr(self.server, "_forecast_cache", None)
         if cached and time.time() - cached[0] <= 120:
             self._send_json(cached[1])
             return
@@ -1133,7 +1245,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json(dict(NO_LIVE_DATA))
             return
 
-        self._forecast_cache = (time.time(), board)
+        self.server._forecast_cache = (time.time(), board)
         self._send_json(board)
 
     def _handle_verify_status(self, parsed: urllib.parse.ParseResult):

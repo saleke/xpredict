@@ -164,12 +164,31 @@ def _pick_row_to_card(p: dict) -> dict:
     ev = p.get("best_ev")
     commence = p.get("commence_time")
 
-    if best_odds is not None and fair_odds is not None and best_odds > fair_odds:
+    # Freshness is a claim about the *price*, so it can only be made when a
+    # price exists. The previous version used a bare `else`, which conflated
+    # two very different situations:
+    #
+    #   1. the market price really did fall below fair value (decay), and
+    #   2. there is no executable price at all (best_odds is NULL).
+    #
+    # Case 2 is not decay -- it is missing data. Asserting "Decayed /
+    # Slippage" on a pick that was never priced invents a market observation
+    # that was never made, which is exactly what this project must not do. In
+    # this deployment 19 of 22 ledger rows have best_odds = NULL (a fair odds
+    # was computed, but no book produced a price), so nearly every card
+    # rendered as a confident-looking "Decayed / Slippage" claim about a
+    # market that was never observed. Missing inputs are now surfaced as
+    # UNPRICED and left visibly unpriced.
+    if best_odds is None or fair_odds is None:
+        freshness, badge, gauge = "UNPRICED", "cyan", "No Price Yet"
+    elif best_odds > fair_odds:
         freshness, badge, gauge = "FRESH", "emerald", "Optimal Entry"
-    elif best_odds is not None and fair_odds is not None and abs(best_odds - fair_odds) < 0.01:
+    elif abs(best_odds - fair_odds) < 0.01:
         freshness, badge, gauge = "FAIR", "amber", "Fair Value Entry"
     else:
-        freshness, badge, gauge = "SLIPPED", "rose", "Decayed / Slippage"
+        # best_odds < fair_odds: the price is genuinely below the model's fair
+        # value, so the edge is gone. This is the only real decay case.
+        freshness, badge, gauge = "DECAYED", "rose", "Decayed (Below Fair)"
 
     return {
         "dedupe_key": p.get("dedupe_key"),

@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -1034,6 +1035,13 @@ class TelegramBot:
         self.timeout = timeout
         self.mock = mock
         self.last_update_id: int = 0
+        #: Set once Telegram rejects the token outright (HTTP 401/403). That is
+        #: a permanent condition -- a revoked or malformed token will never
+        #: start working -- so the poll loops stop rather than re-asking four
+        #: times a second for the lifetime of the process. Cleared by
+        #: :meth:`_note_auth_failure` only once, which is what keeps the log to
+        #: a single actionable line instead of thousands of identical warnings.
+        self.auth_failed: str = ""
         self.outbox: list[dict[str, Any]] = []
         self.registry = verification_registry or registry
         self.fsm = BankrollFSMManager(db_path=getattr(self.registry, "db_path", "data/lisa.db"))
@@ -3425,9 +3433,29 @@ class TelegramBot:
             logger.debug("backtest_report.json unreadable", exc_info=True)
         return {}
 
+    def _note_auth_failure(self, detail: str) -> None:
+        """Record a permanent auth rejection, logging it exactly once.
+
+        A 401 is not a transient network fault. Retrying it turns one
+        misconfiguration into four log lines a second for the lifetime of the
+        process, which buries every real error underneath it and makes the log
+        look like an outage when nothing else is wrong.
+        """
+        if not self.auth_failed:
+            self.auth_failed = detail
+            logger.error(
+                "Telegram rejected the bot token (%s). Polling stopped: this is "
+                "permanent and retrying cannot fix it. Set a valid "
+                "LISA_TELEGRAM_TOKEN, or clear it to run without Telegram.",
+                detail,
+            )
+
     def poll_updates(self) -> list[TelegramUpdate]:
         """Fetch pending updates from Telegram Bot API supporting messages and callback queries."""
         if self.mock or not self.token:
+            return []
+        if self.auth_failed:
+            # Already reported once. Re-asking would only produce the same 401.
             return []
 
         url = f"https://api.telegram.org/bot{self.token}/getUpdates"
@@ -3479,6 +3507,15 @@ class TelegramBot:
                             text=text,
                         ))
                 return updates
+        except urllib.error.HTTPError as exc:
+            # 401/403 mean the token itself is bad, which no amount of retrying
+            # will change. Everything else -- 429, 5xx, timeouts -- is transient
+            # and worth retrying quietly at the loop's own cadence.
+            if exc.code in (401, 403):
+                self._note_auth_failure(f"HTTP {exc.code}")
+            else:
+                logger.warning("Failed to poll Telegram updates: %s", exc)
+            return []
         except Exception as exc:
             logger.warning("Failed to poll Telegram updates: %s", exc)
             return []

@@ -1,6 +1,8 @@
 """Configuration: env wiring, strict league scope, sane defaults."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from lisa import config as cfg
@@ -30,6 +32,27 @@ def test_api_base_url_defaults_to_api_host(monkeypatch):
     monkeypatch.delenv("THE_ODDS_API_BASE_URL", raising=False)
     monkeypatch.delenv("LISA_API_BASE_URL", raising=False)
     assert cfg.load_settings().api_base_url == "https://api.the-odds-api.com"
+
+
+def test_dotenv_loads_once_and_does_not_clobber_the_live_environment(monkeypatch, tmp_path):
+    """``.env`` fills gaps but never overwrites a real environment variable.
+
+    Also pins the one-shot latch: a test that ``setenv``s a credential *before*
+    the first ``load_settings()`` makes the file skip it, and the teardown then
+    deletes it for the rest of the session. Tests that mutate credentials must
+    force the load first.
+    """
+    env_file = tmp_path / ".env"
+    env_file.write_text("LISA_DOTENV_PROBE=from-file\n", encoding="utf-8")
+
+    monkeypatch.delenv("LISA_DOTENV_PROBE", raising=False)
+    cfg._load_dotenv(str(env_file), force=True)
+    assert os.environ["LISA_DOTENV_PROBE"] == "from-file"
+
+    # A real environment variable outranks the file.
+    monkeypatch.setenv("LISA_DOTENV_PROBE", "from-operator")
+    cfg._load_dotenv(str(env_file), force=True)
+    assert os.environ["LISA_DOTENV_PROBE"] == "from-operator"
 
 
 def test_regions_default_to_eu_us(monkeypatch):

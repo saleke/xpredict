@@ -28,7 +28,8 @@ class BoardEntry:
     league_tier: str  # "A", "B", or "C"
     has_odds: bool
     has_scores: bool
-    flashscore_id: Optional[int] = None
+    #: Which free calendar sources cover this league, cheapest-first.
+    sources: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for API response."""
@@ -42,7 +43,7 @@ class BoardEntry:
             "league_tier": self.league_tier,
             "has_odds": self.has_odds,
             "has_scores": self.has_scores,
-            "flashscore_id": self.flashscore_id,
+            "sources": list(self.sources),
         }
 
 
@@ -78,7 +79,7 @@ class DailyBoardBuilder:
             league_tier=tier.tier,
             has_odds=tier.has_odds,
             has_scores=tier.has_scores,
-            flashscore_id=tier.flashscore_id,
+            sources=tier.sources,
         )
 
     def build_board(self, matches: list[Match], *,

@@ -1,11 +1,20 @@
 """Transport layer for The Odds API, plus a fixture stand-in.
 
 Design:
+  * the provider is DISABLED by default and must be opted into explicitly
+    (``Settings.odds_api_enabled`` / ``LISA_ENABLE_ODDS_API=1``). While
+    disabled, ``OddsApiClient._get`` raises before a socket is opened, so no
+    credit can be spent no matter which command, thread or scheduler reaches
+    it. The key is never placed in a URL, never logged, never transmitted;
   * retry with exponential backoff on 5xx / transport errors and 429s;
   * 4xx (other than 408/429) fail fast — retrying a permission error is
     wasted effort and wasted credits;
   * every retryable failure eventually raises ``ApiError`` so the pipeline
     can degrade per-sport instead of dying.
+
+The live data path no longer needs this module: see ``lisa/providers/`` and
+``lisa/feed.py`` for the free-tier stack. This is retained so the legacy
+refinery keeps working for anyone who explicitly re-enables it.
 """
 from __future__ import annotations
 
@@ -21,6 +30,14 @@ BASE_URL = "https://api.the-odds-api.com"
 DEFAULT_MAX_RETRIES = 4
 DEFAULT_BACKOFF_BASE = 2.0
 
+DISABLED_HINT = (
+    "The Odds API is disabled (LISA_ENABLE_ODDS_API is not set), so no "
+    "credit was spent. Live data comes from the free stack instead: run "
+    "`python -m lisa feed` (or GET /api/opportunity-board). Re-enable the "
+    "retired provider with LISA_ENABLE_ODDS_API=1 only if you intend to "
+    "spend credits."
+)
+
 
 class ApiError(RuntimeError):
     pass
@@ -28,6 +45,10 @@ class ApiError(RuntimeError):
 
 class RateLimited(ApiError):
     pass
+
+
+class OddsApiDisabled(ApiError):
+    """Raised instead of spending a credit. Never retried, never retried hard."""
 
 
 def _sleep_backoff(attempt: int, base: float) -> None:
@@ -41,18 +62,25 @@ class OddsApiClient:
     def __init__(self, api_key: str = "", *, base_url: str = BASE_URL,
                  timeout: float = 15.0,
                  max_retries: int = DEFAULT_MAX_RETRIES,
-                 backoff_base: float = DEFAULT_BACKOFF_BASE):
+                 backoff_base: float = DEFAULT_BACKOFF_BASE,
+                 enabled: bool = True):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_base = backoff_base
+        self.enabled = enabled
         self.last_remaining: int | None = None
         self.last_used: int | None = None
 
     # -- transport -----------------------------------------------------------
 
     def _get(self, path: str, params: dict[str, str]) -> Any:
+        # Kill switch. Placed ahead of URL assembly so the API key is never
+        # formatted into a request, and ahead of the retry loop so a disabled
+        # client cannot burn a single credit or a single retry.
+        if not self.enabled:
+            raise OddsApiDisabled(DISABLED_HINT)
         url = f"{self.base_url}{path}?{urllib.parse.urlencode(params)}"
         last_err: Exception | None = None
         for attempt in range(self.max_retries + 1):

@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
-from .client import ApiError, OddsApiClient, RateLimited
+from .client import (
+    DISABLED_HINT,
+    ApiError,
+    OddsApiClient,
+    OddsApiDisabled,
+    RateLimited,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +275,7 @@ class RotatingOddsClient:
         max_retries: int = 4,
         backoff_base: float = 2.0,
         now_fn: Callable[[], float] = time.time,
+        enabled: bool = True,
     ) -> None:
         self.pool = OddsKeyPool(
             keys,
@@ -279,7 +286,10 @@ class RotatingOddsClient:
         )
         # The low-quota warning fires once per process, not once per request.
         self._warned = False
+        self.enabled = enabled
         # One transport per key so retries and quota headers stay per key.
+        # The kill switch is pushed down into every transport, so a disabled
+        # pool cannot reach the network through any of its keys.
         self._transports = [
             OddsApiClient(
                 key,
@@ -287,6 +297,7 @@ class RotatingOddsClient:
                 timeout=timeout,
                 max_retries=max_retries,
                 backoff_base=backoff_base,
+                enabled=enabled,
             )
             for key in [s.key for s in self.pool._states]
         ]
@@ -304,6 +315,11 @@ class RotatingOddsClient:
 
     def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
         """Run one request on a pooled key, accounting for it either way."""
+        # Refuse before pool.pick()/record_use() so a disabled pool does not
+        # write a phantom credit-spend into the ledger, which would make the
+        # budget look spent without a single request leaving the process.
+        if not self.enabled:
+            raise OddsApiDisabled(DISABLED_HINT)
         state = self.pool.pick()
         transport = self._transports[self._index_of(state)]
         self.pool.record_use(state)

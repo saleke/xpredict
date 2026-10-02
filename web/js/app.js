@@ -66,6 +66,15 @@ let state = {
   picksSearchQuery: '',
   picksOddsBand: 'all',
   ledgerSearchQuery: '',
+
+  // Model opportunity board (/api/opportunity-board). Loaded lazily on first
+  // visit to the MODEL BOARD tab, never in the dashboard boot path: a board
+  // cycle is a multi-second network fan-out and must not delay the rest of
+  // the page. `null` until loaded; `modelBoardState` carries the request
+  // lifecycle so a failed cycle is never confused with an empty one.
+  modelBoard: null,
+  modelBoardState: 'idle',   // idle | loading | ready | failed
+  modelBoardError: '',
 };
 
 export const SPORTSBOOKS = [
@@ -293,7 +302,18 @@ function renderAccumulatorBanner() {
   const kickoffLabel = firstLegCd.status === 'ended'
     ? 'Legs locked · awaiting kickoff'
     : `First leg ${firstLegCd.text}`;
-  const parlayEv = Math.max(0, ((combinedOdds * combinedProb) - 1.0) * 100);
+  // Shared uncertainty across legs is real, and the naive product overstates
+  // the joint probability. board.py applies the same haircut for the ranked
+  // board; apply it here too so the two surfaces cannot disagree.
+  const legDays = new Set(pricedLegs
+    .map(p => (p.commence_time ? String(p.commence_time).slice(0, 10) : ''))
+    .filter(Boolean));
+  const parlayPenalty = legDays.size < pricedLegs.length ? 0.94 : 1.0;
+  const adjustedProb = combinedProb * parlayPenalty;
+  // No Math.max(0, ...): a negative EV is a losing slip, and clamping it to
+  // zero would render a losing parlay as if it were merely break-even.
+  const parlayEv = (combinedOdds * adjustedProb - 1.0) * 100;
+  const parlayEvColor = parlayEv >= 0 ? 'var(--accent-emerald)' : 'var(--neg)';
 
   bannerContainer.innerHTML = `
     <div class="accumulator-banner">
@@ -304,7 +324,11 @@ function renderAccumulatorBanner() {
           <span>${pricedLegs.length} priced consensus legs</span>
           <span>Combined Odds: <strong>${combinedOdds.toFixed(2)}x</strong></span>
           <span>${kickoffLabel}</span>
-          <span style="color: var(--accent-emerald); font-weight: 700;">+${parlayEv.toFixed(1)}% Combined EV</span>
+          <span>Joint p: <strong>${(adjustedProb * 100).toFixed(1)}%</strong>${
+            parlayPenalty < 1
+              ? ` <span style="color: var(--text-muted);">(naive ${(combinedProb * 100).toFixed(1)}%, ${((1 - parlayPenalty) * 100).toFixed(0)}% correlation haircut)</span>`
+              : ''}</span>
+          <span style="color: ${parlayEvColor}; font-weight: 700;">${parlayEv >= 0 ? '+' : ''}${parlayEv.toFixed(1)}% Combined EV</span>
         </div>
       </div>
 
@@ -546,20 +570,47 @@ function renderAll() {
   if (state.tierPreview && state.currentTier !== state.tierPreview) {
     state.currentTier = state.tierPreview;
   }
-  renderTierPreviewControls();
-  renderTargetLandingData();
-  renderKPIs();
-  renderTierControls();
-  renderPicks();
-  renderLedger();
-  renderCalibration();
-  renderTier3Alpha();
-  renderBacktest();  // resolves async from /api/backtest
-  renderForecastBoard();
-  renderTierMatrix();
-  renderTicker();
-  refreshVisualizer();
-  flushPendingScrollRestore();
+
+  // Every renderer is dispatched through here, and a renderer that cannot run
+  // is reported and stepped over rather than thrown past.
+  //
+  // Two of these are attached to `window` by assignment (refreshVisualizer,
+  // loadDailyBoard) rather than hoisted declarations, so referencing one
+  // before the module reaches it raises a ReferenceError. Letting that escape
+  // does far more damage than the missing panel: it unwinds renderAll at that
+  // line, so every renderer after it never runs, and the operator is left with
+  // a half-painted page and no error on screen to explain it. The other
+  // thirteen panels would have rendered perfectly well.
+  //
+  // The renderer is passed as a thunk on purpose. Naming the function directly
+  // would evaluate that identifier while building the argument list, which
+  // throws before this guard exists to catch it.
+  const renderer = (name, run) => {
+    try {
+      run();
+    } catch (err) {
+      // One panel's failure must not cost the other panels their render.
+      // A ReferenceError here means the module has not defined it yet; anything
+      // else is the renderer itself. Both are named so the cause is findable.
+      console.warn(`renderAll: renderer "${name}" did not run:`, err);
+    }
+  };
+
+  renderer('renderTierPreviewControls', () => renderTierPreviewControls());
+  renderer('renderTargetLandingData', () => renderTargetLandingData());
+  renderer('renderKPIs', () => renderKPIs());
+  renderer('renderTierControls', () => renderTierControls());
+  renderer('renderPicks', () => renderPicks());
+  renderer('renderLedger', () => renderLedger());
+  renderer('renderCalibration', () => renderCalibration());
+  renderer('renderTier3Alpha', () => renderTier3Alpha());
+  renderer('renderBacktest', () => renderBacktest());  // resolves async from /api/backtest
+  renderer('renderForecastBoard', () => renderForecastBoard());
+  renderer('renderModelBoard', () => renderModelBoard());   // pure render from state; the fetch is lazy
+  renderer('renderTierMatrix', () => renderTierMatrix());
+  renderer('renderTicker', () => renderTicker());
+  renderer('refreshVisualizer', () => refreshVisualizer());
+  renderer('flushPendingScrollRestore', () => flushPendingScrollRestore());
 }
 
 function renderTargetLandingData() {
@@ -972,7 +1023,7 @@ function renderKPIs() {
           <td><span class="selection-target-badge">${esc(r.outcome_name)}</span></td>
           <td><span class="odds-val font-mono">${r.best_odds ? r.best_odds.toFixed(2) : '-'}</span> <span class="clv-micro-tag font-mono text-pos">(${clvStr})</span></td>
           <td><span class="certainty-pill font-mono font-bold">${(r.p_true * 100).toFixed(1)}%</span></td>
-          <td><span class="badge-accent emerald">${edgeRating}</span></td>
+          <td><span class="pill-accent emerald">${edgeRating}</span></td>
           <td><span class="result-badge ${badgeClass}">${esc(r.result)}${pnlStr}</span></td>
         </tr>
       `;
@@ -1406,8 +1457,13 @@ function renderPicks() {
       isLocked = false; // tier2 & tier3 unlocked
     }
 
-    const probPct = (p.p_true * 100).toFixed(1);
-    const evPct = (p.best_ev * 100).toFixed(1);
+    const probPct = fmtPct(p.p_true);
+    // A pick with no executable price has best_ev === null. `null * 100` is 0
+    // in JavaScript, not NaN, so the old `(p.best_ev * 100).toFixed(1)` printed
+    // a confident "+0.0%" on every unpriced pick -- inventing a measured edge
+    // on a market that was never observed. Absent EV must render as absent.
+    const evPct = fmtPct(p.best_ev, 1);
+    const hasEv = typeof p.best_ev === 'number' && isFinite(p.best_ev);
     const isDiamond = p.grade === 'GRADE_A' || p.conviction_score >= 20.0;
     const kickoff = p.kickoff_human || 'Today';
     const cd = formatCountdown(p.commence_time, kickoff);
@@ -1612,7 +1668,7 @@ function renderPicks() {
             </div>
             <div class="pick-stats">
               <div class="prob-val tabular-nums">${probPct}%</div>
-              <div class="ev-chip tabular-nums">EV ${evPct >= 0 ? '+' : ''}${evPct}%</div>
+              <div class="ev-chip tabular-nums">${hasEv ? `EV ${evPct.startsWith('-') ? '' : '+'}${evPct}` : 'EV n/a'}</div>
             </div>
           </div>
 
@@ -1631,11 +1687,11 @@ function renderPicks() {
             </div>
             <div class="metric-item">
               <div class="metric-lbl">Edge (EV)</div>
-              <div class="metric-num tabular-nums" style="color: var(--accent-emerald);">+${evPct}%</div>
+              <div class="metric-num tabular-nums" style="color: ${hasEv ? 'var(--accent-emerald)' : 'var(--text-muted)'};">${hasEv ? `${evPct.startsWith('-') ? '' : '+'}${evPct}` : 'No price'}</div>
             </div>
             <div class="metric-item">
               <div class="metric-lbl">Kelly Stake</div>
-              <div class="metric-num tabular-nums">${p.recommended_units}u <span class="metric-sub">(${p.recommended_stake_pct}%)</span></div>
+              <div class="metric-num tabular-nums">${(typeof p.recommended_units === 'number' && isFinite(p.recommended_units)) ? `${p.recommended_units}u <span class="metric-sub">(${p.recommended_stake_pct != null ? p.recommended_stake_pct + '%' : 'n/a'})</span>` : 'n/a'}</div>
             </div>
           </div>
         </div>
@@ -1819,16 +1875,30 @@ function renderTier3Alpha() {
     if (legs.length < 2) {
       parlaysList.innerHTML = `<div class="parlay-item"><div class="parlay-meta">Not enough priced live selections to build an honest parlay.</div></div>`;
     } else {
-      const joint = legs.reduce((acc, p) => acc * p.p_true, 1.0);
+      const jointNaive = legs.reduce((acc, p) => acc * p.p_true, 1.0);
       const odds = legs.reduce((acc, p) => acc * p.best_odds, 1.0);
+      // Same correlation haircut as the ranked board (board.py) and the banner:
+      // legs on the same matchday are not independent, and the naive product
+      // overstates the joint probability. Both figures are shown so the
+      // adjustment is visible rather than hidden.
+      const legDays = new Set(legs
+        .map(l => (l.commence_time ? String(l.commence_time).slice(0, 10) : ''))
+        .filter(Boolean));
+      const penalty = legDays.size < legs.length ? 0.94 : 1.0;
+      const joint = jointNaive * penalty;
+      // No clamping: a negative EV stays negative.
       const edge = joint > 0 ? (odds * joint - 1) * 100 : 0;
+      const edgeColor = edge >= 0 ? 'var(--accent-emerald)' : 'var(--neg)';
       parlaysList.innerHTML = `<div class="parlay-item">
         <div class="parlay-title">Live ${legs.length}-leg consensus slip</div>
         <ul class="parlay-legs">${legs.map(l => `<li>${esc(cleanText(l.home_team))} vs ${esc(cleanText(l.away_team))}: ${esc(cleanText(l.outcome_name))} @ ${Number(l.best_odds).toFixed(2)} (${esc(cleanText(l.best_book || 'best'))})</li>`).join('')}</ul>
         <div class="parlay-meta">
-          <div>Joint prob: <strong>${(joint * 100).toFixed(1)}%</strong></div>
+          <div>Joint prob: <strong>${(joint * 100).toFixed(1)}%</strong>${
+            penalty < 1
+              ? ` <span style="color: var(--text-muted);">(naive product ${(jointNaive * 100).toFixed(1)}%, ${((1 - penalty) * 100).toFixed(0)}% correlation penalty)</span>`
+              : ''}</div>
           <div>Combined odds: <strong>${odds.toFixed(2)}</strong></div>
-          <div style="color: var(--accent-emerald); font-weight: 700;">EV ${edge >= 0 ? '+' : ''}${edge.toFixed(1)}%</div>
+          <div style="color: ${edgeColor}; font-weight: 700;">EV ${edge >= 0 ? '+' : ''}${edge.toFixed(1)}%</div>
         </div>
       </div>`;
     }
@@ -2078,6 +2148,338 @@ function renderTicker() {
   if (track) track.innerHTML = items + items;
   const overviewTrack = document.getElementById('overview-ticker-track');
   if (overviewTrack) overviewTrack.innerHTML = items + items;
+}
+
+// ---------------------------------------------------------------------------
+// Model Opportunity Board  (/api/opportunity-board)
+// ---------------------------------------------------------------------------
+// The only surface fed by engine/lisa/board.py. Before this existed the
+// winning/earning ladders, the micro-bets and the accumulators were computed
+// every cycle and thrown away, while the screen showed a separate, unrelated
+// client-side parlay calculation.
+//
+// Two rules this file must not break:
+//   1. An absent number renders as absent. `null * 100 === 0` in JavaScript, so
+//      any unguarded arithmetic silently invents a measured value -- an edge of
+//      "0.0%" on a market that was never observed. Every numeric field here
+//      goes through fmtOdds/fmtPct, which return 'n/a' for non-finite input.
+//   2. The earning ladder is rendered empty when nothing is priced. Filling it
+//      with model-only rows would present a fair price as an offer.
+
+/** Fetch the board. Never throws; failures land in state, not the console. */
+async function refreshModelBoard(force) {
+  if (state.modelBoardState === 'loading') return;
+  state.modelBoardState = 'loading';
+  state.modelBoardError = '';
+  renderModelBoard();
+
+  const url = '/api/opportunity-board' + (force ? '?refresh=1' : '');
+  try {
+    const res = await fetch(url, { cache: 'no-cache' });
+    let payload;
+    try {
+      payload = await res.json();
+    } catch (e) {
+      throw new Error(`HTTP ${res.status}: response was not JSON`);
+    }
+    // A 503 carries a real explanation and board:null. Treat it as a failed
+    // cycle to display, not as a transport problem to swallow.
+    state.modelBoard = payload;
+    state.modelBoardState = (payload && payload.success) ? 'ready' : 'failed';
+    if (!payload.success) {
+      state.modelBoardError = (payload && payload.error) ||
+        'the board cycle did not complete';
+    }
+  } catch (err) {
+    state.modelBoard = null;
+    state.modelBoardState = 'failed';
+    state.modelBoardError = String(err && err.message ? err.message : err);
+  }
+  renderModelBoard();
+}
+
+window.refreshModelBoard = refreshModelBoard;
+
+/** Coverage + honesty banner. States what the cycle could and could not do. */
+function renderModelBoardStatus() {
+  const el = document.getElementById('mb-status');
+  if (!el) return;
+
+  if (state.modelBoardState === 'loading') {
+    el.innerHTML = `
+      <div class="loading-state-card">
+        <div class="loading-spinner"></div>
+        <p>Running a board cycle &mdash; fetching fixtures and fitting the model...</p>
+      </div>`;
+    return;
+  }
+
+  const p = state.modelBoard;
+  if (state.modelBoardState === 'failed' || !p) {
+    const detail = state.modelBoardError || 'no response from the board endpoint';
+    el.innerHTML = `
+      <div class="alpha-card" style="border-color: var(--neg);">
+        <h3 class="alpha-title">Board cycle failed</h3>
+        <p class="alpha-sub">No board was published, and none is shown below.
+           LISA does not substitute a cached or invented board.</p>
+        <pre style="white-space:pre-wrap; font-size:12px; color: var(--text-secondary);
+                    margin-top:12px;">${esc(detail)}</pre>
+        ${p && Array.isArray(p.errors) && p.errors.length ? `
+          <ul style="margin-top:12px; font-size:12.5px; color: var(--text-secondary);">
+            ${p.errors.map(e => `<li>${esc(e)}</li>`).join('')}
+          </ul>` : ''}
+      </div>`;
+    return;
+  }
+
+  const board = p.board;
+  const cov = board && board.coverage;
+  const badge = document.getElementById('mb-count-badge');
+  if (badge) {
+    const n = board ? (board.winning.length + board.micro_bets.length) : 0;
+    badge.textContent = n ? ` (${n})` : '';
+    badge.style.display = n ? '' : 'none';
+  }
+
+  const rows = [];
+  rows.push(`<div class="alpha-card">
+    <div class="alpha-card-header"><div>
+      <h3 class="alpha-title">Cycle status</h3>
+      <p class="alpha-sub">Generated ${esc(formatKo(p.generated_at))} &middot;
+        ${esc(p.window_hours)}h window &middot; health <strong>${esc(p.health)}</strong>
+        ${p.cached ? '&middot; cached' : ''}</p>
+    </div>
+    <span class="pill-accent ${p.health === 'ok' ? 'emerald' : 'amber'}">${esc(p.health)}</span>
+    </div>`);
+
+  if (board && board.unproven) {
+    rows.push(`<p class="alpha-sub" style="color: var(--warn); margin-top:10px;">
+      <strong>Unproven:</strong> the fit is short of the minimum games per team, so
+      these ladders are advisory only. A model with two matches per team is a prior
+      with a scorer attached.</p>`);
+  }
+  if (p.stale_reason) {
+    rows.push(`<p class="alpha-sub" style="color: var(--warn); margin-top:10px;">
+      Showing the last good board &mdash; this cycle failed:
+      ${esc(p.stale_reason)}</p>`);
+  }
+  if (cov) {
+    rows.push(`<div class="metrics-row" style="margin-top:14px;">
+      <div class="metric-item"><div class="metric-lbl">Fixtures seen</div>
+        <div class="metric-num tabular-nums">${esc(cov.fixtures_seen)}</div></div>
+      <div class="metric-item"><div class="metric-lbl">Modelled</div>
+        <div class="metric-num tabular-nums">${esc(cov.fixtures_modelled)}</div></div>
+      <div class="metric-item"><div class="metric-lbl">Priced</div>
+        <div class="metric-num tabular-nums">${esc(cov.fixtures_priced)}</div></div>
+      <div class="metric-item"><div class="metric-lbl">Volume target</div>
+        <div class="metric-num tabular-nums">${cov.meets_volume_target ? 'met' : 'short'}
+          <span class="metric-sub">${esc(cov.volume_target)}</span></div></div>
+    </div>`);
+    if (!cov.meets_volume_target) {
+      // A data-coverage limit, not a selection limit. Saying it wrong here
+      // would imply the model had opportunities and declined to list them.
+      rows.push(`<p class="alpha-sub" style="margin-top:10px;">
+        Volume target of ${esc(cov.volume_target)} fixtures in the window was not met
+        (${esc(cov.fixtures_seen)} seen). This is a
+        <strong>coverage limit</strong> &mdash; the sources returned too few
+        in-window fixtures &mdash; not the model declining to recommend.</p>`);
+    }
+    if (Array.isArray(cov.notes) && cov.notes.length) {
+      rows.push(`<ul style="margin-top:10px; font-size:12px; color: var(--text-muted);">
+        ${cov.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`);
+    }
+  }
+  if (board && Array.isArray(board.notes) && board.notes.length) {
+    rows.push(`<ul style="margin-top:10px; font-size:12.5px; color: var(--text-secondary);">
+      ${board.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`);
+  }
+  if (Array.isArray(p.errors) && p.errors.length) {
+    rows.push(`<ul style="margin-top:10px; font-size:12.5px; color: var(--warn);">
+      ${p.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`);
+  }
+  rows.push('</div>');
+  el.innerHTML = rows.join('');
+}
+
+/** One opportunity row. Unpriced fields must never render as a number. */
+function mbOpportunityRow(o) {
+  const priced = o.priced === true && typeof o.ev === 'number' && isFinite(o.ev);
+  const evText = priced
+    ? `${o.ev >= 0 ? '+' : ''}${(o.ev * 100).toFixed(1)}%`
+    : 'n/a';
+  const evColor = priced ? (o.ev > 0 ? 'var(--pos)' : 'var(--text-muted)') : 'var(--text-muted)';
+  const line = (o.line === null || o.line === undefined) ? '' : ` ${o.line}`;
+  return `
+    <tr>
+      <td>
+        <div class="pick-name">${esc(o.home)} v ${esc(o.away)}</div>
+        <div style="font-size:11px; color: var(--text-muted);">
+          ${esc(o.sport_key)} &middot; ${esc(formatKo(o.kickoff))}</div>
+      </td>
+      <td><span class="odds-tag">${esc(o.market)}${line}</span>
+        <div style="font-size:11px; color: var(--text-secondary);">${esc(o.selection)}</div></td>
+      <td class="tabular-nums">${fmtPct(o.p_model)}</td>
+      <td class="tabular-nums">${fmtOdds(o.fair_odds)}</td>
+      <td class="tabular-nums">${fmtOdds(o.best_odds)}</td>
+      <td class="tabular-nums" style="color: ${evColor};">${evText}</td>
+      <td style="font-size:11px; color: var(--text-muted);">${esc(o.basis)}${
+        o.reason ? ' &middot; ' + esc(o.reason) : ''}</td>
+    </tr>`;
+}
+
+const MB_HEAD = `<thead><tr>
+  <th>Match</th><th>Market</th><th>Model p</th><th>Fair</th>
+  <th>Best price</th><th>Edge (EV)</th><th>Basis</th>
+</tr></thead>`;
+
+/** The three lists: winning ladder, earning ladder, micro markets. */
+function renderModelBoardLadders() {
+  const el = document.getElementById('mb-ladders');
+  if (!el) return;
+  const board = state.modelBoard && state.modelBoard.board;
+  if (!board) { el.innerHTML = ''; return; }
+
+  const parts = [];
+
+  // Winning ladder: ranked by model probability. Model-only by nature, so it
+  // is the one list that can be full with no price source at all.
+  parts.push(`<div class="alpha-card">
+    <div class="alpha-card-header"><div>
+      <h3 class="alpha-title">Winning ladder</h3>
+      <p class="alpha-sub">Ranked by model probability &mdash; the bets most likely
+        to land. Low payoff, high hit rate. These are model probabilities, not
+        offers: find the price yourself and judge whether it is a bargain.</p>
+    </div>
+    <span class="pill-accent">${board.winning.length}</span></div>
+    ${board.winning.length
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.winning.map(mbOpportunityRow).join('')}</tbody></table></div>`
+      : '<p class="alpha-sub">No opportunities in window.</p>'}
+  </div>`);
+
+  // Earning ladder: ranked by EV. Only priced rows can appear, so an empty list
+  // has three quite different causes and they are told apart here rather than
+  // all collapsing into "no prices".
+  const pricedCount = board.earning.filter(o => o.priced).length;
+  const coverage = board.coverage || {};
+  const priceDiag = (state.modelBoard && state.modelBoard.prices) || {};
+  const matchDiag = (state.modelBoard && state.modelBoard.price_match) || {};
+  let emptyReason;
+  if (!priceDiag.quotes) {
+    emptyReason = `<p class="alpha-sub" style="color: var(--warn);">
+           Empty by design. Expected value is
+           <code>probability &times; price &minus; 1</code>, and no market price has
+           been observed, so no EV exists to rank. LISA will not list a model fair
+           price as if it were an offer.</p>`;
+  } else if (!coverage.fixtures_priced) {
+    emptyReason = `<p class="alpha-sub" style="color: var(--warn);">
+           ${priceDiag.quotes} prices were read but none could be attached to a
+           fixture in this window. LISA publishes a price only when it can prove
+           the book event and the calendar fixture are the same match, so
+           unmatched events are dropped rather than guessed at.</p>`;
+  } else {
+    emptyReason = `<p class="alpha-sub">
+           No selection cleared the edge threshold against a live price. Prices
+           were read and ${coverage.fixtures_priced} fixture${coverage.fixtures_priced === 1 ? ' was' : 's were'}
+           priced &mdash; the model simply does not think the books are offering
+           anything worth taking right now.</p>`;
+  }
+  parts.push(`<div class="alpha-card">
+    <div class="alpha-card-header"><div>
+      <h3 class="alpha-title">Earning ladder</h3>
+      <p class="alpha-sub">Ranked by expected value per unit staked &mdash; the bets
+        that make money. Lower hit rate, higher payoff.</p>
+    </div>
+    <span class="pill-accent ${pricedCount ? 'emerald' : 'amber'}">${board.earning.length}</span></div>
+    ${board.earning.length
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.earning.map(mbOpportunityRow).join('')}</tbody></table></div>`
+      : emptyReason}
+  </div>`);
+
+  parts.push(`<div class="alpha-card">
+    <div class="alpha-card-header"><div>
+      <h3 class="alpha-title">Derived micro markets</h3>
+      <p class="alpha-sub">Selections derived from the model itself (correct score,
+        totals lines, both teams to score), excluding anything already on the
+        earning ladder.</p>
+    </div>
+    <span class="pill-accent">${board.micro_bets.length}</span></div>
+    ${board.micro_bets.length
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.micro_bets.map(mbOpportunityRow).join('')}</tbody></table></div>`
+      : '<p class="alpha-sub">No derived micro markets in window.</p>'}
+  </div>`);
+
+  el.innerHTML = parts.join('');
+}
+
+/** Accumulators, with the correlation penalty shown next to the naive figure. */
+function renderModelBoardAccumulators() {
+  const el = document.getElementById('mb-accumulators');
+  if (!el) return;
+  const board = state.modelBoard && state.modelBoard.board;
+  if (!board) { el.innerHTML = ''; return; }
+
+  const accas = board.accumulators || [];
+  const anyPriced = accas.some(a => a.priced);
+
+  const body = accas.length
+    ? accas.map(a => {
+        // p_adjusted is the joint probability after penalising leg correlation.
+        // Showing only the naive product would be the single most misleading
+        // thing this page could do: two legs from one matchday cannot both win,
+        // so the product of their probabilities is optimistic by construction.
+        const penaltyPct = ((1 - a.correlation_penalty) * 100).toFixed(1);
+        const evText = (a.priced && typeof a.ev === 'number' && isFinite(a.ev))
+          ? `${a.ev >= 0 ? '+' : ''}${(a.ev * 100).toFixed(1)}%`
+          : 'n/a';
+        return `
+        <div class="alpha-card" style="margin-bottom:12px;">
+          <div class="alpha-card-header"><div>
+            <h3 class="alpha-title">${esc(a.description)}</h3>
+            <p class="alpha-sub">${a.size}-leg &middot; correlation penalty
+              ${esc(penaltyPct)}%</p>
+          </div>
+          <span class="pill-accent ${a.priced ? 'emerald' : 'amber'}">
+            ${a.priced ? 'priced' : 'unpriced'}</span></div>
+          <div class="metrics-row" style="margin-top:12px;">
+            <div class="metric-item"><div class="metric-lbl">Joint p (adjusted)</div>
+              <div class="metric-num tabular-nums">${fmtPct(a.p_adjusted, 2)}</div></div>
+            <div class="metric-item"><div class="metric-lbl">Naive product</div>
+              <div class="metric-num tabular-nums">${fmtPct(a.p_naive, 2)}</div></div>
+            <div class="metric-item"><div class="metric-lbl">Fair odds</div>
+              <div class="metric-num tabular-nums">${fmtOdds(a.fair_odds)}</div></div>
+            <div class="metric-item"><div class="metric-lbl">Best price</div>
+              <div class="metric-num tabular-nums">${fmtOdds(a.best_odds)}</div></div>
+            <div class="metric-item"><div class="metric-lbl">Edge (EV)</div>
+              <div class="metric-num tabular-nums">${evText}</div></div>
+          </div>
+          <div class="table-scroll-container" style="margin-top:12px;"><table class="data-table">${MB_HEAD}
+            <tbody>${a.legs.map(mbOpportunityRow).join('')}</tbody></table></div>
+          ${Array.isArray(a.warnings) && a.warnings.length ? `
+            <ul style="margin-top:10px; font-size:12px; color: var(--warn);">
+              ${a.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+        </div>`;
+      }).join('')
+    : `<p class="alpha-sub">No accumulators built for this cycle${
+        anyPriced ? '' : ' &mdash; parlays need a real price per leg to be worth publishing'}.</p>`;
+
+  el.innerHTML = `
+    <div class="alpha-card">
+      <div class="alpha-card-header"><div>
+        <h3 class="alpha-title">Accumulators</h3>
+        <p class="alpha-sub">Multi-leg parlays. Every leg's correlation penalty is
+          applied to the joint probability and the naive product is shown beside it,
+          because multiplying leg probabilities assumes independence and
+          same-matchday legs are not independent.</p>
+      </div>
+      <span class="pill-accent">${accas.length}</span></div>
+      ${body}
+    </div>`;
+}
+
+function renderModelBoard() {
+  renderModelBoardStatus();
+  renderModelBoardLadders();
+  renderModelBoardAccumulators();
 }
 
 function renderForecastBoard() {
@@ -2580,7 +2982,13 @@ function settleScrollRestore() {
   }
 }
 
-const VALID_VIEWS = new Set(['overview', 'picks', 'forecast', 'ledger', 'calibration', 'calculator', 'alpha', 'backtest']);
+// Every nav rail button must appear here or switchTab() returns early and the
+// tab silently does nothing. 'daily-board' and 'tiers' were missing while their
+// buttons and panels both existed in the DOM, so two shipped tabs were dead.
+const VALID_VIEWS = new Set([
+  'overview', 'picks', 'forecast', 'model-board', 'ledger', 'daily-board',
+  'calibration', 'calculator', 'alpha', 'tiers', 'backtest',
+]);
 
 function switchTab(viewName) {
   if (typeof window.closeTickerDropdown === 'function') {
@@ -2613,6 +3021,13 @@ function switchTab(viewName) {
   });
 
   state.activeTab = viewName;
+
+  // The model board runs a real network cycle. Load it on first visit rather
+  // than in the boot path, so opening the dashboard never waits on three
+  // public sources.
+  if (viewName === 'model-board' && state.modelBoardState === 'idle') {
+    refreshModelBoard(false);
+  }
 
   if (window.history && history.replaceState) {
     history.replaceState(null, '', `#${viewName}`);

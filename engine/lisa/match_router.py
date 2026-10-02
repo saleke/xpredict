@@ -1,385 +1,323 @@
-"""Match router — routes to the best available data source per league.
+"""Match router — resolves a league to the free sources that can actually serve it.
 
-Strategy:
-  * Tier A (top 8 leagues): The Odds API (matches + odds + scores)
-  * Tier B (next 50 leagues): Flashscore (matches + scores) + Odds API (odds when available)
-  * Tier C (remaining 80+ leagues): Flashscore only (matches + scores, no odds)
+Strategy
+--------
+Coverage is derived, not declared
+    The old router carried a hand-maintained list of ~200 leagues with a
+    Flashscore id each, and a tier letter implying which source would answer.
+    Those ids were partly fabricated (sequential, colliding at 100), so the
+    router could return one league's fixtures labelled as another's. That is
+    the worst possible failure for a betting engine: silently wrong data,
+    confidently presented.
 
-This ensures we only spend API credits on leagues with paying subscribers.
+    Coverage now comes from
+    :data:`~lisa.providers.calendar.LEAGUES`, which records, per league, the
+    identifier each *real* source uses for it. A league no free source carries
+    is genuinely uncovered, and says so, rather than being assigned an id that
+    was never verified against the source.
+
+Three tiers, and what each one now means
+    A  tier-one competition, multiple free sources can cover it.
+    B  covered, but by a single source (no cross-check available).
+    C  not covered by any free source. The router will not invent fixtures.
+
+    The letter is now derived from the registry, so it cannot drift from what
+    the sources can actually do.
+
+The Odds API is gone from this path
+    ``has_odds`` is true only when a price source is actually configured and
+    enabled. With the default opt-in switch off it is always false, which is
+    the honest answer: no price has been observed, so nothing here is priced.
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from . import config as cfg
-from .flashscore import FlashscoreClient, FlashscoreMatch, flashscore_client
-from .odds import Match, Score, utcnow
+from .odds import Match, Score
 
 logger = logging.getLogger(__name__)
-
-# League tier classification
-TIER_A_LEAGUES: frozenset[str] = frozenset({
-    "soccer_epl",
-    "soccer_spain_la_liga",
-    "soccer_germany_bundesliga",
-    "soccer_italy_serie_a",
-    "soccer_france_ligue_one",
-    "soccer_netherlands_eredivisie",
-    "soccer_portugal_primeira_liga",
-    "basketball_nba",
-})
-
-TIER_B_LEAGUES: frozenset[str] = frozenset({
-    "soccer_uefa_champions_league",
-    "soccer_uefa_europa_league",
-    "soccer_england_championship",
-    "soccer_spain_segunda",
-    "soccer_germany_2_bundesliga",
-    "soccer_italy_serie_b",
-    "soccer_france_ligue_2",
-    "soccer_belgium_first_division",
-    "soccer_scotland_premiership",
-    "soccer_turkey_super_lig",
-    "soccer_russia_premier_league",
-    "soccer_ukraine_premier_league",
-    "soccer_austria_bundesliga",
-    "soccer_switzerland_super_league",
-    "soccer_greece_super_league",
-    "soccer_czech_republic_first_league",
-    "soccer_denmark_superliga",
-    "soccer_norway_eliteserien",
-    "soccer_sweden_allsvenskan",
-    "soccer_finland_veikkausliiga",
-    "soccer_poland_ekstraklasa",
-    "soccer_romania_liga_1",
-    "soccer_hungary_nb_1",
-    "soccer_croatia_1_hnl",
-    "soccer_serbia_super_liga",
-    "soccer_bulgaria_first_league",
-    "soccer_slovakia_super_liga",
-    "soccer_slovenia_prva_liga",
-    "soccer_ireland_premier_division",
-    "soccer_northern_ireland_premiership",
-    "soccer_wales_premier",
-    "soccer_iceland_urvalsdeild",
-    "soccer_luxembourg_national_division",
-    "soccer_albania_kategoria_superiore",
-    "soccer_bosnia_premier_league",
-    "soccer_north_macedonia_first_league",
-    "soccer_montenegro_first_league",
-    "soccer_moldova_divizia_nationala",
-    "soccer_estonia_meistriliiga",
-    "soccer_latvia_virsliga",
-    "soccer_lithuania_a_lyga",
-    "soccer_belarus_premier_league",
-    "soccer_armenia_premier_league",
-    "soccer_azerbaijan_premier_league",
-    "soccer_georgia_rovnuli_liga",
-    "soccer_kazakhstan_premier_league",
-    "soccer_usa_mls",
-    "soccer_mexico_liga_mx",
-    "soccer_argentina_primera",
-    "soccer_brazil_serie_a",
-    "soccer_brazil_serie_b",
-    "soccer_chile_primera",
-    "soccer_colombia_primera_a",
-    "soccer_ecuador_serie_a",
-    "soccer_peru_primera",
-    "soccer_uruguay_primera",
-    "soccer_venezuela_primera",
-    "soccer_bolivia_primera",
-    "soccer_paraguay_primera",
-    "soccer_south_africa_premiership",
-    "soccer_egypt_premier_league",
-    "soccer_morocco_botola",
-    "soccer_tunisia_ligue_1",
-    "soccer_algeria_ligue_1",
-    "soccer_nigeria_npfl",
-    "soccer_ghana_premier_league",
-    "soccer_kenya_premier_league",
-    "soccer_tanzania_premier_league",
-    "soccer_uganda_premier_league",
-    "soccer_zambia_super_league",
-    "soccer_zimbabwe_premier_league",
-    "soccer_ivory_coast_ligue_1",
-    "soccer_senegal_ligue_1",
-    "soccer_cameroon_elite_one",
-    "soccer_congo_ligue_1",
-    "soccer_dr_congo_ligue_1",
-    "soccer_ethiopia_premier_league",
-    "soccer_sudan_premier_league",
-    "soccer_somalia_premier_league",
-    "soccer_burundi_premier_league",
-    "soccer_rwanda_premier_league",
-    "soccer_malawi_premier_league",
-    "soccer_mozambique_mocambola",
-    "soccer_angola_girabola",
-    "soccer_namibia_premier_league",
-    "soccer_botswana_premier_league",
-    "soccer_lesotho_premier_league",
-    "soccer_eswatini_premier_league",
-    "soccer_madagascar_premier_league",
-    "soccer_mauritius_premier_league",
-    "soccer_seychelles_premier_league",
-    "soccer_comoros_premier_league",
-    "soccer_djibouti_premier_league",
-    "soccer_liberia_premier_league",
-    "soccer_sierra_leone_premier_league",
-    "soccer_guinea_ligue_1",
-    "soccer_gambia_premier_league",
-    "soccer_guinea_bissau_ligue_1",
-    "soccer_cape_verde_premier_league",
-    "soccer_sao_tome_premier_league",
-    "soccer_equatorial_guinea_ligue_1",
-    "soccer_gabon_ligue_1",
-    "soccer_central_african_republic_ligue_1",
-    "soccer_chad_ligue_1",
-    "soccer_niger_ligue_1",
-    "soccer_burkina_faso_premier_league",
-    "soccer_mali_ligue_1",
-    "soccer_mauritania_ligue_1",
-    "soccer_nigeria_nnfl",
-    "soccer_indonesia_liga_1",
-    "soccer_malaysia_super_league",
-    "soccer_thailand_league_1",
-    "soccer_vietnam_v_league",
-    "soccer_singapore_premier_league",
-    "soccer_philippines_pfl",
-    "soccer_myanmar_national_league",
-    "soccer_cambodia_premier_league",
-    "soccer_laos_premier_league",
-    "soccer_brunei_super_league",
-    "soccer_timor_leste_premier_league",
-    "soccer_australia_a_league",
-    "soccer_new_zealand_football_championship",
-    "soccer_japan_j1_league",
-    "soccer_south_korea_k_league_1",
-    "soccer_china_super_league",
-    "soccer_india_indian_super_league",
-    "soccer_iran_persian_gulf_pro_league",
-    "soccer_saudi_pro_league",
-    "soccer_uae_pro_league",
-    "soccer_qatar_stars_league",
-    "soccer_kuwait_premier_league",
-    "soccer_bahrain_premier_league",
-    "soccer_oman_professional_league",
-    "soccer_jordan_pro_league",
-    "soccer_lebanon_premier_league",
-    "soccer_syria_premier_league",
-    "soccer_iraq_premier_league",
-    "soccer_palestine_premier_league",
-    "soccer_yemen_premier_league",
-    "soccer_afghanistan_premier_league",
-    "soccer_pakistan_premier_league",
-    "soccer_bangladesh_premier_league",
-    "soccer_sri_lanka_premier_league",
-    "soccer_nepal_premier_league",
-    "soccer_bhutan_premier_league",
-    "soccer_maldives_premier_league",
-    "soccer_mongolia_premier_league",
-    "soccer_kyrgyzstan_premier_league",
-    "soccer_tajikistan_premier_league",
-    "soccer_turkmenistan_premier_league",
-    "soccer_uzbekistan_super_league",
-    "soccer_hong_kong_premier_league",
-    "soccer_taiwan_premier_league",
-    "soccer_macau_premier_league",
-    "soccer_guam_premier_league",
-    "soccer_fiji_premier_league",
-    "soccer_solomon_islands_premier_league",
-    "soccer_vanuatu_premier_league",
-    "soccer_new_caledonia_super_league",
-    "soccer_tahiti_ligue_1",
-    "soccer_papua_new_guinea_premier_league",
-    "soccer_samoa_premier_league",
-    "soccer_tonga_premier_league",
-    "soccer_cook_islands_premier_league",
-    "soccer_american_samoa_premier_league",
-    "soccer_micronesia_premier_league",
-    "soccer_palau_premier_league",
-    "soccer_marshall_islands_premier_league",
-    "soccer_kiribati_premier_league",
-    "soccer_nauru_premier_league",
-    "soccer_tuvalu_premier_league",
-    "soccer_vatican_premier_league",
-    "soccer_san_marino_premier_league",
-    "soccer_andorra_premier_league",
-    "soccer_liechtenstein_premier_league",
-    "soccer_monaco_premier_league",
-    "soccer_gibraltar_premier_league",
-    "soccer_faroe_islands_premier_league",
-    "soccer_greenland_premier_league",
-    "soccer_aland_premier_league",
-    "soccer_jersey_premier_league",
-    "soccer_guernsey_premier_league",
-    "soccer_isle_of_man_premier_league",
-    "soccer_bermuda_premier_league",
-    "soccer_cayman_islands_premier_league",
-    "soccer_turks_and_caicos_premier_league",
-    "soccer_british_virgin_islands_premier_league",
-    "soccer_anguilla_premier_league",
-    "soccer_montserrat_premier_league",
-    "soccer_antigua_and_barbuda_premier_league",
-    "soccer_saint_kitts_and_nevis_premier_league",
-    "soccer_dominica_premier_league",
-    "soccer_saint_lucia_premier_league",
-})
 
 
 @dataclass(frozen=True)
 class LeagueTier:
-    """Classification of a league by data source tier."""
+    """What the engine can expect for one league, and from where."""
+
     sport_key: str
-    tier: str  # "A", "B", or "C"
+    tier: str  # "A", "B" or "C"
     has_odds: bool
     has_scores: bool
-    flashscore_id: Optional[int] = None
+    #: Which free calendar sources can serve this league, cheapest-first.
+    #: Empty means no free source covers it.
+    sources: tuple[str, ...] = ()
+
+
+def _odds_available() -> bool:
+    """Whether any market price source is configured *and* armed.
+
+    Reads live config rather than caching at import time: the router is a
+    module-level singleton created during startup, and an operator flipping
+    the switch must not need a restart to see it take effect.
+    """
+    try:
+        settings = cfg.load_settings()
+    except Exception as exc:  # config unreadable: report no prices, not a crash
+        logger.debug("match_router: config unavailable (%s); assuming unpriced", exc)
+        return False
+    return bool(getattr(settings, "odds_api_enabled", False)
+                and getattr(settings, "odds_api_key", ""))
 
 
 class MatchRouter:
-    """Routes match data requests to the best available source.
+    """Resolves league coverage and fetches fixtures from the free sources.
 
-    The router maintains a cache of league classifications and match data
-    to minimize API calls and respect rate limits.
+    Holds a short TTL cache. The board cycle is authoritative and should not
+    read this cache; this exists so the daily-board and settlement paths, which
+    are per-request, do not re-fetch a season per request.
     """
 
-    def __init__(self, *, flashscore: Optional[FlashscoreClient] = None,
-                 cache_ttl: int = 300):
-        self.flashscore = flashscore or flashscore_client
+    def __init__(self, *, cache_ttl: int = 300, providers: Optional[list[Any]] = None):
         self.cache_ttl = cache_ttl
         self._cache: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+        self._providers = providers
         self._league_tiers: dict[str, LeagueTier] = {}
 
+    # -- providers ----------------------------------------------------------
+
+    def _provider_set(self) -> list[Any]:
+        """The configured calendar providers, built once and reused.
+
+        Built lazily: importing this module must not open sockets, and a host
+        with no IPv4 egress should not pay for provider construction at import.
+        """
+        if self._providers is None:
+            from .feed import build_providers
+
+            self._providers = build_providers(cfg.load_settings()).calendar
+        return self._providers
+
+    def _provider_for(self, source: str) -> Optional[Any]:
+        for provider in self._provider_set():
+            if getattr(provider, "name", "") == source:
+                return provider
+        return None
+
+    # -- cache --------------------------------------------------------------
+
     def _get_cached(self, key: str) -> Optional[Any]:
-        """Get cached value if not expired."""
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        expires, value = entry
-        if expires < time.time():
-            del self._cache[key]
-            return None
-        return value
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            expires, value = entry
+            if expires < time.time():
+                del self._cache[key]
+                return None
+            return value
 
     def _set_cached(self, key: str, value: Any) -> None:
-        """Cache a value with TTL."""
-        self._cache[key] = (time.time() + self.cache_ttl, value)
+        with self._lock:
+            self._cache[key] = (time.time() + self.cache_ttl, value)
+
+    # -- coverage -----------------------------------------------------------
 
     def classify_league(self, sport_key: str) -> LeagueTier:
-        """Classify a league into tier A, B, or C."""
-        if sport_key in self._league_tiers:
-            return self._league_tiers[sport_key]
+        """Classify a league from the live registry.
 
-        from .flashscore import LEAGUE_IDS
+        Cached per key, but ``has_odds`` is resolved fresh each time: whether
+        prices exist is a configuration fact that can change, whereas the
+        source coverage of a league cannot.
+        """
+        cached = self._league_tiers.get(sport_key)
+        if cached is not None:
+            return LeagueTier(sport_key=sport_key, tier=cached.tier,
+                              has_odds=_odds_available(),
+                              has_scores=cached.has_scores, sources=cached.sources)
 
-        if sport_key in TIER_A_LEAGUES:
-            tier = LeagueTier(
-                sport_key=sport_key,
-                tier="A",
-                has_odds=True,
-                has_scores=True,
-                flashscore_id=LEAGUE_IDS.get(sport_key),
-            )
-        elif sport_key in TIER_B_LEAGUES:
-            tier = LeagueTier(
-                sport_key=sport_key,
-                tier="B",
-                has_odds=True,
-                has_scores=True,
-                flashscore_id=LEAGUE_IDS.get(sport_key),
-            )
-        else:
-            tier = LeagueTier(
-                sport_key=sport_key,
-                tier="C",
-                has_odds=False,
-                has_scores=True,
-                flashscore_id=LEAGUE_IDS.get(sport_key),
-            )
+        from .providers.calendar import LEAGUES, sources_for
 
+        spec = LEAGUES.get(sport_key)
+        if spec is None:
+            # Not in the registry. Claiming coverage here is exactly the bug
+            # this rewrite removes, so an unknown league is tier C with no
+            # sources rather than being guessed into tier B.
+            tier = LeagueTier(sport_key=sport_key, tier="C", has_odds=_odds_available(),
+                              has_scores=False, sources=())
+            self._league_tiers[sport_key] = tier
+            return tier
+
+        sources = sources_for(sport_key)
+        # A single source is a real but un-cross-checked source: honest, but
+        # worth flagging as a weaker guarantee than two agreeing feeds.
+        tier = LeagueTier(
+            sport_key=sport_key,
+            tier="A" if len(sources) >= 2 else ("B" if sources else "C"),
+            has_odds=_odds_available(),
+            # Every calendar source in the registry also carries results, which
+            # is what the model trains on.
+            has_scores=bool(sources),
+            sources=tuple(sources),
+        )
         self._league_tiers[sport_key] = tier
         return tier
 
+    # -- fixtures -----------------------------------------------------------
+
+    @staticmethod
+    def _to_match(fixture: dict[str, Any]) -> Match:
+        """Normalise a calendar fixture into the engine's Match shape."""
+        kickoff = fixture.get("kickoff")
+        try:
+            commence = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            commence = datetime.now(timezone.utc)
+        if commence.tzinfo is None:
+            commence = commence.replace(tzinfo=timezone.utc)
+        return Match(
+            id=str(fixture.get("match_id", "")),
+            sport_key=str(fixture.get("sport_key", "")),
+            commence_time=commence,
+            home_team=str(fixture.get("home_team", "")),
+            away_team=str(fixture.get("away_team", "")),
+            completed=bool(fixture.get("completed")),
+        )
+
     def get_matches(self, sport_key: str, *, days_ahead: int = 7,
-                    source: str = "auto") -> list[Match]:
-        """Get matches for a league from the best available source.
+                    source: Optional[str] = None) -> list[Match]:
+        """Fixtures for one league, from every free source that covers it.
 
         Args:
-            sport_key: League identifier
-            days_ahead: Number of days ahead to fetch
-            source: "auto", "odds_api", or "flashscore"
+            sport_key: League identifier.
+            days_ahead: Only return fixtures kicking off within this many days.
+            source: Restrict to one named source. ``None`` walks the
+                cheapest-first chain and stops at the first that answers, so a
+                metered source is only spent once an unmetered one has failed.
 
-        Returns:
-            List of Match objects
+        Returns an empty list for an uncovered league. An empty list here means
+        "no source covers this", and callers must say so rather than showing
+        an empty schedule as though the league simply has no fixtures.
         """
-        cache_key = f"matches:{sport_key}:{days_ahead}:{source}"
+        tier = self.classify_league(sport_key)
+        if not tier.sources:
+            return []
+
+        cache_key = f"matches:{sport_key}:{days_ahead}:{source or 'any'}"
         cached = self._get_cached(cache_key)
         if cached is not None:
             return cached
 
-        tier = self.classify_league(sport_key)
-        matches: list[Match] = []
+        chain = (source,) if source else tier.sources
+        cutoff = time.time() + days_ahead * 86400
+        fixtures: list[dict[str, Any]] = []
 
-        if source == "odds_api" or (source == "auto" and tier.tier == "A"):
-            # Use The Odds API (handled by existing pipeline)
-            # This is a placeholder — the actual Odds API call is in pipeline.py
-            pass
+        for name in chain:
+            provider = self._provider_for(name)
+            if provider is None:
+                continue
+            try:
+                result = provider.get_fixtures(sport_key)
+            except Exception as exc:
+                # One source failing is not a failed request: walk the chain.
+                logger.warning("match_router: %s failed for %s: %s", name, sport_key, exc)
+                continue
+            rows = [dict(f) for f in result.fixtures
+                    if f.get("epoch", 0) <= cutoff]
+            if rows:
+                fixtures = rows
+                break
 
-        if source == "flashscore" or (source == "auto" and tier.tier in ("B", "C")):
-            # Use Flashscore
-            if tier.flashscore_id is not None:
-                fs_matches = self.flashscore.get_league_matches(
-                    tier.flashscore_id,
-                    league_name=sport_key,
-                    days_ahead=days_ahead,
-                )
-                matches = [self.flashscore.to_domain_match(m) for m in fs_matches]
-
-        self._set_cached(cache_key, matches)
+        matches = [self._to_match(f) for f in fixtures]
+        # Only cache a non-empty result. Caching emptiness would pin "no
+        # fixtures" in place for the whole TTL after a transient source failure.
+        if matches:
+            self._set_cached(cache_key, matches)
         return matches
 
     def get_live_matches(self, sport_key: str) -> list[Match]:
-        """Get currently live matches for a league."""
-        tier = self.classify_league(sport_key)
-        if tier.flashscore_id is None:
-            return []
-
-        cache_key = f"live:{sport_key}"
-        cached = self._get_cached(cache_key)
-        if cached is not None:
-            return cached
-
-        fs_matches = self.flashscore.get_live_matches(tier.flashscore_id)
-        matches = [self.flashscore.to_domain_match(m) for m in fs_matches]
-        self._set_cached(cache_key, matches)
-        return matches
+        """Fixtures currently in play (started within the last 3 hours)."""
+        now = time.time()
+        window = 3 * 3600
+        return [m for m in self.get_matches(sport_key)
+                if not m.completed
+                and m.commence_time.timestamp() <= now
+                and m.commence_time.timestamp() >= now - window]
 
     def get_scores(self, match_id: str, sport_key: str = "") -> Optional[Score]:
-        """Get the latest score for a match."""
-        cache_key = f"score:{match_id}"
+        """The official result for a match, or None when it is not final.
+
+        Settlement depends on this, so an absent result stays ``None``: it is
+        never inferred, and never reported as a 0-0.
+        """
+        cache_key = f"score:{sport_key}:{match_id}"
         cached = self._get_cached(cache_key)
         if cached is not None:
             return cached
 
-        score = self.flashscore.get_match_scores(match_id)
-        if score is not None:
-            self._set_cached(cache_key, score)
-        return score
+        if not sport_key:
+            logger.debug("match_router: no sport_key for match %s; cannot resolve score",
+                         match_id)
+            return None
+
+        for name in self.classify_league(sport_key).sources:
+            provider = self._provider_for(name)
+            if provider is None:
+                continue
+            try:
+                result = provider.get_fixtures(sport_key)
+            except Exception as exc:
+                logger.warning("match_router: %s score lookup failed for %s: %s",
+                               name, match_id, exc)
+                continue
+            for fixture in result.fixtures:
+                if str(fixture.get("match_id")) != match_id:
+                    continue
+                if not fixture.get("completed"):
+                    return None
+                kickoff = fixture.get("kickoff")
+                try:
+                    commence = datetime.fromisoformat(str(kickoff).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    commence = datetime.now(timezone.utc)
+                if commence.tzinfo is None:
+                    commence = commence.replace(tzinfo=timezone.utc)
+                score = Score(
+                    match_id=match_id,
+                    sport_key=sport_key,
+                    commence_time=commence,
+                    completed=True,
+                    home_score=fixture.get("home_score"),
+                    away_score=fixture.get("away_score"),
+                    status=str(fixture.get("status", "final")),
+                    home_team=str(fixture.get("home_team", "")),
+                    away_team=str(fixture.get("away_team", "")),
+                )
+                if score.home_score is None or score.away_score is None:
+                    # Flagged complete upstream but carrying no scoreline: a
+                    # missing goal is missing data, so it cannot settle a pick.
+                    return None
+                self._set_cached(cache_key, score)
+                return score
+        return None
 
     def get_all_leagues(self, tier: Optional[str] = None) -> list[str]:
-        """Get all known league IDs, optionally filtered by tier."""
-        from .flashscore import LEAGUE_IDS
+        """Every league the free stack covers, optionally filtered by tier."""
+        from .providers.calendar import LEAGUES
+
+        keys = sorted(LEAGUES.keys())
         if tier is None:
-            return list(LEAGUE_IDS.keys())
-        return [k for k, v in LEAGUE_IDS.items()
-                if self.classify_league(k).tier == tier]
+            return keys
+        return [k for k in keys if self.classify_league(k).tier == tier.upper()]
 
     def clear_cache(self) -> None:
-        """Clear all cached data."""
-        self._cache.clear()
+        """Drop all cached fixtures and scores."""
+        with self._lock:
+            self._cache.clear()
 
 
 # Global router instance
