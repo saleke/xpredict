@@ -15,7 +15,7 @@ from .base import HttpTransport, FixturesResult, SourceTier, ProviderNotAvailabl
 from .calendar import normalise_fixture, normalise_team
 from .sharpapi import SharpQuote, SharpSnapshot, MatchOutcome
 from ..board import MarketPrice
-from .diagnostics import response_error
+from .diagnostics import response_error, budget_error
 
 NAME = 'api_football'
 BASE_URL = 'https://v3.football.api-sports.io'
@@ -100,16 +100,16 @@ class ApiFootballProvider:
                         if not conn.execute('UPDATE provider_daily_usage SET requests=requests+1 '
                             'WHERE provider=? AND day=? AND requests<?',
                             (history_name, day, history_ceiling)).rowcount:
-                            raise ProviderNotAvailableError('API-Football history allowance exhausted', provider=NAME)
+                            raise budget_error(NAME, scope='history')
                     conn.execute('INSERT INTO provider_daily_usage VALUES (?, ?, 0) ON CONFLICT(provider, day) DO NOTHING', (NAME, day))
                     if not conn.execute('UPDATE provider_daily_usage SET requests=requests+1 '
                         'WHERE provider=? AND day=? AND requests<?', (NAME, day, ceiling)).rowcount:
-                        raise ProviderNotAvailableError('API-Football daily request budget exhausted', provider=NAME)
+                        raise budget_error(NAME)
             else:
                 if self._local_day != day:
                     self._local_day, self._local_requests = day, 0
                 if self._local_requests >= ceiling:
-                    raise ProviderNotAvailableError('API-Football daily request budget exhausted', provider=NAME)
+                    raise budget_error(NAME)
                 self._local_requests += 1
             payload = self.transport.get_json(BASE_URL + path, params=params,
                 headers={'x-apisports-key': self.key}, ttl=0, provider=NAME)

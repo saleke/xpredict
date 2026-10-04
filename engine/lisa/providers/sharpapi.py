@@ -327,7 +327,8 @@ class SharpApiOddsProvider:
                     f"{BASE_URL}/odds", params=call, headers=self._headers(),
                     ttl=self.ttl_sec, provider=NAME)
             except Exception as exc:
-                snapshot.error = f"odds fetch failed: {exc}"
+                from .diagnostics import safe_error_summary
+                snapshot.error = f"odds fetch failed: {safe_error_summary(exc)}"
                 break
             self._requests_this_minute += 1
             snapshot.pages += 1

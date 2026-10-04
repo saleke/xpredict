@@ -18,6 +18,45 @@ spec.loader.exec_module(probe)
 
 
 class ProviderValidationTests(unittest.TestCase):
+    def test_shared_transport_preserves_http_classification_without_body(self):
+        from lisa.providers.base import HttpTransport, RateLimitedError
+        body = b'{"account":"private-account","apiKey":"private-secret"}'
+        for status, code in ((401, 'authentication_rejected'), (403, 'http_access_denied'),
+                             (404, 'http_error'), (429, 'quota_or_rate_limited'),
+                             (503, 'http_error')):
+            with self.subTest(status=status):
+                error = HttpTransport._error_for(status, {'retry-after':'45'}, body, 'sharpapi')
+                self.assertIn('HTTP '+str(status), safe_error_summary(error))
+                self.assertIn(code, safe_error_summary(error))
+                self.assertNotIn('private-', str(error))
+                if status == 429:
+                    self.assertIsInstance(error, RateLimitedError)
+                    self.assertEqual(error.retry_after, 45)
+
+    def test_sharp_snapshot_never_copies_arbitrary_exception_text(self):
+        from lisa.providers.sharpapi import SharpApiOddsProvider
+        transport = Mock()
+        transport.get_json.side_effect = RuntimeError('https://provider/?apiKey=private-secret')
+        provider = SharpApiOddsProvider('private-key', transport=transport)
+        snapshot = provider.fetch(sport_keys=['soccer_epl'], window_hours=24)
+        self.assertIn('RuntimeError', snapshot.error)
+        self.assertNotIn('private-', json.dumps(snapshot.to_dict()))
+        self.assertNotIn('https://', snapshot.error)
+
+    def test_collecting_provider_failures_does_not_duplicate_price_errors(self):
+        from lisa.feed import FeedReport, ProviderStatus, _collect_provider_errors
+        from lisa.providers.base import SourceTier
+        report = FeedReport(began=datetime.now(timezone.utc), providers=[
+            ProviderStatus(name='sharpapi', tier=SourceTier.OFFICIAL, configured=True, used=False,
+                error='odds fetch failed: HTTP 401'),
+            ProviderStatus(name='oddspapi', tier=SourceTier.OFFICIAL, configured=True, used=False,
+                error='request failed: HTTP 403')],
+            errors=['sharpapi: odds fetch failed: HTTP 401'])
+        _collect_provider_errors(report)
+        _collect_provider_errors(report)
+        self.assertEqual(report.errors, ['sharpapi: odds fetch failed: HTTP 401',
+                                        'oddspapi: request failed: HTTP 403'])
+
     def test_price_transport_preserves_http_reason_without_credential_urls(self):
         from lisa.providers.the_odds_api import PrivateTransport as OddsTransport
         from lisa.providers.oddspapi import PrivateTransport as PapiTransport

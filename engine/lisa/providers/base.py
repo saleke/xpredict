@@ -820,18 +820,18 @@ class HttpTransport:
     @staticmethod
     def _error_for(status: int, headers: dict[str, str], body: bytes,
                    provider: str) -> ProviderError:
-        snippet = body[:200].decode("utf-8", "replace")
-        if status in (401, 403):
-            return ApiError(
-                f"auth failed ({status}): {snippet} -- check the API key for "
-                f"{provider or 'this provider'}", provider=provider)
-        if status == 404:
-            return ApiError(f"not found (404): {url if False else snippet}",
-                            provider=provider)
+        # An upstream body can echo a credential or contain private account
+        # details. Preserve actionable HTTP classifications, never body text.
         if status == 429:
-            return RateLimitedError(f"rate limited: {snippet}", provider=provider,
-                                    retry_after=_retry_after_seconds(headers) or 60.0)
-        return ApiError(f"HTTP {status}: {snippet}", provider=provider)
+            error = RateLimitedError("Provider rate limited; response withheld",
+                provider=provider, retry_after=_retry_after_seconds(headers) or 60.0)
+        else:
+            error = ApiError(f"Provider HTTP {status}; response withheld", provider=provider)
+        error.http_status = status
+        error.diagnostic_code = ('authentication_rejected' if status == 401 else
+            'http_access_denied' if status == 403 else
+            'quota_or_rate_limited' if status == 429 else 'http_error')
+        return error
 
     def close(self) -> None:
         with self._hosts_lock:

@@ -158,10 +158,27 @@ class HistoryAndModelTests(unittest.TestCase):
         restarted.storage = self.store
         for i in range(3):
             restarted._get('/countries', {'id': i})
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as caught:
             restarted._get('/countries', {'id': 10})
+        from lisa.providers.diagnostics import safe_error_summary
+        self.assertIn('daily_budget_exhausted', safe_error_summary(caught.exception))
+        self.assertNotIn('authentication_rejected', safe_error_summary(caught.exception))
         restarted._get('/countries', {'id': 10}, purpose='settlement')
         self.assertEqual(transport.get_json.call_count, 5)
+
+    def test_history_budget_refusal_is_distinct_and_spends_no_network_request(self):
+        transport = Mock()
+        api = ApiFootballProvider('test-key', transport=transport, daily_limit=100)
+        api.storage = self.store
+        day = datetime.now(timezone.utc).date().isoformat()
+        with self.store._tx() as conn:
+            conn.execute('INSERT INTO provider_daily_usage VALUES (?, ?, ?)',
+                         ('api_football:history', day, 8))
+        with self.assertRaises(Exception) as caught:
+            api._get('/fixtures', {'league':39}, purpose='history')
+        from lisa.providers.diagnostics import safe_error_summary
+        self.assertIn('history_budget_exhausted', safe_error_summary(caught.exception))
+        transport.get_json.assert_not_called()
 
 
 class AdapterTests(unittest.TestCase):

@@ -6,7 +6,17 @@ from .base import ParseError, ProviderNotAvailableError
 DIAGNOSTIC_CODES = frozenset({'subscription_or_season_restricted', 'quota_or_rate_limited',
     'authentication_rejected', 'provider_error', 'malformed_envelope', 'unsupported_result_shape',
     'http_access_denied', 'http_error', 'dns_failed', 'request_timed_out',
-    'network_unavailable', 'invalid_json', 'transport_failed'})
+    'network_unavailable', 'invalid_json', 'transport_failed',
+    'daily_budget_exhausted', 'history_budget_exhausted'})
+
+
+def budget_error(provider, *, scope='daily'):
+    """Distinguish a local quota reservation refusal from failed credentials."""
+    if scope not in ('daily', 'history'):
+        raise ValueError('Unsupported provider budget scope')
+    error = ProviderNotAvailableError('Configured provider budget exhausted', provider=provider)
+    error.diagnostic_code = scope + '_budget_exhausted'
+    return error
 
 
 def http_error(provider, status):

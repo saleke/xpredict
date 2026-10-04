@@ -2286,6 +2286,13 @@ function renderModelBoardStatus() {
 
   const board = p.board;
   const cov = board && board.coverage;
+  const fit = p.model || (board && board.model) || {};
+  const sourceErrors = Array.isArray(p.errors) ? p.errors : [];
+  const errors = [...new Set(sourceErrors)];
+  const workerError = p.service && p.service.error;
+  if (workerError && workerError !== sourceErrors.join('; ') && !errors.includes(workerError)) {
+    errors.push(workerError);
+  }
   const badge = document.getElementById('mb-count-badge');
   if (badge) {
     const n = board ? (board.winning.length + board.micro_bets.length) : 0;
@@ -2305,15 +2312,36 @@ function renderModelBoardStatus() {
     </div>`);
 
   if (board && board.unproven) {
+    const advisory = fit.sufficient === false
+      ? 'Training history is below the model\'s minimum sample threshold. These forecasts remain advisory.'
+      : p.paper_mode === true
+        ? 'Forecasts remain advisory and executable stakes are disabled in paper mode.'
+        : 'Executable recommendations have not been approved. These forecasts remain advisory.';
     rows.push(`<p class="alpha-sub" style="color: var(--warn); margin-top:10px;">
-      <strong>Unproven:</strong> the fit is short of the minimum games per team, so
-      these ladders are advisory only. A model with two matches per team is a prior
-      with a scorer attached.</p>`);
+      <strong>${p.paper_mode === true ? 'Paper research' : 'Unproven'}:</strong>
+      ${esc(advisory)}</p>`);
+  }
+  if (typeof fit.matches_used === 'number' && Number.isFinite(fit.matches_used)) {
+    const average = typeof fit.mean_games_behind === 'number' && Number.isFinite(fit.mean_games_behind)
+      ? `; ${fit.mean_games_behind.toFixed(1)} results behind an average team rating` : '';
+    rows.push(`<p class="alpha-sub" style="margin-top:10px;">
+      Training history: ${esc(fit.matches_used.toLocaleString())} completed matches${esc(average)}.</p>`);
   }
   if (p.stale_reason) {
+    const service = p.service || {};
+    const staleByAge = typeof service.age_sec === 'number' &&
+      typeof service.stale_after_sec === 'number' && service.age_sec > service.stale_after_sec;
+    const message = service.state === 'paused'
+      ? 'Prediction generation is paused. The saved publication remains visible.'
+      : staleByAge
+        ? 'The saved publication is older than its refresh target. Worker diagnostics are shown below.'
+        : 'The saved publication remains visible. Provider or worker checks need attention.';
     rows.push(`<p class="alpha-sub" style="color: var(--warn); margin-top:10px;">
-      Showing the last good board &mdash; this cycle failed:
-      ${esc(p.stale_reason)}</p>`);
+      ${esc(message)}</p>`);
+    if (!workerError && p.stale_reason !== sourceErrors.join('; ') &&
+        !['stale', 'paused', 'starting'].includes(p.stale_reason) && !errors.includes(p.stale_reason)) {
+      errors.push(p.stale_reason);
+    }
   }
   if (cov) {
     rows.push(`<div class="metrics-row" style="margin-top:14px;">
@@ -2336,18 +2364,24 @@ function renderModelBoardStatus() {
         <strong>coverage limit</strong> &mdash; the sources returned too few
         in-window fixtures &mdash; not the model declining to recommend.</p>`);
     }
-    if (Array.isArray(cov.notes) && cov.notes.length) {
-      rows.push(`<ul style="margin-top:10px; font-size:12px; color: var(--text-muted);">
-        ${cov.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`);
+    if (cov.fixtures_priced === 0 && cov.fixtures_modelled > 0) {
+      rows.push(`<p class="alpha-sub" style="margin-top:10px;">
+        No usable bookmaker prices matched this publication. Model forecasts are available;
+        measured earning opportunities require eligible prices.</p>`);
     }
   }
-  if (board && Array.isArray(board.notes) && board.notes.length) {
+  const notes = [...new Set([
+    ...(cov && Array.isArray(cov.notes) ? cov.notes : []),
+    ...(board && Array.isArray(board.notes) ? board.notes : []),
+    ...(Array.isArray(p.notes) ? p.notes : [])
+  ])];
+  if (notes.length) {
     rows.push(`<ul style="margin-top:10px; font-size:12.5px; color: var(--text-secondary);">
-      ${board.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`);
+      ${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`);
   }
-  if (Array.isArray(p.errors) && p.errors.length) {
+  if (errors.length) {
     rows.push(`<ul style="margin-top:10px; font-size:12.5px; color: var(--warn);">
-      ${p.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`);
+      ${errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`);
   }
   rows.push('</div>');
   el.innerHTML = rows.join('');

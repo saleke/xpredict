@@ -333,6 +333,10 @@ provider outage. Past-kickoff rows/accumulator legs are filtered on read.
 `earning`, `micro_bets`, `accumulators`, `coverage`, `notes`, and optional
 `execution_locked`. Current paper publication forces `board.unproven:true`;
 this is not identical to the sample-size indicator `model.sufficient`.
+Use `model.sufficient:false` for a deficient-training warning; do not infer
+short training history from `board.unproven:true`. Paper mode alone also forces
+that advisory flag. Display returned `matches_used`/`mean_games_behind` when
+explaining training coverage rather than substituting a fixed sample count.
 
 Coverage fields: `window_hours`, `fixtures_seen`, `fixtures_modelled`,
 `fixtures_priced`, `meets_volume_target`, `volume_target`, `leagues` (league →
@@ -341,6 +345,18 @@ count), `sources` (source → count), `notes`.
 Provider status fields: `name`, `configured`, `used`, `leagues` (strings),
 `fixtures` (count), `error` (string), `degraded` (boolean), `tier` (source category).
 A provider row is metadata, not proof that its credentials or every market work.
+Provider failures include safe HTTP classifications such as
+`authentication_rejected` (401), `http_access_denied` (403), and
+`quota_or_rate_limited` (429). API-Football can instead report
+`daily_budget_exhausted` or `history_budget_exhausted` when the application's
+local allowance refuses a request before contacting the provider. That is not
+an invalid-key diagnosis; non-settlement requests retain the settlement reserve.
+Deduplicate diagnostics/notes when consuming older saved publications.
+
+A not-ready service with provider errors can still have just published a new
+forecast board. `stale_reason` alone does not prove the displayed board is an
+older successful cycle. Use publication/attempt timestamps and `age_sec` versus
+`stale_after_sec` to explain actual age staleness, and show each failure once.
 
 Model fit fields: `matches_used`, `teams`, `objective`, `iterations`, `converged`,
 `mean_games_behind`, `data_sufficiency`, `sufficient`, `prior_dominance`, `rho`.

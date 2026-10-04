@@ -771,7 +771,9 @@ def _collect_provider_errors(report: FeedReport) -> None:
     """
     for status in report.providers:
         if status.error and status.configured and status.used is False:
-            report.errors.append(f"{status.name}: {status.error}")
+            message = f"{status.name}: {status.error}"
+            if message not in report.errors:
+                report.errors.append(message)
 
 
 def build_board(model: DixonColesModel, settings: Any) -> OpportunityBoard:

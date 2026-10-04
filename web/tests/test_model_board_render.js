@@ -415,6 +415,65 @@ check('the unproven stamp is surfaced when the fit is thin', () => {
   assert(/Unproven/i.test(status), 'a thin fit must be stamped unproven');
 });
 
+check('a trained paper model is not reported as having too few games', () => {
+  const base = boardPayload();
+  const { status } = render(boardPayload({
+    paper_mode: true,
+    model: { sufficient: true, matches_used: 7272, mean_games_behind: 42.279 },
+    board: Object.assign({}, base.board, { unproven: true })
+  }));
+  assert(/Paper research/.test(status), 'paper state must remain explicit');
+  assert(/7,272/.test(status), 'actual training count must be rendered');
+  assert(/42\.3/.test(status), 'actual mean history must be rendered');
+  assert(!/below.*minimum|short of|two matches|scorer attached/.test(status),
+    'paper mode must not fabricate a sample deficiency');
+});
+
+check('a genuinely thin fit retains its training warning in paper mode', () => {
+  const base = boardPayload();
+  const { status } = render(boardPayload({
+    paper_mode: true,
+    model: { sufficient: false, matches_used: 4, mean_games_behind: 2 },
+    board: Object.assign({}, base.board, { unproven: true })
+  }));
+  assert(/below.*minimum sample threshold/.test(status), 'real sample deficiency must remain visible');
+});
+
+check('a current degraded publication is not called a failed or last-good cycle', () => {
+  const error = 'the_odds_api: HTTP 401';
+  const { status } = render(boardPayload({
+    errors: [error], stale_reason: error,
+    service: { state: 'stale', error, age_sec: 10, stale_after_sec: 900 }
+  }));
+  assert(/saved publication remains visible/i.test(status), 'saved data must remain visible');
+  assert(!/last good board|this cycle failed|older than/.test(status), 'provider errors do not imply an old publication');
+  assert(status.split(error).length - 1 === 1, 'provider error must render only once');
+});
+
+check('old duplicate diagnostics and notes render once', () => {
+  const base = boardPayload();
+  const note = 'Research forecasts require validation';
+  const error = 'sharpapi: HTTP 401';
+  const { status } = render(boardPayload({
+    errors: [error, error], stale_reason: `${error}; ${error}`,
+    service: { error: `${error}; ${error}` }, notes: [note],
+    board: Object.assign({}, base.board, { notes: [note], coverage:
+      Object.assign({}, base.board.coverage, { notes: [note] }) })
+  }));
+  assert(status.split(error).length - 1 === 1, 'persisted duplicate errors must be collapsed');
+  assert(status.split(note).length - 1 === 1, 'the same coverage/board/report note must render once');
+  assert(/No usable bookmaker prices matched/.test(status), 'zero price coverage must be explained');
+});
+
+check('age-based staleness and worker-only failures are still visible', () => {
+  const { status } = render(boardPayload({
+    errors: [], stale_reason: 'stale',
+    service: { age_sec: 1200, stale_after_sec: 900, error: 'Settlement worker failed' }
+  }));
+  assert(/older than its refresh target/.test(status), 'real age staleness must not be hidden');
+  assert(/Settlement worker failed/.test(status), 'worker failure absent from the board errors must remain visible');
+});
+
 check('a failed cycle shows the cause and invents no board', () => {
   const { status, ladders, accas } = render({
     success: false,
