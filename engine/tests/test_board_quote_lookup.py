@@ -40,6 +40,10 @@ class _StubModel:
 
     report = _Report()
 
+    def strength(self, team):
+        from lisa.dixon_coles import TeamStrength
+        return TeamStrength(games=30)
+
     def predict(self, home, away):
         return {
             "p_home": 0.45, "p_draw": 0.28, "p_away": 0.27,
@@ -55,13 +59,15 @@ class _StubModel:
 
 def _board():
     from lisa.board import OpportunityBoard
-    return OpportunityBoard(_StubModel())
+    board = OpportunityBoard(_StubModel())
+    board._as_of = NOW
+    return board
 
 
 def _price(selection, odds, *, market="h2h", line=None, book="draftkings") -> MarketPrice:
     return MarketPrice(match_id="m1", selection=selection, odds=odds,
                        book_key=book, book_title=book.title(), source="test",
-                       market=market, line=line)
+                       market=market, line=line, updated_at=NOW)
 
 
 def _fixture():

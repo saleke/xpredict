@@ -66,7 +66,7 @@ class LiveSettler:
             if match.completed:
                 continue
             # Match is live if it started within the last 3 hours
-            if now - match.commence_time <= timedelta(hours=3):
+            if timedelta(0) <= now - match.commence_time <= timedelta(hours=3):
                 live.append(match)
         return live
 

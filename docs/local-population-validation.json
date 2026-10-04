@@ -1,0 +1,43 @@
+{
+  "state": "saved_live_data_and_rendering_validated",
+  "evidence_date": "2026-10-03",
+  "evidence_source": "Read-only inspection of data/localhost-paper.db, request handlers in process, and JavaScript render harness",
+  "observed_data": {
+    "match_observations": 1501,
+    "saved_predictions": 7,
+    "forecast_fixtures": 1,
+    "micro_market_entries": 7,
+    "settled_predictions": 0,
+    "priced_fixtures": 0,
+    "earning_picks": 0,
+    "accumulators": 0,
+    "separate_default_database_predictions": 0
+  },
+  "verified_changes": [
+    "Forecast polling recovers after an empty first load or transport failure",
+    "Public model forecast cards do not depend on legacy ranks or fabricated grades",
+    "Daily Board reads persisted source-attributed fixtures and scores without provider calls",
+    "Predictions remain visible awaiting confirmed results after kickoff",
+    "Total provider outage preserves earlier observations with their original timestamp",
+    "Provider diagnostics distinguish HTTP authentication, access, quota and DNS failures without credentials",
+    "Local launcher reports the shared web/worker database and offers read-only diagnostics"
+  ],
+  "checks": {
+    "stdlib_unittest_run": 172,
+    "stdlib_unittest_passed": 163,
+    "postgres_integration_skipped": 9,
+    "javascript_checks_passed": 35,
+    "python_compilation": "passed",
+    "javascript_syntax": "passed",
+    "public_packaging": "passed",
+    "diff_whitespace": "passed",
+    "saved_data_renderer": "seven cards, matching fixture, no rank-based locks, no renderer failures"
+  },
+  "limits": [
+    "The running Python processes need restarting to load changed handlers",
+    "A browser UI session was not available in the coding sandbox",
+    "Several provider requests failed in the observed cycles; broad fixture and bookmaker coverage remains unverified",
+    "Full pytest and PostgreSQL checks require the configured CI environment",
+    "This is functional paper-test evidence, not profitability approval"
+  ]
+}

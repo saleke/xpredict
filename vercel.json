@@ -1,0 +1,33 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "python3 scripts/build_vercel.py",
+  "outputDirectory": "public",
+  "fluid": true,
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{data/**,web/**,engine/tests/**,docs/**,deploy/**,.env*,.git/**,.github/**,scripts/**,public/**}"
+    }
+  },
+  "rewrites": [
+    {"source": "/api/:path*", "destination": "/api/index?__lisa_path=/api/:path*"},
+    {"source": "/admin", "destination": "/admin.html"}
+  ],
+  "headers": [
+    {"source": "/(.*)", "headers": [
+      {"key": "X-Content-Type-Options", "value": "nosniff"},
+      {"key": "X-Frame-Options", "value": "DENY"},
+      {"key": "Referrer-Policy", "value": "strict-origin-when-cross-origin"}
+    ]},
+    {"source": "/api/:path*", "headers": [
+      {"key": "Cache-Control", "value": "private, no-store"}
+    ]}
+  ],
+  "crons": [
+    {"path": "/api/cron/history", "schedule": "17 2 * * *"},
+    {"path": "/api/cron/generation", "schedule": "17 5 * * *"},
+    {"path": "/api/cron/settlement", "schedule": "17 23 * * *"}
+  ],
+  "git": {"deploymentEnabled": false}
+}

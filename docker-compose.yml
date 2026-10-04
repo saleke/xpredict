@@ -1,92 +1,76 @@
-version: '3.8'
-
-# LISA production service.
-#
-# Persistence: the SQLite ledger is the record of every pick, so it lives in a
-# bind mount (./data) that survives image rebuilds and is easy to back up.
-# The container runs as LISA_UID:LISA_GID because a bind mount is owned by the
-# host user; a fixed in-image uid cannot write it without root.
-#
-# Note there is deliberately no ./web/data mount: the dashboard reads live data
-# from the API, and mounting a path for a deleted directory would have Docker
-# silently recreate it.
+# Pre-production architecture: persistent PostgreSQL, web readers, autonomous jobs.
+x-app: &app
+  build: .
+  image: lisa:local
+  restart: unless-stopped
+  env_file: .env
+  environment: &app-environment
+    LISA_STORAGE: postgres
+    LISA_DATABASE_URL: postgresql://lisa:${LISA_DATABASE_PASSWORD:?Set LISA_DATABASE_PASSWORD in .env}@db:5432/lisa
+    LISA_ENABLE_ODDS_API: "0"
+    LISA_PROVIDER_CREDENTIALS_PATH: /app/data/provider-credentials.json
+    # env_file contains bootstrap secrets; remove admin credentials from apps.
+    POSTGRES_ADMIN_PASSWORD: ""
+    LISA_DATABASE_PASSWORD: ""
+  depends_on:
+    db:
+      condition: service_healthy
+  stop_grace_period: 45s
+  volumes:
+    - application-data:/app/data
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
 
 services:
-  lisa:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: lisa:local
-    container_name: lisa_sports_engine
+  db:
+    image: postgres:18-bookworm
     restart: unless-stopped
-    # Matches the host user so ./data stays writable without root. Override in
-    # .env (LISA_UID / LISA_GID) if the deployment user differs.
-    user: "${LISA_UID:-1000}:${LISA_GID:-1000}"
-    # Host networking is a requirement on this host, not a preference.
-    #
-    # CORRECTED 2026-09-29. The previous comment here claimed the opposite of
-    # reality: that IPv4 egress was dead network-wide and only IPv6 worked.
-    # Measured on this host the truth is the reverse --
-    #   IPv4: openligadb.de, api.football-data.org and www.thesportsdb.com all
-    #         complete a TCP connect on 443.
-    #   IPv6: every one of those hosts returns "no address associated with
-    #         hostname", and a direct connect returns ENETUNREACH.
-    # So host networking is still the right call -- it hands the container the
-    # host's stack, which is the one that demonstrably has egress, and it makes
-    # container and host resolve identically. The justification is now the
-    # measured one; do not "fix" this line by trusting the old wording.
-    #
-    # Consequence: `ports:` is meaningless under host networking (the process
-    # binds 0.0.0.0:8080 directly), so it is removed rather than left to be
-    # silently ignored.
-    network_mode: host
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - .env
     environment:
-      - LISA_STORAGE=sqlite
-      - LISA_DATABASE_URL=/app/data/lisa.db
-      # The Odds API is retired. Stated explicitly here so the deployment
-      # config is self-documenting: even if a key is still present in .env, the
-      # transport refuses to build a request and no credit can be spent.
-      # Live data comes from the free stack (engine/lisa/feed.py).
-      - LISA_ENABLE_ODDS_API=0
-      # SharpAPI is the price source. On by default: without it the winning
-      # ladder still works, but every pick is unpriced and the earning ladder,
-      # accumulators, slippage and CLV are empty. The key itself is read from
-      # .env (SHARPAPI_KEY) and is deliberately NOT repeated here -- it belongs
-      # in one place, and repeating a secret into a second file is how a
-      # rotation misses one of them.
-      - LISA_ENABLE_SHARPAPI=${LISA_ENABLE_SHARPAPI:-1}
-      # Bounded so one cycle cannot spend the free tier's whole minute: 6 pages
-      # at 12 req/min is 25% of the budget, and the fetch also stops early at
-      # the first page past the window.
-      - LISA_SHARPAPI_MAX_PAGES=${LISA_SHARPAPI_MAX_PAGES:-6}
-      - LISA_SHARPAPI_MAX_KICKOFF_GAP_H=${LISA_SHARPAPI_MAX_KICKOFF_GAP_H:-6}
-    # Stopping should be quick and must not leave a half-written database.
-    stop_grace_period: 30s
-    # Keep the ledger from growing without bound on a long-running deployment.
-    tmpfs:
-      - /tmp:size=64m
-    # No capabilities are needed, and the process never needs to gain any.
-    # (no-new-privileges is deliberately NOT set: on this host's kernel it makes
-    # execve of /usr/local/bin/python3 fail with EPERM, so the container cannot
-    # start at all.)
-    cap_drop:
-      - ALL
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+      POSTGRES_DB: lisa
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      LISA_DATABASE_PASSWORD: ${LISA_DATABASE_PASSWORD:?Set LISA_DATABASE_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-lisa.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')\" || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lisa"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # No database port exposed to the host or public network.
+
+  web:
+    <<: *app
+    command: ["start", "--no-ingest", "--no-bot", "--port", "8080"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          memory: 1g
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    healthcheck:
+      disable: true
+
+  telegram:
+    <<: *app
+    profiles: ["telegram"]
+    command: ["start", "--no-ingest", "--port", "8081"]
+    healthcheck:
+      disable: true
+
+volumes:
+  postgres-data:
+  application-data:

@@ -1,0 +1,82 @@
+{
+  "checked_at": "2026-10-04T02:08:27.533930+00:00",
+  "scope": "Observed network-enabled host worker output and in-process HTTP handler verification",
+  "change": {
+    "local_board_window_hours_before": 24,
+    "local_board_window_hours_after": 168,
+    "mechanism": "Validated persisted runtime setting and existing worker refresh request",
+    "browser_change": "Empty periods show collected upcoming fixtures and navigation to This Week"
+  },
+  "publication": {
+    "generated_at": "2026-10-04T02:05:29.265649+00:00",
+    "published_at": "2026-10-04T02:06:05.359522+00:00",
+    "window_hours": 168.0,
+    "forecast_matches": 66,
+    "categories": {
+      "winning": 25,
+      "micro_bets": 40,
+      "earning": 0,
+      "accumulators": 12
+    },
+    "micro_markets": {
+      "totals": 40
+    },
+    "timings_ms": {
+      "calendar": 31042.225323006278,
+      "history_and_model": 1689.7758589911973,
+      "prices": 2880.871216999367,
+      "board": 341.85832799994387,
+      "total": 36019.991620996734
+    },
+    "paper_stakes_zero": true
+  },
+  "ledger": {
+    "saved": 72,
+    "settled": 7,
+    "pending": 65
+  },
+  "history_by_source": {
+    "allsports": 129,
+    "api_football": 321,
+    "football_data": 767,
+    "openfootball": 4001,
+    "openligadb": 702
+  },
+  "handler_checks": {
+    "forecast_http_status": 200,
+    "forecast_count": 66,
+    "calendar_http_status": 200,
+    "today_fixtures": 0,
+    "tomorrow_fixtures": 0,
+    "this_week_fixtures": 65,
+    "public_winning": 25,
+    "public_micro": 40,
+    "owner_research_accumulators": 12,
+    "provider_requests_during_checks": 0
+  },
+  "price_blockers": {
+    "the_odds_api": {
+      "http_status": 401,
+      "code": "authentication_rejected"
+    },
+    "oddspapi": {
+      "http_status": 403,
+      "code": "http_access_denied"
+    },
+    "sharpapi": {
+      "state": "failed"
+    }
+  },
+  "verification": {
+    "javascript_test_files_passed": 4,
+    "new_browser_regressions": 2,
+    "public_asset_build": "passed"
+  },
+  "limitations": [
+    "Handler checks ran in process against the actual ledger, not through the sandbox-blocked listening socket.",
+    "Browser reload is needed for the static JavaScript changes; live browser behavior still requires user observation.",
+    "Longer-range paper forecasts need review near kickoff; no profitability or current bookmaker offer is established.",
+    "Earning list is empty because the current price providers failed.",
+    "This Week uses local calendar days; the forecast uses a rolling 168-hour horizon."
+  ]
+}

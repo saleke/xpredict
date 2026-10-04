@@ -4,12 +4,17 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+.env.pilot
 .api_key
 data/
 # The dashboard reads live data from the API; no generated JSON is committed.
 web/data/
 dist/
 build/
+public/
+.vercel/
+.env.*
+!.env.example
 
 # Deploy updater bookkeeping: runtime log, not source.
 deploy/update.log

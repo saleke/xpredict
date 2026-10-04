@@ -127,7 +127,7 @@ class Pipeline:
         """Record the alert durably. Returns False if the driver has no outbox."""
         if not self._has_outbox():
             return False
-        key = dedupe_key or pick_key(pick.match_id, pick.market, pick.outcome_name)
+        key = dedupe_key or pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)
         self.storage.enqueue_notification(key, pick_alert_text(pick))
         return True
 
@@ -379,7 +379,7 @@ class Pipeline:
         }, self.settings.live_ttl_sec)
 
     def _persist_telemetry_pick(self, pick: Pick) -> None:
-        self.storage.upsert_live(f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name)}", {
+        self.storage.upsert_live(f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)}", {
             "p_true": pick.p_true,
             "fair_odds": pick.fair_odds,
             "line": pick.line,
@@ -393,7 +393,7 @@ class Pipeline:
         """Live-cycle alert policy: re-alert an already-emitted pick only when
         the consensus moved meaningfully and the cooldown has elapsed."""
         hot = self.storage.get_live(
-            f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name)}")
+            f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)}")
         if not hot or "p_true" not in hot:
             return False
         moved = abs(pick.p_true - float(hot["p_true"])) >= self.settings.alert_min_delta
@@ -407,9 +407,9 @@ class Pipeline:
         hot["p_true"] = pick.p_true
         hot["emitted_at"] = now.isoformat()
         self.storage.upsert_live(
-            f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name)}",
+            f"pick:{pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)}",
             hot, self.settings.live_ttl_sec)
-        base_key = pick_key(pick.match_id, pick.market, pick.outcome_name)
+        base_key = pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)
         # A re-alert is a distinct notification, so it needs its own outbox key.
         if not self._enqueue_alert(pick, f"{base_key}#re{int(now.timestamp())}"):
             # Storage driver without an outbox: fall back to direct dispatch.
@@ -428,7 +428,7 @@ class Pipeline:
         if now > commence:
             return  # pre-match closing snapshot is locked once match starts
 
-        key = pick_key(pick.match_id, pick.market, pick.outcome_name)
+        key = pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line)
         existing = self.storage.get_pick(key)
 
         target_outcome = pick.outcome_name

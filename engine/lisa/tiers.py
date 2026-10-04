@@ -224,14 +224,16 @@ def features_gained_by_upgrade(tier: str) -> list[str]:
 def upgrade_path() -> dict[str, Any]:
     """Whole value ladder as a serialisable dict (for the CLI and web)."""
     return {
+        "billing_available": False,
         "features": [
             {
                 "key": k,
+                "available": k in {"bulletin", "micro_pack", "parlay"},
                 "label": FEATURES[k]["label"],
                 "blurb": FEATURES[k]["blurb"],
                 "upgrade_hint": FEATURES[k]["upgrade_hint"],
                 "grant": FEATURES[k]["grant"],
-                "reveal_minutes": dict(FEATURES[k]["reveal_minutes"]),
+                "reveal_minutes": {},
             }
             for k in feature_keys()
         ],

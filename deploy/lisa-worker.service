@@ -1,0 +1,30 @@
+[Unit]
+Description=LISA autonomous generation and settlement worker
+After=network.target
+
+[Service]
+Type=simple
+User=walter
+WorkingDirectory=/home/walter/xpredict
+EnvironmentFile=-/home/walter/xpredict/.env
+Environment=PYTHONPATH=/home/walter/xpredict/engine
+Environment=LISA_STORAGE=postgres
+ExecStart=/home/walter/xpredict/.venv/bin/python -m lisa worker
+Restart=always
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=45s
+
+# Security sandboxing
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/walter/xpredict/data
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lisa-worker
+
+[Install]
+WantedBy=multi-user.target

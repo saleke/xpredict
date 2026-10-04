@@ -9,9 +9,9 @@
   python -m lisa report        # weekly live-validation summary (needs --metrics trail)
   python -m lisa calibrate     # calibration metrics (Brier, ECE) on settled picks
 
-``feed`` and ``board`` are the live path. They use only the free, unmetered
-stack in ``lisa/providers`` and the independent Dixon-Coles model, and they
-never contact the retired The Odds API.
+``feed`` and ``board`` use configured providers and the independent model.
+Metered supporting providers use shared quota limits; the legacy odds client
+is disabled by default.
 """
 from __future__ import annotations
 
@@ -41,9 +41,7 @@ def _make_storage(settings: cfg.Settings):
         return RedisStorage(settings.redis_url)
     if driver == "postgres":
         from .storage import PostgresStorage
-        store = PostgresStorage(settings.database_url)
-        store.ensure_schema()
-        return store
+        return PostgresStorage(settings.database_url)
     if driver == "sqlite":
         from .storage import SqliteStorage
         db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
@@ -51,15 +49,16 @@ def _make_storage(settings: cfg.Settings):
     if driver == "file":
         from .storage import JsonFileStorage
         return JsonFileStorage()
-    return InMemoryStorage()
+    if driver == "inmemory":
+        return InMemoryStorage()
+    raise ValueError(f"Unsupported storage driver: {driver}")
 
 
 def _cmd_feed(args: argparse.Namespace) -> int:
     """Run the free-stack cycle and print the opportunity board.
 
-    This is the live ingestion path. It touches only free, unmetered sources
-    (OpenLigaDB, football-data.org, TheSportsDB) and never contacts the
-    retired The Odds API, so it cannot spend a credit.
+    Configured metered providers use shared quota reservations. The supporting
+    The Odds API adapter is separately opt-in; this is not the legacy client.
     """
     from .feed import run_feed
 
@@ -462,7 +461,7 @@ def _cmd_export_forecast(args: argparse.Namespace) -> int:
     from .storage import SqliteStorage
 
     settings = cfg.load_settings()
-    storage = SqliteStorage(args.db or settings.database_url or "data/lisa.db")
+    storage = SqliteStorage(args.db) if args.db else _make_storage(settings)
     payloads: list[tuple[str, list]] = []
     for key in storage.scan_live_keys():
         if key.startswith(LIVE_ODDS_PREFIX):
@@ -721,16 +720,16 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     failures = 0
 
     # 1. SQLite Database & Storage Layer
-    print("\n[1] Storage Layer & SQLite Database:")
+    print("\n[1] Relational storage:")
     db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
     try:
         from .storage import SqliteStorage
-        store = SqliteStorage(db_path)
+        store = _make_storage(settings)
         store.upsert_live("__doctor_probe__", {"ok": 1}, ttl_seconds=10)
         probe_val = store.get_live("__doctor_probe__")
         if probe_val and probe_val.get("ok") == 1:
             counts = store.count_picks()
-            print(f"  [PASS] SQLite WAL Database OK ({db_path})")
+            print(f"  [PASS] Storage OK ({settings.storage_driver})")
             print(f"         Ledger: {counts['total']} picks total ({counts['settled']} settled, {counts['pending']} pending)")
             passed += 1
         else:
@@ -841,9 +840,153 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
+def _stop_worker_jobs(jobs, storage, *, timeout_sec=35):
+    """Signal every job before joining; never close a pool under active jobs."""
+    import time
+    for job in jobs:
+        job.request_stop()
+    deadline = time.monotonic() + timeout_sec
+    for job in jobs:
+        if job._thread is not None:
+            job._thread.join(timeout=max(0, deadline-time.monotonic()))
+    if any(job._thread is not None and job._thread.is_alive() for job in jobs):
+        return False
+    if storage is not None:
+        storage.close()
+    return True
+
+
+def _cmd_pilot(args):
+    """Isolated PostgreSQL paper runs; never starts notification services."""
+    import os
+    import signal
+    import threading
+    import time
+    from dataclasses import replace
+    from .postgres_storage import require_isolated_database
+    from .pilot import PaperGeneration, PaperSettlement, PaperHistory, pilot_report
+    if args.prepare:
+        from .pilot_setup import prepare_pilot
+        path = prepare_pilot(Path('.env.pilot'))
+        print(f'Private pilot configuration ready: {path}')
+        return 0
+    settings = cfg.load_settings()
+    if not 1 <= args.days <= 90:
+        print(json.dumps({'state':'blocked','reason':'Pilot reporting window must be 1 to 90 days.'}))
+        return 1
+    dsn = os.getenv('LISA_PILOT_DATABASE_URL') or (settings.database_url if settings.storage_driver == 'postgres' else '')
+    try:
+        require_isolated_database(dsn,'_pilot')
+    except ValueError:
+        print(json.dumps({'state':'blocked','reason':'Use a separate PostgreSQL database whose name ends in _pilot; set LISA_PILOT_DATABASE_URL privately or use the pilot Docker setup.'}))
+        return 1
+    settings = cfg.paper_settings(replace(settings, storage_driver='postgres', database_url=dsn, paper_mode=True))
+    storage = None
+    jobs = []
+    exit_code = 1
+    try:
+        storage = _make_storage(settings)
+        from .runtime import RuntimeConfig
+        runtime = RuntimeConfig(settings, storage=storage)
+        settings_lock = threading.Lock()
+        loaded_at = [0.0]
+        def current_settings():
+            with settings_lock:
+                if time.monotonic() - loaded_at[0] >= 5:
+                    runtime.load()
+                    loaded_at[0] = time.monotonic()
+                return cfg.paper_settings(runtime.settings())
+        if args.report:
+            report = pilot_report(storage,current_settings(),days=args.days)
+            print(json.dumps(report,indent=2,allow_nan=False))
+            exit_code = 0 if not report['blockers'] else 1
+        else:
+            storage.set_telemetry('daily:worker_mode','separate')
+            storage.set_telemetry('pilot:mode',{'paper_mode':True,'notifications_started':False})
+            jobs = [PaperGeneration(storage,current_settings,settle_in_cycle=False),
+                    PaperSettlement(storage,current_settings),PaperHistory(storage,current_settings)]
+            if args.once:
+                for job in jobs:
+                    job.tick()
+                report = pilot_report(storage,current_settings(),days=args.days)
+                print(json.dumps(report,indent=2,allow_nan=False))
+                exit_code = 0 if not report['blockers'] else 1
+            else:
+                stopped = threading.Event()
+                def stop(signum, frame):
+                    stopped.set()
+                signal.signal(signal.SIGTERM,stop)
+                signal.signal(signal.SIGINT,stop)
+                for job in jobs:
+                    job.start()
+                while not stopped.wait(5):
+                    if any(not job._thread.is_alive() for job in jobs):
+                        raise RuntimeError('A pilot job stopped unexpectedly')
+                exit_code = 0
+    except Exception as exc:
+        print(json.dumps({'state':'failed','error_type':type(exc).__name__,
+            'detail':'Pilot execution failed; connection credentials and exception text withheld.'}))
+        exit_code = 1
+    finally:
+        if not _stop_worker_jobs(jobs, storage):
+            print(json.dumps({'state':'failed','reason':'Worker shutdown deadline exceeded; active database connections were not closed underneath running jobs.'}))
+            exit_code = 1
+    return exit_code
+
+
+def _cmd_worker(args):
+    """Dedicated producer process; web requests never own provider I/O."""
+    import signal
+    import threading
+    import time
+    from .daily_service import DailyService
+    from .settlement_service import SettlementService
+    from .history_service import HistoryBackfillService
+    from .runtime import RuntimeConfig
+    settings = cfg.load_settings()
+    storage = _make_storage(settings)
+    from .storage import RelationalStorage
+    if not isinstance(storage, RelationalStorage):
+        raise ValueError("worker requires PostgreSQL or SQLite relational storage")
+    runtime = RuntimeConfig(settings, storage=storage)
+    storage.set_telemetry("daily:worker_mode", "separate")
+    settings_lock = threading.Lock()
+    loaded_at = [0.0]
+    def current_settings():
+        with settings_lock:
+            if time.monotonic() - loaded_at[0] >= 5:
+                runtime.load()
+                loaded_at[0] = time.monotonic()
+            return runtime.settings()
+    job_classes = (DailyService, SettlementService, HistoryBackfillService)
+    if settings.paper_mode:
+        from .pilot import PaperGeneration, PaperSettlement, PaperHistory
+        job_classes = (PaperGeneration, PaperSettlement, PaperHistory)
+    generation = job_classes[0](storage, current_settings, settle_in_cycle=False)
+    settlement = job_classes[1](storage, current_settings)
+    backfill = job_classes[2](storage, current_settings)
+    stopped = threading.Event()
+    def stop(sig, frame):
+        stopped.set()
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    generation.start()
+    settlement.start()
+    backfill.start()
+    try:
+        while not stopped.wait(5):
+            if any(not job._thread.is_alive() for job in (generation, settlement, backfill)):
+                raise RuntimeError("background job stopped unexpectedly")
+    finally:
+        if not _stop_worker_jobs((generation, settlement, backfill), storage):
+            raise RuntimeError('Worker shutdown deadline exceeded')
+    return 0
+
+
 def _cmd_start(args: argparse.Namespace) -> int:
     """Unified production runner launching web server, bot daemon, and live poller."""
     import signal
+    import os
     import sys
     import threading
     import time
@@ -860,8 +1003,10 @@ def _cmd_start(args: argparse.Namespace) -> int:
         print(f"[start] Error: {exc}.")
         return 1
 
-    db_path = settings.database_url if settings.database_url and settings.database_url.endswith(".db") else "data/lisa.db"
-    storage = SqliteStorage(db_path)
+    storage = _make_storage(settings)
+    from .storage import RelationalStorage
+    if not isinstance(storage, RelationalStorage):
+        raise ValueError("start requires PostgreSQL or SQLite relational storage")
 
     # One handle on the live process, shared by the HTTP server, the bot and the
     # poller, so the admin console inspects and controls the objects that are
@@ -876,6 +1021,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
     control = Control(storage, auth=AuthManager(storage=storage), runtime=runtime)
 
     # The operational ledger starts empty on purpose.
+    if os.environ.get('LISA_OWNER_PASSWORD'):
+        from .serverless import bootstrap_owner
+        bootstrap_owner(control.auth)
     #
     # It used to be seeded from the backtest archive when the picks table was
     # empty, which mixed historical simulation rows into the live record and
@@ -920,62 +1068,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
         t_bot = threading.Thread(target=_bot_loop, daemon=True)
         t_bot.start()
 
-    # Start the live odds poller when an API key is configured.
-    #
-    # This uses the adaptive Scheduler rather than a fixed sleep, and a rotating
-    # client that spreads requests across every configured key under a shared
-    # quota floor and per-key daily budget. The Ledger (not the process) stays
-    # the source of truth, so a restart resumes cleanly.
-    api_keys = tuple(getattr(settings, "odds_api_keys", ()) or ())
-    if api_keys and not getattr(settings, "odds_api_enabled", False):
-        # Old behaviour was to start an adaptive poller whenever a key existed
-        # in the environment. That is the single most expensive thing this
-        # process could do: a background thread spending credits indefinitely
-        # with nobody watching. Refuse to start it.
-        print("[live-ingest] Odds API key(s) present but DISABLED "
-              "(LISA_ENABLE_ODDS_API unset) -- not starting the poller.")
-        print("[live-ingest] Use the free stack instead: `python -m lisa feed`.")
-        api_keys = ()
-    if not getattr(args, "no_ingest", False) and api_keys:
-        from .key_pool import RotatingOddsClient
-        from .scheduler import Scheduler
-        client = RotatingOddsClient(
-            api_keys,
-            base_url=settings.api_base_url,
-            budget_daily=settings.credit_budget_daily,
-            credit_warn=settings.credit_warn,
-            credit_stop=settings.credit_stop,
-            enabled=True,
-        )
-        # `runtime` is passed as a provider, not a snapshot: the scheduler asks it
-        # for the current settings each time it needs one, which is what makes a
-        # console change take effect on the next tick with no restart.
-        scheduler = Scheduler(
-            client=client,
-            storage=storage,
-            settings=runtime.settings,
-            notifier=_make_notifier(settings),
-        )
-        control.attach(scheduler=scheduler, client=client, bot=bot_inst)
-        labels = ", ".join(s.label() for s in client.pool._states)
-        print(f"[live-ingest] Rotating client online with {len(api_keys)} key(s): {labels}")
-        print(f"[live-ingest] Per-key daily budget: {settings.credit_budget_daily} request(s)")
-
-        def _ingest_loop():
-            print("[live-ingest] Adaptive odds poller active.")
-            while True:
-                try:
-                    scheduler.tick()
-                except Exception as exc:
-                    # Never let one bad cycle kill the thread; the next tick
-                    # re-derives cadence from the ledger.
-                    print(f"[live-ingest] Cycle error: {exc!r}")
-                    time.sleep(min(60, settings.cadence_idle_sec))
-
-        t_ingest = threading.Thread(target=_ingest_loop, daemon=True)
-        t_ingest.start()
-    else:
-        print("[live-ingest] Live odds poller on standby (awaiting API key or offline mode).")
+    # Production uses one autonomous free-stack worker. Legacy CLI commands
+    # remain explicit diagnostic tools, never a second owner of live generation.
+    control.attach(bot=bot_inst)
 
     server = make_production_server(
         host="0.0.0.0",
@@ -988,16 +1083,22 @@ def _cmd_start(args: argparse.Namespace) -> int:
         control=control,
     )
 
+    service = server.daily_service
+    if service and not getattr(args, "no_ingest", False):
+        storage.set_telemetry("daily:worker_mode", "embedded")
+        control.attach(scheduler=service)
+        service.start()
+
     print(f"[start] Admin console: http://0.0.0.0:{port}/admin")
     print(f"[start] ==========================================================")
     print(f"[start] LISA Production Service active on http://0.0.0.0:{port}/")
-    print(f"[start] Multi-Threaded Engine: ON | SQLite WAL: ON | Security: ON")
+    print(f"[start] Storage: {settings.storage_driver} | Background worker: {not args.no_ingest}")
     print(f"[start] ==========================================================")
 
     def _shutdown_handler(sig, frame):
         print("\n[start] Shutting down LISA Production Stack...")
-        server.shutdown()
-        sys.exit(0)
+        # shutdown waits for serve_forever: calling it in this thread deadlocks.
+        threading.Thread(target=server.shutdown, name="lisa-shutdown", daemon=True).start()
 
     signal.signal(signal.SIGINT, _shutdown_handler)
     signal.signal(signal.SIGTERM, _shutdown_handler)
@@ -1006,6 +1107,11 @@ def _cmd_start(args: argparse.Namespace) -> int:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        if service:
+            service.stop()
+        server.server_close()
+        storage.close()
     return 0
 
 
@@ -1174,8 +1280,20 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--no-bot", action="store_true", help="disable Telegram bot background daemon")
     start.add_argument("--no-ingest", action="store_true", help="disable background odds polling")
 
+    sub.add_parser("worker", help="run autonomous generation and independent settlement")
+    pilot = sub.add_parser('pilot', help='isolated PostgreSQL paper pilot with recorded job evidence')
+    mode = pilot.add_mutually_exclusive_group()
+    mode.add_argument('--prepare',action='store_true',help='create private local Docker pilot passwords')
+    mode.add_argument('--once',action='store_true',help='run generation, settlement and backfill once')
+    mode.add_argument('--report',action='store_true',help='read sanitized pilot evidence without provider requests')
+    pilot.add_argument('--days',type=int,default=14)
+
     args = parser.parse_args(argv)
 
+    if args.cmd == 'pilot':
+        return _cmd_pilot(args)
+    if args.cmd == "worker":
+        return _cmd_worker(args)
     if args.cmd == "doctor":
         return _cmd_doctor(args)
     if args.cmd == "start":

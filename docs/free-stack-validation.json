@@ -1,0 +1,61 @@
+{
+  "checked_at": "2026-10-04T01:32:19.351659+00:00",
+  "scope": "Offline free-source integration and existing local ledger diagnosis",
+  "model_version": "league-dixon-coles-v3",
+  "stdlib_tests": {
+    "run": 196,
+    "passed": 187,
+    "skipped_postgres": 9,
+    "failed": 0
+  },
+  "new_free_stack_tests": {
+    "run": 24,
+    "failed": 0
+  },
+  "javascript_test_files": {
+    "run": 4,
+    "failed": 0
+  },
+  "syntax_and_public_asset_build": "passed",
+  "history_source": {
+    "name": "openfootball",
+    "bulk_leagues": 8,
+    "new_key_required": false,
+    "cold_files_per_league_for_generation": 2,
+    "current_cache_sec": 86400,
+    "completed_cache_sec": 2592000,
+    "failure_cooldown_sec": 86400,
+    "time_known": false,
+    "settlement_authority": false
+  },
+  "routing_regression": {
+    "configured_overlapping_calendar_sources": 3,
+    "healthy_primary_provider_calls": 1,
+    "unused_fallback_calls": 0
+  },
+  "model_evaluation": {
+    "artifact": "docs/model-evaluation-v3.json",
+    "archive_observations": 7156,
+    "leagues": 5,
+    "metrics_unchanged_from_v2": true,
+    "approved_for_staking": false
+  },
+  "existing_local_ledger_snapshot": {
+    "saved_predictions": 7,
+    "settled_predictions": 7,
+    "upcoming_predictions": 0,
+    "awaiting_results": 0,
+    "match_observations": 1568,
+    "generation_state": "degraded",
+    "history_state": "failed",
+    "settlement_state": "ok",
+    "attribution": "Read-only diagnosis of existing worker output; not proof of the new adapter running."
+  },
+  "limitations": [
+    "No successful direct application download in this restricted coding workspace.",
+    "Publisher samples and licence reviewed through browser access; all-season completeness remains unverified.",
+    "Full pytest suite unavailable because pytest could not be installed through restricted package access.",
+    "PostgreSQL integration, deployment resources, live provider joins and live settlement lag remain unverified.",
+    "No fresh bookmaker quote or profitability validation inferred from offline lifecycle tests."
+  ]
+}

@@ -46,6 +46,9 @@ READONLY_FIELDS: frozenset[str] = frozenset({
     "telegram_chat_id", "tier2_telegram_chat_id", "telegram_bot_username",
     "redis_url", "database_url", "storage_driver", "database_url",
     "discord_webhook_url", "metrics_path", "odds_sanity", "sharp_keys",
+    "provider_credentials_path",
+    "provider_credentials_backend", "credential_encryption_key",
+    "paper_mode",
 })
 
 #: Never echoed to the console, even masked-by-accident. Substrings cover
@@ -57,6 +60,21 @@ _SECRET_HINTS: tuple[str, ...] = ("token", "secret", "password", "api_key",
 #: rather than being allowed to break ingestion or the scheduler loop.
 #: (minimum, maximum). Fields absent from this map are only type-checked.
 _BOUNDS: dict[str, tuple[float, float]] = {
+    'openfootball_cache_sec': (21600, 604800),
+    'the_odds_monthly_limit': (1, 1000000),
+    'the_odds_reserve': (0, 1000000),
+    'the_odds_daily_limit': (1, 1000000),
+    'the_odds_cache_sec': (900, 86400),
+    'oddspapi_monthly_limit': (1, 1000000),
+    'oddspapi_reserve': (0, 1000000),
+    'oddspapi_poll_interval_sec': (900, 86400),
+    "daily_interval_sec": (60, 86400),
+    "board_min_ev": (0, 10),
+    "board_min_model_prob": (0, 1),
+    "board_min_fair_odds": (1.01, 1000),
+    "board_kelly_fraction": (0, 1),
+    "board_max_stake": (0, 0.1),
+    "board_min_accumulator_prob": (0, 1),
     "gate_threshold": (0.0, 1.0),
     "min_books_telemetry": (1, 50),
     "min_books_alert": (1, 50),
@@ -98,13 +116,13 @@ _BOUNDS: dict[str, tuple[float, float]] = {
 
 def is_secret_field(name: str) -> bool:
     lowered = name.lower()
-    return any(hint in lowered for hint in _SECRET_HINTS)
+    return lowered.endswith(('_key', '_keys')) or any(hint in lowered for hint in _SECRET_HINTS)
 
 
 def editable_fields() -> tuple[str, ...]:
     """Field names an operator may change, in a stable order."""
     return tuple(sorted(f.name for f in dataclasses.fields(cfg.Settings)
-                        if f.name not in READONLY_FIELDS))
+                        if f.name not in READONLY_FIELDS and not is_secret_field(f.name)))
 
 
 class OverrideError(ValueError):
@@ -117,7 +135,7 @@ def _coerce(name: str, raw: Any) -> Any:
     field = fields.get(name)
     if field is None:
         raise OverrideError(f"unknown setting: {name}")
-    if name in READONLY_FIELDS:
+    if name in READONLY_FIELDS or is_secret_field(name):
         raise OverrideError(f"{name} cannot be changed at runtime")
 
     # The declared type is matched against the field's *default value* rather
@@ -173,6 +191,12 @@ def _coerce(name: str, raw: Any) -> Any:
     else:
         value = raw
 
+    if name == "product_timezone":
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
+            raise OverrideError("product_timezone must be a valid IANA timezone") from exc
     bounds = _BOUNDS.get(name)
     if bounds is not None:
         low, high = bounds
@@ -198,9 +222,11 @@ class RuntimeConfig:
         self._storage = storage
         self._on_change = on_change
         self._overrides: dict[str, Any] = {}
-        self._effective: cfg.Settings = base
+        self._effective: cfg.Settings = cfg.paper_settings(base)
         self._lock = threading.RLock()
         self._revision = 0
+        self._credential_values = {}
+        self._credential_checked_at = None
         self.load()
 
     # -- persistence --------------------------------------------------------
@@ -219,10 +245,13 @@ class RuntimeConfig:
         raw: dict[str, Any] = {}
         if self._storage is not None:
             try:
-                rows = {r["key"]: r["value"]
-                        for r in self._storage.admin_get_telemetry()
-                        if r.get("key") == OVERRIDES_KEY}
-                stored = rows.get(OVERRIDES_KEY)
+                read_one = getattr(self._storage, 'get_telemetry', None)
+                if callable(read_one):
+                    stored = read_one(OVERRIDES_KEY)
+                else:
+                    # Preserve support for older non-relational read models.
+                    stored = next((r['value'] for r in self._storage.admin_get_telemetry()
+                                   if r.get('key') == OVERRIDES_KEY), None)
                 if isinstance(stored, dict):
                     raw = stored
             except Exception:
@@ -237,6 +266,26 @@ class RuntimeConfig:
                 accepted[name] = _coerce(name, value)
             except OverrideError as exc:
                 rejected[name] = str(exc)
+        candidate = dataclasses.replace(self._base, **accepted)
+        if candidate.oddspapi_reserve >= candidate.oddspapi_monthly_limit:
+            for name in ('oddspapi_reserve', 'oddspapi_monthly_limit'):
+                if name in accepted:
+                    accepted.pop(name)
+                    rejected[name] = 'Reserve must be smaller than the monthly limit'
+        if len(candidate.oddspapi_bookmakers) > 3:
+            accepted.pop('oddspapi_bookmakers', None)
+            rejected['oddspapi_bookmakers'] = 'At most three bookmakers are supported'
+        from .providers.the_odds_api import TheOddsApiProvider
+        try:
+            TheOddsApiProvider('', monthly_limit=candidate.the_odds_monthly_limit,
+                reserve=candidate.the_odds_reserve, daily_limit=candidate.the_odds_daily_limit,
+                regions=candidate.the_odds_regions, markets=candidate.the_odds_markets,
+                ttl=candidate.the_odds_cache_sec)
+        except ValueError as exc:
+            for name in tuple(accepted):
+                if name.startswith('the_odds_'):
+                    accepted.pop(name)
+                    rejected[name] = str(exc)
         if rejected:
             logger.warning(
                 "Discarding %d persisted setting override(s) that no longer "
@@ -272,12 +321,33 @@ class RuntimeConfig:
                 # A field that vanished from Settings between releases: drop it
                 # rather than failing every future settings read.
                 self._overrides.pop(name, None)
-        self._effective = settings
+        self._effective = cfg.paper_settings(settings)
         self._revision += 1
 
     def settings(self) -> cfg.Settings:
         with self._lock:
+            from .provider_credentials import credential_store
+            import time
+            if (self._base.provider_credentials_backend != 'postgres'
+                    or self._credential_checked_at is None
+                    or time.monotonic()-self._credential_checked_at >= 5):
+                values = credential_store(self._base, self._storage).read()
+                self._credential_checked_at = time.monotonic()
+            else:
+                values = self._credential_values
+            if values != self._credential_values:
+                self._credential_values = values
+                self._recompute_locked()
+            if values:
+                overrides = dict(values)
+                if 'odds_api_key' in overrides:
+                    overrides['odds_api_keys'] = (overrides['odds_api_key'],) if overrides['odds_api_key'] else ()
+                return dataclasses.replace(self._effective, **overrides)
             return self._effective
+
+    def invalidate_credentials(self):
+        with self._lock:
+            self._credential_checked_at = None
 
     @property
     def base(self) -> cfg.Settings:
@@ -349,6 +419,19 @@ class RuntimeConfig:
         with self._lock:
             new_overrides = {} if replace else dict(self._overrides)
             new_overrides.update(coerced)
+            candidate = dataclasses.replace(self._base, **new_overrides)
+            from .providers.the_odds_api import TheOddsApiProvider
+            try:
+                TheOddsApiProvider('', monthly_limit=candidate.the_odds_monthly_limit,
+                    reserve=candidate.the_odds_reserve, daily_limit=candidate.the_odds_daily_limit,
+                    regions=candidate.the_odds_regions, markets=candidate.the_odds_markets,
+                    ttl=candidate.the_odds_cache_sec)
+            except ValueError as exc:
+                raise OverrideError(str(exc)) from None
+            if not 0 <= candidate.oddspapi_reserve < candidate.oddspapi_monthly_limit:
+                raise OverrideError('oddspapi_reserve must be smaller than oddspapi_monthly_limit')
+            if len(candidate.oddspapi_bookmakers) > 3:
+                raise OverrideError('At most three OddsPapi bookmakers may be configured')
             previous = self._effective
             self._overrides = new_overrides
             self._recompute_locked()

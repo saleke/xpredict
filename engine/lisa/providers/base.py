@@ -37,7 +37,6 @@ No third-party dependencies -- standard library only, like the rest of LISA.
 from __future__ import annotations
 
 import errno
-import gzip
 import json
 import logging
 import random
@@ -50,6 +49,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence, runtime_checkable
+from ..job_budget import check_budget, bounded_timeout, budget_sleep
 
 logger = logging.getLogger("lisa.providers.base")
 
@@ -234,6 +234,7 @@ class SourceTier(Enum):
 
     OFFICIAL = "official"       # Documented, supported API on a free tier.
     UNOFFICIAL = "unofficial"   # Scraped / community / ToS-grey: always flagged.
+    COMMUNITY = "community"     # Published open data; no live-update commitment.
 
 
 @dataclass(frozen=True)
@@ -301,6 +302,8 @@ class ParseError(ProviderError):
     an error rather than as an empty board.
     """
 
+    retryable = False
+
 
 class RateLimitedError(ProviderError):
     """429, or a quota response that would not have been billed."""
@@ -358,6 +361,7 @@ class TokenBucket:
             return 0.0
         waited = 0.0
         while True:
+            check_budget()
             with self._lock:
                 self._refill_locked()
                 if self._tokens >= tokens:
@@ -368,7 +372,7 @@ class TokenBucket:
                 # Wait under the lock only long enough to re-check; sleeping
                 # while other threads drain the bucket would serialise callers
                 # that could have proceeded in parallel.
-            time.sleep(max(0.001, min(delay, 5.0)))
+            budget_sleep(max(0.001, min(delay, 5.0)))
             waited += max(0.001, min(delay, 5.0))
 
     @property
@@ -530,7 +534,7 @@ class HttpTransport:
                  backoff_base: float = 1.0, cache: Optional[ResponseCache] = None,
                  user_agent: str = "lisa/2.0 (+https://github.com/saleke/xpredict)",
                  time_budget: float = 45.0, default_rate_per_sec: float = 1.0,
-                 max_redirects: int = 5) -> None:
+                 max_redirects: int = 5, max_response_bytes: int = 10_000_000) -> None:
         self.timeout = timeout
         self.max_retries = max_retries
         self.backoff_base = backoff_base
@@ -538,6 +542,7 @@ class HttpTransport:
         self.user_agent = user_agent
         self.time_budget = time_budget
         self.max_redirects = max_redirects
+        self.max_response_bytes = max_response_bytes
         self._hosts: dict[str, _HostState] = {}
         self._hosts_lock = threading.Lock()
         self._default_rate = default_rate_per_sec
@@ -620,13 +625,17 @@ class HttpTransport:
             url, req_headers, provider=provider)
 
         if status == 304 and entry is not None:
+            entry.stored_at = utcnow_ts()
+            self.cache.put(url, entry)
             self.not_modified_count += 1
             self.cache.record_revalidation()
             logger.debug("304 revalidation hit %s", url)
             return self._decode(entry.body, url, provider)
 
-        content = _decompress(body, headers_out.get("content-encoding", ""))
+        content = _decompress(body, headers_out.get("content-encoding", ""),
+                              max_bytes=self.max_response_bytes)
         if status in (200, 201):
+            decoded = self._decode(content, url, provider)
             if ttl > 0:
                 self.cache.put(url, CacheEntry(
                     body=content,
@@ -634,7 +643,7 @@ class HttpTransport:
                     last_modified=headers_out.get("last-modified"),
                     stored_at=utcnow_ts(),
                 ))
-            return self._decode(content, url, provider)
+            return decoded
 
         # Any other 2xx: decode defensively, some sources answer 206/202.
         if 200 <= status < 300:
@@ -653,6 +662,7 @@ class HttpTransport:
         redirects = 0
 
         for attempt in range(self.max_retries + 1):
+            check_budget()
             if time.monotonic() - started > self.time_budget:
                 raise ApiError(f"time budget exhausted for {url}", provider=provider)
 
@@ -665,6 +675,8 @@ class HttpTransport:
                     parts, headers, state, host)
             except Exception as exc:
                 last_error = exc
+                if isinstance(exc, ProviderError) and not exc.retryable:
+                    raise
                 # A host with no route to the network will not acquire one by
                 # being asked again. Retrying burned 4 x timeout on every
                 # provider per cycle -- a 10s board build that could not
@@ -675,7 +687,7 @@ class HttpTransport:
                         f"({network_diagnosis(host, _errno_of(exc))}): {exc!r}",
                         provider=provider) from exc
                 if attempt < self.max_retries:
-                    time.sleep(self._backoff(attempt))
+                    budget_sleep(self._backoff(attempt))
                     continue
                 # Raise here. Falling through would reach the redirect check
                 # with `status` never bound, and Python would raise
@@ -704,7 +716,7 @@ class HttpTransport:
             if status in (429, 503):
                 retry_after = _retry_after_seconds(resp_headers)
                 if attempt < self.max_retries:
-                    time.sleep(retry_after if retry_after is not None
+                    budget_sleep(retry_after if retry_after is not None
                                else self._backoff(attempt))
                     continue
                 raise RateLimitedError(
@@ -713,7 +725,7 @@ class HttpTransport:
                     retry_after=retry_after if retry_after is not None else 60.0)
             if 500 <= status < 600:
                 if attempt < self.max_retries:
-                    time.sleep(self._backoff(attempt))
+                    budget_sleep(self._backoff(attempt))
                     continue
                 last_error = ApiError(f"{host} returned {status}", provider=provider)
             return status, resp_headers, body
@@ -721,8 +733,30 @@ class HttpTransport:
         raise ApiError(f"request failed for {url}: {last_error}",
                        provider=provider) from last_error
 
+    def post_json(self, url: str, *, form: Mapping[str, Any], provider: str = '') -> Any:
+        """Pooled form POST for providers with body-based credentials.
+
+        Never follow a redirect carrying credentials, log form data, or echo
+        provider error payloads. Callers own persistent cache/quota reservations.
+        """
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme != 'https' or parts.query:
+            raise ValueError('credential-bearing POST requires an HTTPS URL without a query')
+        host = parts.hostname or ''
+        state = self._state(host)
+        state.bucket.acquire()
+        try:
+            status, _, body = self._single(parts,
+                {'Content-Type': 'application/x-www-form-urlencoded'}, state, host,
+                method='POST', body=urllib.parse.urlencode(form).encode())
+        except Exception:
+            raise ApiError(f'{provider}: POST transport failed; credentials and response omitted', provider=provider) from None
+        if not 200 <= status < 300:
+            raise ApiError(f'{provider}: HTTP {status}; credentials and response omitted', provider=provider)
+        return self._decode(body, url, provider)
+
     def _single(self, parts: Any, headers: dict[str, str],
-                state: _HostState, host: str) -> tuple[int, dict[str, str], bytes]:
+                state: _HostState, host: str, *, method='GET', body=None) -> tuple[int, dict[str, str], bytes]:
         """One request, reusing a pooled connection when possible."""
         path = parts.path or "/"
         if parts.query:
@@ -731,16 +765,27 @@ class HttpTransport:
         is_https = parts.scheme == "https"
 
         with state.lock:
-            for attempt in range(2):       # 2: one retry after a stale socket
+            for attempt in range(2 if method == 'GET' else 1):
+                timeout = bounded_timeout(self.timeout)
                 conn = state.connection
                 if conn is None:
                     conn = (HTTPSConnection if is_https else HTTPConnection)(
-                        host, port, timeout=self.timeout)
+                        host, port, timeout=timeout)
                     state.connection = conn
+                conn.timeout = timeout
+                if conn.sock is not None:
+                    conn.sock.settimeout(timeout)
                 try:
-                    conn.request("GET", path, headers=headers)
+                    if method == 'GET':
+                        conn.request('GET', path, headers=headers)
+                    else:
+                        conn.request(method, path, body=body, headers=headers)
                     resp = conn.getresponse()
-                    body = resp.read()
+                    body = resp.read(self.max_response_bytes + 1)
+                    if len(body) > self.max_response_bytes:
+                        conn.close()
+                        state.connection = None
+                        raise ParseError('provider response exceeds size limit')
                     self.request_count += 1
                     return resp.status, _flat_headers(resp), body
                 except Exception as exc:
@@ -813,18 +858,35 @@ def _flat_headers(resp: Any) -> dict[str, str]:
         return {}
 
 
-def _decompress(body: bytes, encoding: str) -> bytes:
+def _decompress(body: bytes, encoding: str, *, max_bytes: int = 10_000_000) -> bytes:
     enc = (encoding or "").lower().strip()
+    if len(body) > max_bytes:
+        raise ParseError('provider response exceeds size limit')
     if not body or enc in ("", "identity"):
         return body
     try:
         if enc == "gzip":
-            return gzip.decompress(body)
+            decoder = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            content = decoder.decompress(body, max_bytes + 1)
+            if len(content) > max_bytes or decoder.unconsumed_tail:
+                raise ParseError('decompressed response exceeds size limit')
+            if not decoder.eof:
+                raise ParseError('truncated compressed response')
+            return content
         if enc == "deflate":
             try:
-                return zlib.decompress(body)
+                decoder = zlib.decompressobj()
+                content = decoder.decompress(body, max_bytes + 1)
             except zlib.error:
-                return zlib.decompress(body, -zlib.MAX_WBITS)
+                decoder = zlib.decompressobj(-zlib.MAX_WBITS)
+                content = decoder.decompress(body, max_bytes + 1)
+            if len(content) > max_bytes or decoder.unconsumed_tail:
+                raise ParseError('decompressed response exceeds size limit')
+            if not decoder.eof:
+                raise ParseError('truncated compressed response')
+            return content
+    except ParseError:
+        raise
     except Exception as exc:
         logger.debug("could not decompress %s payload: %s", enc, exc)
     return body
@@ -870,6 +932,7 @@ class FixturesResult:
     provider: str
     sport_key: str
     fixtures: tuple[Mapping[str, Any], ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def finished(self) -> tuple[Mapping[str, Any], ...]:
         return tuple(f for f in self.fixtures if f.get("completed"))

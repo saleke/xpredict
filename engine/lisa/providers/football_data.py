@@ -188,6 +188,17 @@ class FootballDataProvider:
 
     # -- internals ----------------------------------------------------------
 
+    def get_season(self, sport_key: str, season: int) -> FixturesResult:
+        spec = LEAGUES.get(sport_key)
+        if spec is None or not spec.fdo:
+            return FixturesResult(NAME, sport_key, ())
+        if not self.is_available():
+            raise ProviderNotAvailableError('FOOTBALL_DATA_TOKEN is not configured', provider=NAME)
+        rows = self._get(f'/competitions/{spec.fdo}/matches', params={'season': str(season)},
+                         ttl=SEASON_TTL_SEC, envelope_key='matches')
+        fixtures = [self._to_fixture(row, sport_key, spec.title) for row in rows]
+        return FixturesResult(NAME, sport_key, tuple(f for f in fixtures if f is not None))
+
     def _season_matches(self, code: str, year: Optional[str] = None) -> list[dict[str, Any]]:
         """One season's matches. Cached; an in-progress season changes daily."""
         params = {"season": year} if year else None
@@ -209,23 +220,31 @@ class FootballDataProvider:
             if not home or not away:
                 return None
 
-            hs = _to_int(row.get("score", {}).get("fullTime", {}).get("home")
-                         if isinstance(row.get("score"), dict) else None)
-            aws = _to_int(row.get("score", {}).get("fullTime", {}).get("away")
-                          if isinstance(row.get("score"), dict) else None)
+            score = row.get('score') if isinstance(row.get('score'), dict) else {}
+            extra_time = score.get('duration') in ('EXTRA_TIME', 'PENALTY_SHOOTOUT')
+            regulation = score.get('regularTime' if extra_time else 'fullTime') or {}
+            hs = _to_int(regulation.get('home'))
+            aws = _to_int(regulation.get('away'))
             # A match can be finished-but-unofficial (played, awaiting review);
             # only score.fullTime is a final result we are willing to train on.
             status = _STATUS_MAP.get(str(row.get("status", "")).upper(), "SCHEDULED")
             if status == "FINISHED" and (hs is None or aws is None):
                 status = "TIMED"
 
-            return normalise_fixture(
+            result = normalise_fixture(
                 provider=NAME, sport_key=sport_key,
                 match_id=str(row.get("id", "")),
                 kickoff_epoch=epoch, home=home, away=away,
                 home_score=hs, away_score=aws, status=status,
                 season=str(row.get("season", {}).get("id", "")),
             )
+            result.update(home_team_id=row['homeTeam'].get('id'), away_team_id=row['awayTeam'].get('id'),
+                          ended_after_extra_time=extra_time)
+            half = score.get('halfTime') or {}
+            if all(type(half.get(s)) is int and half[s] >= 0 for s in ('home', 'away')):
+                if not result['completed'] or (half['home'] <= result['home_score'] and half['away'] <= result['away_score']):
+                    result.update(home_first_half_score=half['home'], away_first_half_score=half['away'])
+            return result
         except Exception as exc:
             logger.debug("skipping malformed football-data.org row: %r", exc)
             return None

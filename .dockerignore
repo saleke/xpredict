@@ -31,3 +31,5 @@ engine/tests/
 # Never ship a web/data dir: the dashboard reads from the API, and any
 # verified-users or report JSON is host-only state.
 web/data/
+.venv/
+.github/

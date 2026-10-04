@@ -87,7 +87,7 @@ fi
 
 # 6. Rebuild and roll the service. The new code only takes effect after this.
 log "rebuilding image and restarting service"
-if ! $COMPOSE -f "$REPO/docker-compose.yml" up -d --build --remove-orphans lisa >>"$LOG" 2>&1; then
+if ! $COMPOSE -f "$REPO/docker-compose.yml" up -d --build db web worker >>"$LOG" 2>&1; then
     log "ERROR: docker-compose up failed; see $LOG"
     exit 1
 fi
@@ -97,7 +97,7 @@ log "waiting for health check"
 healthy=0
 for _ in $(seq 1 30); do
     state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
-        lisa_sports_engine 2>/dev/null || echo unknown)"
+        "$($COMPOSE -f "$REPO/docker-compose.yml" ps -q web)" 2>/dev/null || echo unknown)"
     if [[ "$state" == "healthy" ]]; then healthy=1; break; fi
     if [[ "$state" == "unhealthy" ]]; then break; fi
     sleep 2
@@ -107,6 +107,6 @@ if [[ "$healthy" == "1" ]]; then
     log "DEPLOYED $new_commit: container is healthy"
 else
     log "WARNING: deployed $new_commit but health check did not report healthy"
-    log "         inspect with: docker logs --tail 100 lisa_sports_engine"
+    log "         inspect with: docker compose logs --tail 100 web worker"
 fi
 exit 0

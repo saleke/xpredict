@@ -53,9 +53,10 @@ class VerificationRegistry:
     IDs, and ``web/`` is served as static content.
     """
 
-    def __init__(self, storage_path: str = DEFAULT_VERIFIED_PATH, db_path: Optional[str] = "data/lisa.db"):
+    def __init__(self, storage_path: str = DEFAULT_VERIFIED_PATH, db_path: Optional[str] = "data/lisa.db", *, storage=None):
+        self.storage = storage
         self.storage_path = storage_path
-        self.db_path = db_path
+        self.db_path = None if storage is not None else db_path
         self._verified: dict[str, dict[str, Any]] = {}
         self._init_sqlite()
         self._load()
@@ -81,6 +82,8 @@ class VerificationRegistry:
             logger.debug("SQLite verification table init skipped: %s", exc)
 
     def _load(self) -> None:
+        if self.storage is not None:
+            return
         try:
             p = Path(self.storage_path)
             if p.exists():
@@ -91,6 +94,8 @@ class VerificationRegistry:
             logger.debug("Failed to load verification registry: %s", exc)
 
     def _save(self) -> None:
+        if self.storage is not None:
+            return
         try:
             p = Path(self.storage_path)
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +106,9 @@ class VerificationRegistry:
     def verify(self, web_user_id: str, telegram_user_id: str = "", username: str = "") -> None:
         """Mark a web user as cryptographically verified via Telegram."""
         if not web_user_id:
+            return
+        if self.storage is not None:
+            self.storage.verify_user(web_user_id, telegram_user_id, username)
             return
         clean_id = web_user_id.strip()
         now_ts = time.time()
@@ -130,6 +138,8 @@ class VerificationRegistry:
         """Check if a web session ID has confirmed Telegram channel membership."""
         if not web_user_id:
             return False
+        if self.storage is not None:
+            return self.storage.is_user_verified(web_user_id)
         clean_id = web_user_id.strip()
 
         # Check SQLite first
@@ -149,6 +159,9 @@ class VerificationRegistry:
         return bool(self._verified.get(clean_id, {}).get("verified", False))
 
     def get_session(self, web_user_id: str) -> Optional[dict[str, Any]]:
+        if self.storage is not None:
+            row = self.storage.get_verified_user(web_user_id)
+            return dict(row, verified=True) if row else None
         clean_id = web_user_id.strip()
         if self.db_path:
             try:
@@ -174,7 +187,7 @@ class VerificationRegistry:
 
 
 # Global shared registry instance
-registry = VerificationRegistry()
+registry = VerificationRegistry(db_path=None if os.environ.get("LISA_STORAGE") == "postgres" or os.environ.get('VERCEL') else "data/lisa.db")
 
 # ── Role-Based Persistent Reply Keyboards ─────────────────────────────────────
 # Every button text below MUST also resolve through the router in
@@ -291,8 +304,9 @@ class BankrollFSMManager:
     STATE_WAIT_FOR_PROVISION_DATA = "WAIT_FOR_PROVISION_DATA"
     STATE_WAIT_FOR_BROADCAST_DATA = "WAIT_FOR_BROADCAST_DATA"
 
-    def __init__(self, db_path: Optional[str] = "data/lisa.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = "data/lisa.db", *, storage=None):
+        self.storage = storage
+        self.db_path = None if storage is not None else db_path
         self._states: dict[str, str] = {}
         self._temp: dict[str, dict[str, Any]] = {}
         self._profiles: dict[str, dict[str, Any]] = {}
@@ -345,7 +359,11 @@ class BankrollFSMManager:
         self._temp.pop(str(user_id), None)
         self._states[str(user_id)] = self.STATE_IDLE
 
-    def get_profile(self, user_id: str) -> Optional[dict[str, Any]]:
+    def get_profile(self, user_id: str):
+        if self.storage is not None:
+            with self.storage._tx() as conn:
+                row = conn.execute("SELECT * FROM user_bankroll_profiles WHERE user_id=?", (str(user_id),)).fetchone()
+            return dict(row) if row else None
         return self._profiles.get(str(user_id))
 
     def save_profile(
@@ -369,6 +387,17 @@ class BankrollFSMManager:
         }
         self._profiles[str(user_id)] = record
         self.clear_temp(user_id)
+
+        if self.storage is not None:
+            with self.storage._tx() as conn:
+                conn.execute("INSERT INTO user_bankroll_profiles "
+                    "(user_id, username, bankroll_amount, risk_profile, kelly_fraction, preferred_bookmaker, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET "
+                    "username=excluded.username, bankroll_amount=excluded.bankroll_amount, "
+                    "risk_profile=excluded.risk_profile, kelly_fraction=excluded.kelly_fraction, "
+                    "preferred_bookmaker=excluded.preferred_bookmaker, updated_at=excluded.updated_at",
+                    tuple(record[k] for k in ("user_id", "username", "bankroll_amount", "risk_profile", "kelly_fraction", "preferred_bookmaker", "updated_at")))
+            return record
 
         if self.db_path:
             try:
@@ -394,7 +423,7 @@ class BankrollFSMManager:
         return record
 
 
-bankroll_fsm = BankrollFSMManager()
+bankroll_fsm = BankrollFSMManager(db_path=None if os.environ.get("LISA_STORAGE") == "postgres" or os.environ.get('VERCEL') else "data/lisa.db")
 
 
 def _unlock_secret() -> bytes:
@@ -1043,8 +1072,8 @@ class TelegramBot:
         #: a single actionable line instead of thousands of identical warnings.
         self.auth_failed: str = ""
         self.outbox: list[dict[str, Any]] = []
-        self.registry = verification_registry or registry
-        self.fsm = BankrollFSMManager(db_path=getattr(self.registry, "db_path", "data/lisa.db"))
+        self.registry = verification_registry or (VerificationRegistry(storage=storage) if storage is not None and hasattr(storage, "_tx") else registry)
+        self.fsm = BankrollFSMManager(db_path=getattr(self.registry, "db_path", "data/lisa.db"), storage=storage if storage is not None and hasattr(storage, "_tx") else None)
         self._mock_members: set[str] = set()
         self._member_cache: dict[str, tuple[bool, float]] = {}
         self._tier_cache: dict[str, tuple[str, float]] = {}
@@ -1322,20 +1351,12 @@ class TelegramBot:
             if now < exp:
                 return val
         tier = "free"
-        if self.registry and hasattr(self.registry, "db_path") and self.registry.db_path:
-            try:
-                import sqlite3
-                with sqlite3.connect(self.registry.db_path, timeout=5.0) as conn:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT tier FROM users WHERE id = ? OR email = ? LIMIT 1",
-                        (str(user_id), str(user_id)),
-                    )
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        tier = str(row[0]).lower()
-            except Exception:
-                pass
+        if self.storage and hasattr(self.storage, "_tx"):
+            with self.storage._tx() as conn:
+                row = conn.execute("SELECT tier FROM users WHERE telegram_id=? OR id=? OR email=? LIMIT 1",
+                                   (str(user_id), str(user_id), str(user_id))).fetchone()
+            if row:
+                tier = str(row["tier"]).lower()
         self._tier_cache[user_id] = (tier, now + 300.0)
         return tier
 
@@ -1562,6 +1583,19 @@ class TelegramBot:
 
         if cmd in ("/parlay", "/accumulator"):
             return self._handle_parlay(user_id)
+
+        if cmd in ("/micro", "/microbets"):
+            import html
+            payload = self.storage.get_telemetry("daily:board") if self.storage and hasattr(self.storage, "get_telemetry") else None
+            rows = ((payload or {}).get("board") or {}).get("micro_bets", [])
+            lines = ["<b>Micro forecasts</b>", "Model probabilities; results grade the first published selection."]
+            for r in rows[:12]:
+                line = "" if r.get("line") is None else f" {r['line']}"
+                lines.append(html.escape(f"{r['home']} v {r['away']}: {r['market']} {r['selection']}{line}")
+                             + f" — {r['p_model']:.1%}")
+            if not rows:
+                lines.append("No micro forecasts in the latest published cycle.")
+            return ("\n".join(lines), None)
 
         if cmd in ("/codes", "/bookmakers"):
             return self._handle_booking_codes()
@@ -1947,17 +1981,10 @@ class TelegramBot:
         target = target.strip()
         clean_tier = "tier2" if "2" in tier_input else "tier3" if "3" in tier_input else "tier1" if "1" in tier_input else "free"
 
-        if self.registry and hasattr(self.registry, "db_path") and self.registry.db_path:
-            try:
-                import sqlite3
-                with sqlite3.connect(self.registry.db_path, timeout=5.0) as conn:
-                    conn.execute(
-                        "UPDATE users SET tier = ?, updated_at = ? WHERE email = ? OR id = ?",
-                        (clean_tier, time.time(), target.lower(), target)
-                    )
-                    conn.commit()
-            except Exception as exc:
-                logger.warning("Failed to update users table during grant: %s", exc)
+        if self.storage and hasattr(self.storage, "_tx"):
+            with self.storage._tx() as conn:
+                conn.execute("UPDATE users SET tier=?, updated_at=? WHERE email=? OR id=? OR telegram_id=?",
+                    (clean_tier, time.time(), target.lower(), target, target))
 
         self.registry.verify(target, telegram_user_id=target if target.isdigit() else "")
         self.invalidate_user_cache(target)
@@ -2610,43 +2637,31 @@ class TelegramBot:
 
     def _handle_picks_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Handle /picks command — show tier-specific picks for the user."""
-        from .tier_curator import tier_curator, TIER_RULES
-
-        # Get the user's tier (default to free)
-        tier = "free"
-        if self.auth:
-            user = self.auth.get_user_by_telegram_id(user_id)
-            if user:
-                tier = user.get("tier", "free")
-
-        # Get curated picks for the user's tier
-        # For now, show a placeholder — in production this would query the curator
-        rule = TIER_RULES.get(tier)
-        if not rule:
-            return ("❌ Invalid tier. Please contact support.", None)
-
-        text = (
-            f"🎯 <b>YOUR {tier.upper()} PICKS</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Odds range: <code>{rule.min_odds:.2f} - {rule.max_odds:.2f}</code>\n"
-            f"Picks per week: <code>{rule.picks_per_week}</code>\n"
-            f"Min conviction: <code>{rule.min_conviction:.2f}</n\n"
-            f"<i>Your curated picks will appear here once the daily board is generated.</i>"
-        )
-        return (text, None)
+        import html
+        picks = self._load_dashboard_picks()
+        lines = ["<b>Published model forecasts</b>", "Probabilities are estimates, not guaranteed outcomes."]
+        for pick in picks[:12]:
+            probability = pick.get("p_true")
+            prob_text = f"{probability:.1%}" if isinstance(probability, (int, float)) else "n/a"
+            lines.append(f"{html.escape(str(pick.get('home_team', '')))} v "
+                         f"{html.escape(str(pick.get('away_team', '')))}: "
+                         f"{html.escape(str(pick.get('market', '')))} "
+                         f"{html.escape(str(pick.get('outcome_name', '')))} — {prob_text}")
+        if not picks:
+            lines.append("No upcoming published forecasts are available.")
+        return "\n".join(lines), None
 
     def _handle_acca_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
-        """Handle /acca command — show accumulator tips."""
-        text = (
-            "🎰 <b>ACCUMULATOR TIPS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Daily curated parlays from our best picks.\n\n"
-            "📊 <b>Today's Acca:</b>\n"
-            "<i>Will be available once today's picks are finalized.</i>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 <i>Accumulators combine multiple picks into one bet for higher odds.</i>"
-        )
-        return (text, None)
+        import html
+        payload = self.storage.get_telemetry("daily:board") if self.storage and hasattr(self.storage, "get_telemetry") else None
+        accas = ((payload or {}).get("board") or {}).get("accumulators", [])
+        lines = ["<b>Model combinations</b>", "Theoretical probabilities; no confirmed bookmaker parlay offer."]
+        for acca in accas[:5]:
+            legs = [f"{r['home']} v {r['away']}: {r['selection']}" for r in acca['legs']]
+            lines.append(html.escape(" + ".join(legs)) + f" — {acca['p_adjusted']:.1%}")
+        if not accas:
+            lines.append("No combinations in the latest published cycle.")
+        return ("\n".join(lines), None)
 
     def _handle_payment_method_selection(self, tier: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Show payment method options for a selected tier."""
@@ -2744,43 +2759,10 @@ class TelegramBot:
             return ("❌ Invalid payment method. Please try again.", None)
 
     def _handle_payment_confirmation(self, method: str, tier: str, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
-        """Handle payment confirmation - generate and send the one-time key."""
-        from .payments import generate_payment_key, key_store, get_tier_price
-
-        # Generate the payment key
-        payment_key = generate_payment_key(tier, user_id)
-        key_store.store(payment_key)
-
-        price = get_tier_price(tier)
-
-        # Format expiry time
-        from datetime import datetime, timezone
-        expiry_time = datetime.fromtimestamp(payment_key.expires_at, tz=timezone.utc).strftime("%H:%M UTC")
-
-        text = (
-            f"🎉 <b>PAYMENT CONFIRMED!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Tier: <b>{tier.upper()}</b>\n"
-            f"Amount: <code>₦{price.ngn:,}</code>\n\n"
-            f"🔑 <b>Your One-Time Activation Key:</b>\n"
-            f"<code>{payment_key.key}</code>\n\n"
-            f"⏰ <b>Expires:</b> {expiry_time} (1 hour)\n"
-            f"⚠️ <b>Single use only.</b> Do not share this key.\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👇 <b>Next Steps:</b>\n"
-            f"1. Copy the key above\n"
-            f"2. Go to <b>http://localhost:8080</b>\n"
-            f"3. Log in to your account\n"
-            f"4. Paste the key in the 'Activate Tier' section\n\n"
-            f"<i>Once redeemed, this key is permanently burned.</i>"
-        )
-
-        markup = {
-            "inline_keyboard": [
-                [{"text": "🌐 Open Website", "url": "http://localhost:8080"}],
-            ]
-        }
-        return (text, markup)
+        """A user's click is not payment evidence. Provisioning is server/admin only."""
+        return ("Payment verification is not configured for this checkout. "
+                "No activation key or paid access has been issued. "
+                "Contact the operator for verified payment and account provisioning.", None)
 
     def _handle_buy_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Handle /buy command - show tier selection."""

@@ -1,0 +1,60 @@
+{
+  "checked_at": "2026-10-04T04:11:38.439842+00:00",
+  "scope": "Offline replay of real saved calendar and history on a private database backup",
+  "live_database_modified": false,
+  "provider_requests": 0,
+  "calendar_observed_at": "2026-10-04T04:07:26.466272+00:00",
+  "configured_hours": 24.0,
+  "selection": {
+    "mode": "nearest_upcoming",
+    "configured_hours": 24.0,
+    "effective_hours": 133.0,
+    "expanded": true,
+    "available_verified": 66,
+    "available_modelled": 66,
+    "next_kickoff": "2026-10-07T22:30:00+00:00",
+    "next_forecast_kickoff": "2026-10-07T22:30:00+00:00",
+    "volume_target": 12
+  },
+  "forecast_matches": 12,
+  "categories": {
+    "winning": 12,
+    "micro_bets": 40,
+    "earning": 0,
+    "accumulators": 12
+  },
+  "earliest_forecast": "2026-10-07T22:30:00+00:00",
+  "earliest_winning": "2026-10-07T22:30:00+00:00",
+  "micro_market_types": [
+    "away_team_totals",
+    "btts",
+    "correct_score",
+    "double_chance",
+    "draw_no_bet",
+    "home_team_totals",
+    "totals"
+  ],
+  "paper_stakes_zero": true,
+  "timings_ms": {
+    "calendar": 1.2,
+    "history_and_model": 486.842,
+    "prices": 0.002,
+    "board": 36.009,
+    "total": 529.725
+  },
+  "verification": {
+    "python_tests_run": 212,
+    "python_tests_passed": 203,
+    "postgres_tests_skipped": 9,
+    "nearest_fixture_regressions": 16,
+    "legacy_window_regressions_passed": 10,
+    "javascript_test_files_passed": 4,
+    "public_build": "passed",
+    "cold_start_and_restart_without_overrides": "passed"
+  },
+  "limits": [
+    "Running user-host Python processes require one restart to import the new code.",
+    "Replay uses saved observations and performs no new provider authentication or live HTTP checks.",
+    "Production database and scheduler integration remain unverified here."
+  ]
+}

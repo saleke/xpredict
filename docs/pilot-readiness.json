@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-10-03T19:15:49.726873+00:00",
+  "state": "local_execution_required",
+  "docker_cli_available": true,
+  "docker_daemon_accessible": false,
+  "host_postgres_driver_installed": false,
+  "host_postgres_pool_installed": false,
+  "provider_credentials_configured": {
+    "oddspapi": true,
+    "the_odds_api": true,
+    "football_data": true,
+    "api_football": true,
+    "allsports": true,
+    "sharpapi": true
+  },
+  "oddspapi_hostname_resolved": false,
+  "local_live_validation": {
+    "oddspapi": {
+      "state": "missing_report",
+      "checked_at": null,
+      "quotes": 0,
+      "dated_quotes": 0
+    },
+    "the_odds_api": {
+      "state": "sample_failed",
+      "checked_at": "2026-10-03T17:38:10.167044+00:00",
+      "quotes": 0,
+      "dated_quotes": 0
+    }
+  },
+  "blockers": [
+    "Docker daemon is not accessible from this environment",
+    "OddsPapi hostname is not resolvable from this environment",
+    "Direct OddsPapi price access is not verified by a local validation report",
+    "Supporting The Odds API price access is not verified by a local validation report"
+  ],
+  "profitability_approved": false,
+  "limitations": [
+    "Configured keys do not prove authentication, market entitlement or quota availability.",
+    "DNS resolution does not verify outbound HTTPS access.",
+    "Docker builds install PostgreSQL dependencies; host drivers are needed only for host execution.",
+    "Run PostgreSQL checks and collect the separate live pilot report before accepting operations."
+  ]
+}

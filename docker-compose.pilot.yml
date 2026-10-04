@@ -1,0 +1,90 @@
+# Isolated paper database and workers. Run with both private environment files.
+name: xpredict-pilot
+x-app: &pilot-app
+  build: .
+  image: lisa:pilot
+  restart: unless-stopped
+  env_file: .env
+  environment: &pilot-environment
+    LISA_STORAGE: postgres
+    LISA_DATABASE_URL: postgresql://lisa_pilot:${LISA_PILOT_DATABASE_PASSWORD:?Run python -m lisa pilot --prepare}@pilot-db:5432/xpredict_pilot
+    LISA_PILOT_DATABASE_URL: postgresql://lisa_pilot:${LISA_PILOT_DATABASE_PASSWORD:?Run python -m lisa pilot --prepare}@pilot-db:5432/xpredict_pilot
+    LISA_PAPER_MODE: "1"
+    LISA_ENABLE_ODDS_API: "0"
+    LISA_PROVIDER_CREDENTIALS_PATH: /app/data/provider-credentials.json
+    POSTGRES_ADMIN_PASSWORD: ""
+    LISA_DATABASE_PASSWORD: ""
+    LISA_PILOT_ADMIN_PASSWORD: ""
+    LISA_PILOT_DATABASE_PASSWORD: ""
+  depends_on:
+    pilot-db:
+      condition: service_healthy
+  volumes:
+    - pilot-application-data:/app/data
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  stop_grace_period: 45s
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "5"}
+
+services:
+  pilot-db:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xpredict_pilot
+      POSTGRES_PASSWORD: ${LISA_PILOT_ADMIN_PASSWORD:?Run python -m lisa pilot --prepare}
+      LISA_PILOT_DATABASE_PASSWORD: ${LISA_PILOT_DATABASE_PASSWORD:?Run python -m lisa pilot --prepare}
+    volumes:
+      - pilot-postgres-data:/var/lib/postgresql
+      - ./deploy/postgres-pilot-init.sh:/docker-entrypoint-initdb.d/10-pilot.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d xpredict_pilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  web:
+    <<: *pilot-app
+    command: [start, --no-ingest, --no-bot, --port, "8080"]
+    ports: ["127.0.0.1:8090:8080"]
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+
+  worker:
+    <<: *pilot-app
+    command: [pilot]
+    healthcheck: {disable: true}
+
+  report:
+    <<: *pilot-app
+    profiles: [tools]
+    restart: "no"
+    command: [pilot, --report, --days, "14"]
+    healthcheck: {disable: true}
+
+  checks:
+    image: lisa:pilot-checks
+    build:
+      context: .
+      target: checks
+    profiles: [tools]
+    environment:
+      LISA_TEST_POSTGRES_URL: postgresql://lisa_pilot:${LISA_PILOT_DATABASE_PASSWORD:?Run python -m lisa pilot --prepare}@pilot-db:5432/xpredict_pilot_test
+    volumes:
+      - ./engine/tests:/app/engine/tests:ro
+      - ./scripts:/app/scripts:ro
+      - ./.gitignore:/app/.gitignore:ro
+    depends_on:
+      pilot-db:
+        condition: service_healthy
+    entrypoint: [python3, -m, pytest, /app/engine/tests, -q]
+    healthcheck: {disable: true}
+
+volumes:
+  pilot-postgres-data:
+  pilot-application-data:

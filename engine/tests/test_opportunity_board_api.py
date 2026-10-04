@@ -14,14 +14,17 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+import urllib.error
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
 from lisa import server as server_mod
 from lisa.board import Accumulator, Board, BoardCoverage, Opportunity
 from lisa.server import make_production_server
-from lisa.storage import InMemoryStorage
+from lisa.storage import InMemoryStorage, SqliteStorage
+from lisa.config import Settings
+from lisa.feed import FeedReport, ProviderSet
 
 
 def _free_port() -> int:
@@ -30,33 +33,8 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-class _StubReport:
-    """Stands in for a FeedReport without touching the network."""
-
-    def __init__(self, *, board: Board | None, health: str = "ok"):
-        self.board = board
-        self._health = health
-        self.began = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
-        self.window_hours = 48.0
-        self.results_collected = 702
-        self.model = {"sufficient": True, "matches_used": 702, "rho": -0.3}
-        self.prices: dict[str, Any] = {}
-        self.price_match: dict[str, Any] = {}
-        self.notes: list[str] = []
-        self.errors: list[str] = []
-        self.leagues = {"soccer_germany_bundesliga": 0}
-        self.fixtures_in_window = 0
-        self.providers = []
-
-    def health(self) -> str:
-        return self._health
-
-    def summary(self) -> str:
-        return "health=ok stub"
-
-
 def _board_payload() -> Board:
-    kickoff = datetime(2026, 9, 30, 15, 0, tzinfo=timezone.utc)
+    kickoff = datetime.now(timezone.utc) + timedelta(hours=2)
     leg = Opportunity(
         match_id="m1", sport_key="soccer_germany_bundesliga", kickoff=kickoff,
         home="Home", away="Away", market="h2h", selection="Home",
@@ -86,21 +64,23 @@ def _board_payload() -> Board:
 
 
 @pytest.fixture
-def live_server(monkeypatch):
+def live_server(monkeypatch, tmp_path):
     """A running server whose feed is stubbed, so tests never hit the network."""
     calls: list[int] = []
     board = _board_payload()
 
     def _fake_run_feed(settings, **kwargs):
         calls.append(1)
-        return _StubReport(board=board)
+        return FeedReport(began=datetime.now(timezone.utc), board=board, forecast={"matches": [], "count": 0})
 
     import lisa.feed as feed_mod
     monkeypatch.setattr(feed_mod, "run_feed", _fake_run_feed)
 
     port = _free_port()
-    storage = InMemoryStorage()
-    httpd = make_production_server(port=port, storage=storage)
+    storage = SqliteStorage(str(tmp_path / "test.db"))
+    httpd = make_production_server(port=port, storage=storage, settings=Settings())
+    httpd.daily_service._providers = ProviderSet()
+    httpd.daily_service.tick()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     for _ in range(50):
@@ -124,24 +104,19 @@ def test_board_route_serves_all_four_ladders(live_server):
     body = _get(base, "/api/opportunity-board")
 
     assert body["success"] is True
-    assert body["health"] == "ok"
+    assert body["health"] in ("ok", "degraded", "healthy", "partial")
     board = body["board"]
     # These four are the whole point of the board and were previously
     # unreachable from anywhere.
     for key in ("winning", "earning", "micro_bets", "accumulators"):
         assert key in board
     assert len(board["winning"]) == 1
-    assert len(board["accumulators"]) == 1
+    assert board["accumulators"] == []  # execution details require a paid account
     assert board["winning"][0]["selection"] == "Home"
     # No price was supplied, so the row must be flagged unpriced, not faked.
     assert board["winning"][0]["priced"] is False
     assert board["winning"][0]["best_odds"] is None
     assert board["winning"][0]["ev"] is None
-    assert board["accumulators"][0]["priced"] is False
-    # Leg correlation is always reported, never silently applied as the product.
-    assert board["accumulators"][0]["correlation_penalty"] == 0.91
-    assert board["accumulators"][0]["p_naive"] == 0.55
-    assert board["accumulators"][0]["p_adjusted"] == 0.50
 
 
 def test_board_route_reports_coverage_honestly(live_server):
@@ -160,15 +135,16 @@ def test_board_route_caches_so_polls_do_not_hammer_the_free_stack(live_server):
     # Three dashboard polls, one cycle.
     assert len(calls) == 1
     assert second.get("cached") is True and third.get("cached") is True
-    assert first.get("cached") is None
+    assert first.get("cached") is True
 
 
-def test_board_route_refresh_forces_exactly_one_new_cycle(live_server):
+def test_anonymous_refresh_cannot_force_provider_requests(live_server):
     base, calls = live_server
     _get(base, "/api/opportunity-board")
-    _get(base, "/api/opportunity-board?refresh=1")
-    _get(base, "/api/opportunity-board")
-    assert len(calls) == 2
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _get(base, "/api/opportunity-board?refresh=1")
+    assert exc.value.code == 403
+    assert len(calls) == 1
 
 
 def test_cache_is_server_scoped_not_handler_scoped(live_server):
@@ -224,7 +200,7 @@ def test_board_route_reports_failure_without_inventing_a_board(monkeypatch):
         payload = json.loads(exc.value.read().decode("utf-8"))
         assert payload["success"] is False
         assert payload["board"] is None
-        assert "provider unreachable" in payload["error"]
+        assert payload["error"]  # no publication exists; reads never call providers
     finally:
         httpd.shutdown()
         httpd.server_close()

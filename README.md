@@ -1,10 +1,15 @@
+> Deployment target: Vercel with managed PostgreSQL and authenticated scheduled functions. See [Vercel setup and CI/CD](docs/VERCEL_DEPLOYMENT.md). For local testing without Docker, use [the Python launcher](docs/LOCAL_RUNNING.md). Persistent worker processes remain available for native/Docker hosting. Live operation is not yet certified; PostgreSQL integration runs in CI.
+
+> Deployment audit (2026-10-03): autonomous generation and settlement now use a persisted daily worker under `lisa start`. Run `PYTHONPATH=engine python3 scripts/audit_offline.py` for offline lifecycle checks. See [deployment audit](docs/DEPLOYMENT_AUDIT.md) for verified behavior, required resources, and unavailable features. Live deployment and the full pytest suite are not certified. Paid checkout is disabled pending verified billing; older feature descriptions below are not a deployment guarantee.
+
+> Free-source integration (2026-10-04): Openfootball CC0 files now supply bounded, cached goal history for eight leagues through the existing jobs and database. Verified calendars use one primary source with fallbacks; discovery files cannot publish unconfirmed kickoffs or settle predictions. See [data-source architecture and validation](docs/LEAN_DATA_STACK.md).
+
 # LISA — Quantitative Sports Prediction Refinery & Autonomous Engine
 
-> **Enterprise-grade algorithmic sports forecasting, consensus de-vigging, and execution routing with an autonomous Telegram Gatekeeper and Mobile Admin Console.**
+> **Daily football forecasts, model value rankings, recorded results, a web dashboard, and optional Telegram access.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests Passing](https://img.shields.io/badge/tests-262%20passed-brightgreen.svg)]()
-[![Zero Dependencies Runtime](https://img.shields.io/badge/runtime-stdlib%20only-blueviolet.svg)]()
+[![Database](https://img.shields.io/badge/database-PostgreSQL-blue.svg)](docs/DATABASE_ARCHITECTURE.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)]()
 
 ---
@@ -66,6 +71,11 @@ flowchart TB
 ---
 
 ## 3. UI Designer & Frontend Integration Guide
+
+Use the [current frontend/backend integration contract](docs/FRONTEND_BACKEND_INTEGRATION.md)
+for the complete route inventory, response fields, access rules, market coverage,
+polling behavior and empty states. The older examples below include legacy
+contracts; the source-verified guide documents the current daily pipeline.
 
 > [!IMPORTANT]
 > **To UI/UX Designers and Frontend Engineers:**
@@ -245,12 +255,14 @@ LISA_PORT=8080
 
 ## 8. Quickstart & Operational Commands
 
-### 1. Launch Unified Production Stack
-Runs the HTTP REST API server, live Odds API background poller, and Telegram Bot Gatekeeper daemon concurrently:
+### 1. Launch the PostgreSQL stack
+Runs PostgreSQL, the web API, and separate generation/settlement jobs:
 
 ```bash
-PYTHONPATH=engine python3 -m lisa.cli start --port 8080
+docker compose up --build -d db web worker
 ```
+
+See [database setup](docs/DATABASE_ARCHITECTURE.md) for credentials and readiness.
 
 ### 2. Run Telegram Bot in Interactive Terminal Console
 Test user interactions and administrative commands directly from your shell:
@@ -414,6 +426,16 @@ The honest headline: the archive spans a market-efficient period — a quality-g
 ```
 
 ---
+
+Supporting odds ingestion, quota accounting and admin credential replacement are documented in [ODDS_PROVIDER_INTEGRATION.md](docs/ODDS_PROVIDER_INTEGRATION.md). Live provider validation remains incomplete; see the recorded limitations there before deployment.
+
+The worker's quota-derived refresh cadence and free-tier coverage tradeoffs are documented in [COVERAGE_PLANNER.md](docs/COVERAGE_PLANNER.md).
+
+The active supporting The Odds API adapter, admin key updates and credit limits are documented in [THE_ODDS_API_INTEGRATION.md](docs/THE_ODDS_API_INTEGRATION.md).
+
+Run the isolated PostgreSQL paper pilot and release checks with [PAPER_PILOT.md](docs/PAPER_PILOT.md).
+
+RapidAPI OddsPapi connection preparation and the remaining endpoint verification are documented in [RAPIDAPI_ODDSPAPI.md](docs/RAPIDAPI_ODDSPAPI.md).
 
 ## 10. Security & Responsible Gambling
 

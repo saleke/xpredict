@@ -1,0 +1,83 @@
+{
+  "summary": {
+    "total_matches": 6729,
+    "executed_bets": 380,
+    "wins": 303,
+    "losses": 77,
+    "pushes": 0,
+    "win_rate": 0.7974,
+    "wilson_ci_lower": 0.7541,
+    "wilson_ci_upper": 0.8347,
+    "grade_a_count": 380,
+    "grade_a_wins": 303,
+    "grade_a_win_rate": 0.7974,
+    "grade_b_count": 0,
+    "grade_b_wins": 0,
+    "grade_b_win_rate": 0.0,
+    "grade_c_traps_avoided": 6349,
+    "grade_c_traps_that_lost": 3032,
+    "grade_c_traps_that_won": 3317,
+    "capital_preserved_dollars": 303200.0,
+    "net_counterfactual_value": 37840.0,
+    "initial_bankroll": 10000.0,
+    "ending_bankroll": 9312.81,
+    "total_wagered": 37900.0,
+    "net_profit": -687.19,
+    "roi_pct": -1.81,
+    "flat_profit": -661.69,
+    "flat_roi_pct": -1.74,
+    "max_drawdown_pct": 9.98,
+    "max_drawdown_dollars": 1029.44,
+    "sharpe_ratio": -0.68,
+    "sortino_ratio": -0.34,
+    "profit_factor": 0.91,
+    "brier_score": 0.1584,
+    "reliability": 0.0006,
+    "resolution": 0.0034,
+    "uncertainty": 0.1616,
+    "ece": 0.0213,
+    "mce": 0.0872,
+    "log_loss": 0.4924,
+    "positive_clv_rate": 0.3789,
+    "mean_clv": -0.0111
+  },
+  "data_provenance": {
+    "source": "football-data.co.uk (real matches, early + closing odds + official results)",
+    "source_url_template": "https://www.football-data.co.uk/mmz4281/<season>/<league>.csv",
+    "leagues": {
+      "E0": "soccer_epl",
+      "SP1": "soccer_spain_la_liga",
+      "D1": "soccer_germany_bundesliga",
+      "I1": "soccer_italy_serie_a",
+      "F1": "soccer_france_ligue_one"
+    },
+    "seasons": [
+      "2122",
+      "2223",
+      "2324",
+      "2425"
+    ],
+    "bookmakers": [
+      "bet365",
+      "betandwin",
+      "pinnacle",
+      "williamhill",
+      "vcbet"
+    ],
+    "markets_covered": [
+      "1x2",
+      "asian_handicap",
+      "total_over_under"
+    ],
+    "total_matches": 7155,
+    "matches_with_5_books": 5358,
+    "matches_with_books": 32886,
+    "matches_with_closing": 7155,
+    "matches_with_ah": 7154,
+    "matches_with_ou": 7155,
+    "matches_with_movement": 7155,
+    "download_date": "2026-09-21",
+    "note": "Two real snapshots per fixture per market. Executed (early) prices are the best of the five books; closing prices are the late-at-kickoff best (*C columns). Movement = closing/early price ratio. Three markets ride the same rows: 1X2, Asian Handicap, and Over/Under 2.5 totals. CLV is measured, never constructed.",
+    "statement": "No synthetic, simulated, or future-dated fixtures. All odds and scores are exactly as published by football-data.co.uk."
+  }
+}

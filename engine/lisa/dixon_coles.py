@@ -55,9 +55,11 @@ No third-party dependencies -- standard library only.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
+from .job_budget import check_budget
+from .providers.calendar import team_identity
 
 # ---------------------------------------------------------------------------
 # Defaults (literature priors, deliberately not tuned per-league)
@@ -118,8 +120,8 @@ is ~1e-7 of the original step, so "no acceptable step" really does mean the
 gradient is exhausted rather than merely impatient."""
 
 GOAL_TAIL: int = 12
-"""Max goals per side in the score matrix. 12 is far into the tail
-(P(X>=12) < 1e-9 at these lambdas) so truncation error is negligible."""
+"""Minimum score-matrix support and training-score sanity bound.
+Prediction support expands until remaining Poisson mass is below 1e-10."""
 
 MAX_PUBLISHED_LINE: int = 7
 """Highest over/under line published as a market. 7.5 is above any plausible
@@ -218,7 +220,7 @@ class DixonColesModel:
                  rho: float = RHO_INIT, shrinkage: float = SHRINKAGE,
                  ridge: float = RIDGE, xi: float = XI,
                  learning_rate: float = LEARNING_RATE,
-                 max_iterations: int = MAX_ITERATIONS) -> None:
+                 max_iterations: int = MAX_ITERATIONS, normalise_identities: bool = False) -> None:
         self.base_mu = base_mu
         self.home_adv = home_adv
         self.rho = rho
@@ -227,6 +229,7 @@ class DixonColesModel:
         self.xi = xi
         self.learning_rate = learning_rate
         self.max_iterations = max_iterations
+        self.normalise_identities = normalise_identities
         self._attack: dict[str, float] = {}
         self._defence: dict[str, float] = {}
         self._games: dict[str, int] = {}
@@ -234,13 +237,17 @@ class DixonColesModel:
 
     # -- introspection ------------------------------------------------------
 
+    def _team_key(self, team):
+        return team_identity(team) if self.normalise_identities else team
+
     def strength(self, team: str) -> TeamStrength:
+        team = self._team_key(team)
         return TeamStrength(self._attack.get(team, 0.0),
                             self._defence.get(team, 0.0),
                             self._games.get(team, 0))
 
     def knows(self, team: str) -> bool:
-        return self._games.get(team, 0) > 0
+        return self._games.get(self._team_key(team), 0) > 0
 
     @property
     def fitted(self) -> bool:
@@ -270,6 +277,9 @@ class DixonColesModel:
 
         usable: list[ScoredMatch] = []
         for m in rows:
+            m = replace(m, home=self._team_key(m.home), away=self._team_key(m.away))
+            if not m.home or not m.away or m.home == m.away:
+                continue
             if m.kickoff > as_of:
                 continue
             if m.home_score < 0 or m.away_score < 0:
@@ -319,6 +329,7 @@ class DixonColesModel:
         stall = 0
 
         for iterations in range(1, self.max_iterations + 1):
+            check_budget()
             snapshot = (dict(self._attack), dict(self._defence), self.rho)
             gain = 0.0
             accepted = False
@@ -401,6 +412,7 @@ class DixonColesModel:
         here *and* by a heavy ridge -- would flatten the well-sampled clubs that
         have genuinely earned their rating.
         """
+        home, away = self._team_key(home), self._team_key(away)
         lam = (self.base_mu * math.exp(self.home_adv)
                * math.exp(self._shrunk_attack(home) - self._shrunk_defence(away)))
         mu = (self.base_mu
@@ -540,14 +552,28 @@ class DixonColesModel:
     def score_matrix(self, home: str, away: str) -> list[list[float]]:
         """Joint goal distribution ``[home_goals][away_goals]``, normalised."""
         lam, mu = self._lambdas(home, away)
-        ph = [_poisson_pmf(i, lam) for i in range(GOAL_TAIL)]
-        pa = [_poisson_pmf(j, mu) for j in range(GOAL_TAIL)]
+        vectors = []
+        for rate in (lam, mu):
+            values = [math.exp(-rate)]
+            cumulative = values[0]
+            while len(values) < GOAL_TAIL or cumulative < 1 - 1e-10:
+                values.append(values[-1] * rate / len(values))
+                cumulative += values[-1]
+                if len(values) > 100:
+                    raise ValueError('goal distribution tail exceeds numerical budget')
+            vectors.append(values)
+        size = max(map(len, vectors))
+        # Complete the shorter vector using the same recurrence, avoiding
+        # repeated factorials and tail sums in every board/market forecast.
+        for rate, values in zip((lam, mu), vectors):
+            while len(values) < size:
+                values.append(values[-1] * rate / len(values))
+        ph, pa = vectors
         grid = [[ph[i] * pa[j] * self._tau(i, j, lam, mu)
-                 for j in range(GOAL_TAIL)] for i in range(GOAL_TAIL)]
+                 for j in range(size)] for i in range(size)]
         total = sum(sum(row) for row in grid)
         if total <= 0.0 or not math.isfinite(total):
-            flat = 1.0 / (GOAL_TAIL * GOAL_TAIL)
-            return [[flat] * GOAL_TAIL for _ in range(GOAL_TAIL)]
+            raise ValueError('invalid goal distribution; refusing a fabricated uniform forecast')
         return [[v / total for v in row] for row in grid]
 
     def predict(self, home: str, away: str) -> dict[str, Any]:
@@ -562,8 +588,10 @@ class DixonColesModel:
 
         p_home = p_draw = p_btts = 0.0
         totals: dict[str, float] = {}
-        for x in range(GOAL_TAIL):
-            for y in range(GOAL_TAIL):
+        home_totals: dict[str, float] = {}
+        away_totals: dict[str, float] = {}
+        for x in range(len(grid)):
+            for y in range(len(grid[x])):
                 w = grid[x][y]
                 if x > y:
                     p_home += w
@@ -571,6 +599,8 @@ class DixonColesModel:
                     p_draw += w
                 if x >= 1 and y >= 1:
                     p_btts += w
+                home_totals[str(x)] = home_totals.get(str(x), 0.0) + w
+                away_totals[str(y)] = away_totals.get(str(y), 0.0) + w
                 key = str(x + y)
                 totals[key] = totals.get(key, 0.0) + w
         p_away = max(0.0, 1.0 - p_home - p_draw)
@@ -582,7 +612,7 @@ class DixonColesModel:
         over = _over_probabilities(totals)
 
         scores = sorted(
-            ((grid[x][y], x, y) for x in range(GOAL_TAIL) for y in range(GOAL_TAIL)),
+            ((p, x, y) for x, row in enumerate(grid) for y, p in enumerate(row)),
             reverse=True)
 
         return {
@@ -590,6 +620,9 @@ class DixonColesModel:
             "p_draw": p_draw,
             "p_away": p_away,
             "p_btts": p_btts,
+            "double_chance": {"1X": p_home + p_draw, "X2": p_draw + p_away, "12": p_home + p_away},
+            "home_team_over": _over_probabilities(home_totals),
+            "away_team_over": _over_probabilities(away_totals),
             "expected_goals": {"home": lam, "away": mu},
             "over": over,
             "most_likely_scores": [
@@ -611,6 +644,7 @@ class DixonColesModel:
         return {
             "base_mu": self.base_mu, "home_adv": self.home_adv, "rho": self.rho,
             "shrinkage": self.shrinkage, "xi": self.xi,
+            'normalise_identities': self.normalise_identities,
             "attack": dict(self._attack), "defence": dict(self._defence),
             "games": dict(self._games),
             "report": self.report.to_dict() if self.report else None,
@@ -624,6 +658,7 @@ class DixonColesModel:
             rho=float(data.get("rho", RHO_INIT)),
             shrinkage=float(data.get("shrinkage", SHRINKAGE)),
             xi=float(data.get("xi", XI)),
+            normalise_identities=data.get('normalise_identities') is True,
         )
         model._attack = {k: float(v) for k, v in (data.get("attack") or {}).items()}
         model._defence = {k: float(v) for k, v in (data.get("defence") or {}).items()}
@@ -707,16 +742,16 @@ def _over_probabilities(totals: Mapping[str, float]) -> dict[str, float]:
     ladder: dict[str, float] = {}
     running = 0.0
     for k in range(maximum, -1, -1):
+        running += counts[k]
         if k >= 1:
             # running now holds P(total >= k), i.e. P(> (k-1) + 0.5)
             ladder[k - 1] = max(0.0, min(1.0, running))
-        running += counts[k]
 
     # Only lines a book actually offers, ascending. The grid's upper region is a
     # truncated tail carrying float noise, and publishing "over 21.5" at p=0.0
     # would be a fabricated market rather than a thin one.
     return {f"{line}.5": ladder[line]
-            for line in range(0, min(maximum, MAX_PUBLISHED_LINE))}
+            for line in range(0, min(maximum, MAX_PUBLISHED_LINE + 1))}
 
 
 def _fair(p: float) -> float:

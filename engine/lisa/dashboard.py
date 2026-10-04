@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Optional
+from .model_policy import FORECAST_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,11 @@ def _pick_row_to_card(p: dict) -> dict:
         freshness, badge, gauge = "DECAYED", "rose", "Decayed (Below Fair)"
 
     return {
+        "model_forecast": p.get("source") in FORECAST_SOURCES,
+        "source": p.get("source"),
+        "basis": p.get("basis"),
+        "is_recommendation": bool(p.get("is_recommendation")),
+        "actual_score": p.get("actual_score"),
         "dedupe_key": p.get("dedupe_key"),
         "match_id": p.get("match_id"),
         "sport_key": p.get("sport_key"),
@@ -236,17 +242,35 @@ def build_dashboard(
     settings = settings or cfg.load_settings()
 
     pending: list[dict] = []
+    awaiting: list[dict] = []
     settled: list[dict] = []
     if storage is not None:
         try:
-            pending = list(storage.list_pending_picks())[:pending_limit]
+            raw_pending = list(storage.list_pending_picks())
+            awaiting = [_pick_row_to_card(p) for p in reversed(raw_pending)
+                        if p.get('source') in FORECAST_SOURCES
+                        and str(p.get('commence_time', '')) <= utcnow().isoformat()][:settled_limit]
+            pending = sorted((p for p in raw_pending
+                       if p.get('source') not in FORECAST_SOURCES
+                       or str(p.get('commence_time', '')) > utcnow().isoformat()),
+                       key=lambda p: (str(p.get('commence_time') or ''),
+                           -float(p.get('p_true') or 0), str(p.get('dedupe_key') or '')))[:pending_limit]
         except Exception:
-            pending = []
+            logger.warning('dashboard: pending ledger could not be read')
+            raise
         try:
             settled = list(storage.list_settled_picks())[:settled_limit]
         except Exception:
-            settled = []
+            logger.warning('dashboard: settled ledger could not be read')
+            raise
 
+    from .contracts import GRADES, unit_profit
+    import math
+    for row in settled:
+        odds = row.get('best_odds')
+        row['pnl'] = None
+        if row.get('is_recommendation') and row.get('result') in GRADES and isinstance(odds, (int, float)) and math.isfinite(odds) and odds > 1:
+            row['pnl'] = unit_profit(row['result'], odds)
     cal_rep = evaluate_calibration(settled).to_dict() if settled else None
     clv_rep = compute_clv_metrics(settled).to_dict() if settled else None
 
@@ -296,9 +320,23 @@ def build_dashboard(
         storage, {str(p.get("match_id")) for p in pending if p.get("match_id")})
     cards = []
     for row in pending:
+        if row.get("source") in FORECAST_SOURCES and str(row.get("commence_time", "")) <= utcnow().isoformat():
+            continue
         card = _pick_row_to_card(row)
         card["quotes"] = quotes.get(str(row.get("match_id")))
         cards.append(card)
+
+    publication = storage.get_telemetry('daily:board') if storage and hasattr(storage, 'get_telemetry') else None
+    job = (storage.get_telemetry('daily:status') or {}) if storage and hasattr(storage, 'get_telemetry') else {}
+    board = (publication or {}).get('board') or {}
+    pipeline = {'state': job.get('state', 'starting'), 'has_errors': bool(job.get('error')),
+        'published_at': (publication or {}).get('published_at'),
+        'generated_at': (publication or {}).get('generated_at'),
+        'window_hours': (publication or {}).get('window_hours'),
+        'fixtures_modelled': (board.get('coverage') or {}).get('fixtures_modelled', 0),
+        'fixtures_priced': (board.get('coverage') or {}).get('fixtures_priced', 0),
+        'upcoming_selections': len(cards),
+        'paper_mode': bool(getattr(settings, 'paper_mode', False))}
 
     return {
         "meta": {
@@ -306,9 +344,9 @@ def build_dashboard(
             "sports_scope": list(getattr(settings, "sports", ()) or ()),
             "data_provenance": {
                 "synthetic": False,
-                "source": "live_odds_api" if live_state == "live" else (
+                "source": (snapshot or {}).get("source") or ("live_odds_api" if live_state == "live" else (
                     "ledger_and_last_observation" if live_state == "stale" else "ledger_only"
-                ),
+                )),
                 "statement": (
                     "Every figure is computed from the pick ledger and the odds "
                     "feed. Values with insufficient history are shown as n/a."
@@ -317,6 +355,7 @@ def build_dashboard(
         },
         "summary": {
             "active_picks_count": counts.get("pending", len(pending)),
+            "awaiting_results_count": len(awaiting),
             "settled_picks_count": counts.get("settled", len(settled)),
             "total_picks_count": counts.get("total", len(pending) + len(settled)),
             "total_matches_evaluated": int((snapshot or {}).get("matches_observed") or 0),
@@ -339,6 +378,8 @@ def build_dashboard(
             "last_error": (snapshot or {}).get("last_error"),
         },
         "active_picks": cards,
+        "awaiting_results": awaiting,
+        "pipeline": pipeline,
         "traps": traps,
         "settled_ledger": settled,
         "calibration": cal_rep,

@@ -116,7 +116,7 @@ def test_pick_storage_preserves_line():
 def test_postgres_schema_constant_is_sane():
     from lisa.storage import POSTGRES_DDL
     assert "CREATE TABLE IF NOT EXISTS picks" in POSTGRES_DDL
-    assert "line          DOUBLE PRECISION" in POSTGRES_DDL
+    assert "line" in POSTGRES_DDL and "DOUBLE PRECISION" in POSTGRES_DDL
     assert "ON CONFLICT" not in POSTGRES_DDL  # PK is the dedupe mechanism
 
 

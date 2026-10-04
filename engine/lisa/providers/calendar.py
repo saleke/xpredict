@@ -33,6 +33,8 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Iterable, Mapping, Optional
 
 from .base import FixturesResult, SourceTier
@@ -44,6 +46,8 @@ __all__ = [
     "sources_for",
     "normalise_fixture",
     "normalise_team",
+    "team_identity",
+    "fixture_groups",
     "dedupe_fixtures",
     "FixturesResult",
     "SourceTier",
@@ -67,6 +71,7 @@ class LeagueSpec:
     family: str = "soccer"
     #: Rough weight of a result in the model, by competition prestige.
     prestige: float = 1.0
+    timezone: str = 'UTC'
 
     def source_id(self, source: str) -> Optional[str]:
         return {
@@ -87,24 +92,24 @@ LEAGUES: dict[str, LeagueSpec] = {
         # the fetcher ask a prices-only adapter for fixtures, and would move
         # league tiers for the wrong reason.
         LeagueSpec("soccer_epl", "Premier League", "PL", None, "4328",
-                   sharp="england_-_premier_league", prestige=1.30),
+                   sharp="england_-_premier_league", prestige=1.30, timezone='Europe/London'),
         LeagueSpec("soccer_germany_bundesliga", "Bundesliga", "BL1", "bl1", "4331",
-                   sharp="germany_-_bundesliga", prestige=1.25),
+                   sharp="germany_-_bundesliga", prestige=1.25, timezone='Europe/Berlin'),
         LeagueSpec("soccer_italy_serie_a", "Serie A", "SA", None, "4332",
-                   sharp="italy_-_serie_a", prestige=1.20),
+                   sharp="italy_-_serie_a", prestige=1.20, timezone='Europe/Rome'),
         LeagueSpec("soccer_spain_la_liga", "La Liga", "PD", None, "4335",
-                   sharp="spain_-_la_liga", prestige=1.20),
+                   sharp="spain_-_la_liga", prestige=1.20, timezone='Europe/Madrid'),
         LeagueSpec("soccer_france_ligue_one", "Ligue 1", "FL1", None, "4334",
-                   sharp="france_-_ligue_1", prestige=1.15),
+                   sharp="france_-_ligue_1", prestige=1.15, timezone='Europe/Paris'),
         LeagueSpec("soccer_netherlands_eredivisie", "Eredivisie", "DED", None,
-                   "4337", sharp="netherlands_-_eredivisie", prestige=1.00),
+                   "4337", sharp="netherlands_-_eredivisie", prestige=1.00, timezone='Europe/Amsterdam'),
         LeagueSpec("soccer_portugal_primeira_liga", "Primeira Liga", "PPL", None,
-                   None, sharp="portugal_-_primeira_liga", prestige=1.00),
+                   None, sharp="portugal_-_primeira_liga", prestige=1.00, timezone='Europe/Lisbon'),
         LeagueSpec("soccer_uefa_champions_league", "UEFA Champions League", "CL",
                    None, None, sharp="uefa_-_champions_league", prestige=1.45),
         # football-data.org is the only free source for these two.
         LeagueSpec("soccer_england_championship", "Championship", "ELC", None,
-                   "4329", sharp="england_-_championship", prestige=0.75),
+                   "4329", sharp="england_-_championship", prestige=0.75, timezone='Europe/London'),
         LeagueSpec("soccer_brazil_serie_a", "Brasileirao Serie A", "BSA", None,
                    None, sharp="brazil_-_serie_a", prestige=1.00),
         # OpenLigaDB is the only free source for this one. football-data.org
@@ -327,6 +332,63 @@ _ALIAS_INDEX: dict[frozenset[str], frozenset[str]] = {
 }
 
 
+def team_identity(name: Any) -> str:
+    """Model and result identity, using only existing explicit club aliases."""
+    name = normalise_team(name)
+    alias = _ALIAS_INDEX.get(frozenset(name.split()))
+    return ' '.join(sorted(alias)) if alias else name
+
+
+def fixture_groups(fixtures: Iterable[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Join date-only archives to one unambiguous timed match, never a rematch.
+
+    Date-only timestamps are storage anchors, not invented kickoffs. Match them
+    using the competition's local date; multiple timed pairings on that date
+    leave the archive ambiguous and excluded. Timed rows retain minute identity.
+    """
+    groups = {}
+    timed_dates = {}
+    unknown = []
+    for row in fixtures:
+        if not isinstance(row, Mapping):
+            continue
+        home, away = team_identity(row.get('home_team')), team_identity(row.get('away_team'))
+        key = row.get('sport_key', '')
+        if not home or not away or home == away:
+            continue
+        if row.get('kickoff_time_known') is False:
+            try:
+                day = datetime.strptime(row['match_date'], '%Y-%m-%d').date().isoformat()
+            except (KeyError, TypeError, ValueError):
+                continue
+            unknown.append(((key, home, away, day), dict(row)))
+            continue
+        epoch = row.get('epoch')
+        if epoch is None:
+            try:
+                kickoff = datetime.fromisoformat(row['kickoff'].replace('Z', '+00:00'))
+                epoch = kickoff.timestamp() if kickoff.tzinfo else None
+            except (KeyError, TypeError, ValueError):
+                continue
+        if type(epoch) not in (int, float):
+            continue
+        try:
+            spec = LEAGUES.get(key)
+            day = datetime.fromtimestamp(epoch, ZoneInfo(spec.timezone if spec else 'UTC')).date().isoformat()
+            identity = (key, round(epoch / 60), home, away)
+        except (ValueError, OverflowError, OSError):
+            continue
+        groups.setdefault(identity, []).append(dict(row))
+        timed_dates.setdefault((key, home, away, day), set()).add(identity)
+    for dated, row in unknown:
+        identities = timed_dates.get(dated, ())
+        if len(identities) > 1:
+            continue
+        identity = next(iter(identities)) if identities else ('date', *dated)
+        groups.setdefault(identity, []).append(row)
+    return list(groups.values())
+
+
 def dedupe_fixtures(fixtures: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Collapse the same match arriving from two sources.
 
@@ -336,25 +398,19 @@ def dedupe_fixtures(fixtures: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     a fixture present in both feeds is counted exactly once; the richer record
     (one that actually carries a score) wins.
 
-    The pairing goes through :func:`normalise_team`, not a bare ``lower()``.
+    The pairing goes through :func:`team_identity`, not a bare ``lower()``.
     Stripping only case meant "Arsenal FC" and "Arsenal" were treated as two
     different teams and the same fixture survived as two records -- which
     double-counted the result in training and could put one club's rating on
     two different strength scales.
     """
-    best: dict[tuple[float, str, str], dict[str, Any]] = {}
-    for f in fixtures:
-        if not isinstance(f, Mapping):
-            continue
-        home = normalise_team(f.get("home_team"))
-        away = normalise_team(f.get("away_team"))
-        epoch = f.get("epoch")
-        if not home or not away or not isinstance(epoch, (int, float)):
-            continue
-        key = (round(float(epoch) / 60.0), home, away)
-        current = best.get(key)
-        # Prefer a completed row over an unplayed one, so a source that has
-        # already graded the match wins over one that has not.
-        if current is None or (f.get("completed") and not current.get("completed")):
-            best[key] = dict(f)
-    return list(best.values())
+    def priority(row):
+        # A provisional file must never displace a verified kickoff or a
+        # cancellation. Rich statistics survive equal-quality duplicates.
+        verified = not row.get('discovery_only', False)
+        cancelled = str(row.get('status', '')).upper() in ('CANCELED', 'CANCELLED', 'POSTPONED')
+        return (verified, bool(row.get('completed') or cancelled),
+                row.get('kickoff_time_known') is not False,
+                sum(row.get(k) is not None for k in ('home_corners', 'away_corners',
+                    'home_first_half_score', 'away_first_half_score')))
+    return [max(rows, key=priority) for rows in fixture_groups(fixtures)]

@@ -104,17 +104,21 @@ class AccuracyTracker:
         total_profit = 0.0
 
         for pick in picks:
-            if pick.get("result") not in ("WIN", "LOSS"):
+            if pick.get("result") not in ("WIN", "HALF_WIN", "LOSS", "HALF_LOSS", "VOID"):
                 continue
 
-            odds = pick.get("best_odds") or pick.get("fair_odds") or 1.0
-            stake = 1.0  # Unit stake
+            # Forecast accuracy includes every published selection; financial
+            # returns require an actual quoted recommendation at publication.
+            if not pick.get("is_recommendation", True):
+                continue
+            odds = pick.get("best_odds")
+            if not isinstance(odds, (int, float)) or not math.isfinite(odds) or odds <= 1:
+                continue
+            stake = 1.0  # Flat-unit analytical return, not an account balance.
 
             total_stake += stake
-            if pick["result"] == "WIN":
-                total_profit += (odds - 1.0) * stake
-            else:
-                total_profit -= stake
+            from .contracts import unit_profit
+            total_profit += unit_profit(pick['result'], odds) * stake
 
         if total_stake == 0:
             return 0.0
@@ -149,6 +153,9 @@ class AccuracyTracker:
             if pick.get("result") not in ("WIN", "LOSS"):
                 continue
 
+            from .contracts import is_binary_contract
+            if not is_binary_contract(pick.get("market"), pick.get("line")):
+                continue
             p_true = pick.get("p_true", 0.5)
             actual = 1.0 if pick["result"] == "WIN" else 0.0
 
@@ -258,6 +265,9 @@ class AccuracyTracker:
             if pick.get("result") not in ("WIN", "LOSS"):
                 continue
 
+            from .contracts import is_binary_contract
+            if not is_binary_contract(pick.get("market"), pick.get("line")):
+                continue
             p_true = pick.get("p_true", 0.5)
             bin_idx = min(int(p_true * n_bins), n_bins - 1)
             bins[bin_idx]["count"] += 1

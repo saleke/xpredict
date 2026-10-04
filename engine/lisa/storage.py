@@ -1,6 +1,6 @@
-"""Stage 4 — storage layer.
+"""Relational repositories shared by PostgreSQL and offline SQLite.
 
-Dual-layer architecture:
+Legacy drivers remain for explicit diagnostics. Historical architecture:
   * hot layer: transient live state (Redis with TTL, or in-memory for local);
   * cold layer: the audited ledger (Postgres), WRITE-ONCE with a strict
     state machine — a settled pick can never be rewritten.
@@ -44,14 +44,15 @@ class AdminReadModelUnavailable(RuntimeError):
         self.driver = driver
 
 
-def pick_key(match_id: str, market: str, outcome: str) -> str:
-    return f"{match_id}::{market}::{outcome}"
+def pick_key(match_id: str, market: str, outcome: str, line: Optional[float] = None) -> str:
+    base = f"{match_id}::{market}::{outcome}"
+    return base if line is None else f"{base}::line={float(line):g}"
 
 
 def pick_to_row(pick: Pick) -> dict:
     exec_ = pick.best_execution
     return {
-        "dedupe_key": pick_key(pick.match_id, pick.market, pick.outcome_name),
+        "dedupe_key": pick_key(pick.match_id, pick.market, pick.outcome_name, pick.line),
         "match_id": pick.match_id,
         "sport_key": pick.sport_key,
         "market": pick.market,
@@ -445,7 +446,13 @@ CREATE TABLE IF NOT EXISTS picks (
     recommended_stake_pct REAL DEFAULT 0.0,
     recommended_units REAL DEFAULT 0.0,
     created_at    TEXT NOT NULL,
-    settled_at    TEXT
+    settled_at    TEXT,
+    source        TEXT DEFAULT 'consensus',
+    basis         TEXT,
+    is_recommendation INTEGER DEFAULT 1,
+    model_version TEXT,
+    actual_score  TEXT,
+    result_source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_picks_state ON picks(state);
 CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
@@ -525,6 +532,19 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, id);
 
+
+CREATE TABLE IF NOT EXISTS worker_leases (
+    name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS daily_publications (
+    day TEXT PRIMARY KEY, generated_at TEXT NOT NULL, payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_forecast_due ON picks(source, state, commence_time, sport_key);
+CREATE TABLE IF NOT EXISTS user_bankroll_profiles (
+    user_id TEXT PRIMARY KEY, username TEXT, bankroll_amount REAL NOT NULL,
+    risk_profile TEXT NOT NULL, kelly_fraction REAL NOT NULL,
+    preferred_bookmaker TEXT NOT NULL, updated_at REAL NOT NULL
+);
 CREATE VIEW IF NOT EXISTS lisa_predictions AS SELECT * FROM picks;
 CREATE VIEW IF NOT EXISTS user_profiles AS SELECT * FROM users;
 """
@@ -590,119 +610,20 @@ def _admin_term(term: Any) -> Optional[str]:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-class SqliteStorage(Storage):
-    """Production-grade relational storage driver using Python's standard library sqlite3.
-    
-    Features:
-      * WAL (Write-Ahead Logging) mode enabled for non-blocking concurrent reads during writes.
-      * Strict write-once audited ledger (picks table with primary key dedupe_key).
-      * High-performance hot live cache table with automatic TTL expiration.
-      * Persistent verified Telegram subscriber session tracking.
-      * Zero external dependencies.
+class RelationalStorage(Storage):
+    """Shared SQL repositories for the supported relational backends.
+
+    Backend subclasses own connections, parameter binding, schema migrations,
+    and locking. Business queries use portable SQL and bound values.
     """
+    integrity_errors = (sqlite3.IntegrityError,)
+    lock_suffix = ""
 
-    def __init__(self, db_path: str = "data/lisa.db") -> None:
-        self.db_path = db_path
-        folder = os.path.dirname(os.path.abspath(self.db_path))
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        self.ensure_schema()
+    def begin_write(self, conn):
+        raise NotImplementedError
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        # Off by default in SQLite, so sessions.user_id -> users(id) with
-        # ON DELETE CASCADE never actually fired and deleting a user orphaned
-        # its sessions. Enforcing it also rejects rows that violate the
-        # declared relationships, which is the point of declaring them.
-        conn.execute("PRAGMA foreign_keys=ON;")
-        return conn
-
-    @contextmanager
-    def _tx(self):
-        """Transaction scope that also releases the connection.
-
-        ``sqlite3.Connection.__exit__`` commits or rolls back but does not
-        close, so the original ``with self._tx() as conn:`` pattern left
-        every handle open until the garbage collector got round to it.
-        """
-        conn = self._connect()
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
-
-    def ensure_schema(self) -> None:
-        with self._tx() as conn:
-            conn.executescript(SQLITE_DDL)
-            self._apply_migrations(conn)
-            conn.commit()
-
-    # -- schema migration --------------------------------------------------
-
-    @staticmethod
-    def _ddl_columns(ddl: str) -> dict[str, list[tuple[str, str]]]:
-        """Columns declared by the CREATE TABLE blocks in ``ddl``.
-
-        Derived from the DDL itself rather than hand-maintained, so a column
-        added to ``SQLITE_DDL`` is automatically covered by the migration path
-        on the next start. Primary-key and constraint lines are skipped: SQLite
-        cannot add a primary key to an existing table.
-        """
-        out: dict[str, list[tuple[str, str]]] = {}
-        for match in re.finditer(
-                r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\);",
-                ddl, flags=re.S | re.I):
-            table, body = match.group(1), match.group(2)
-            cols: list[tuple[str, str]] = []
-            for line in body.splitlines():
-                line = line.strip().rstrip(",")
-                if not line or line.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
-                    continue
-                cm = re.match(r"(\w+)\s+(TEXT|REAL|INTEGER|NUMERIC|BLOB)\b", line, flags=re.I)
-                if cm:
-                    cols.append((cm.group(1), cm.group(2).upper()))
-            out[table] = cols
-        return out
-
-    @staticmethod
-    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-        try:
-            return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
-        except sqlite3.Error:
-            return set()
-
-    def _apply_migrations(self, conn: sqlite3.Connection) -> list[str]:
-        """Bring an existing database up to the current schema, additively.
-
-        ``CREATE TABLE IF NOT EXISTS`` creates *new* tables but never adds a
-        column to a table that already exists, so any database created before a
-        column was introduced kept the old shape and every INSERT naming that
-        column failed with "no such column" — the ledger went dark on upgrade
-        rather than at first use. This walks the DDL and adds whatever the
-        database is missing, so an upgrade is safe and silent.
-        """
-        applied: list[str] = []
-        for table, columns in self._ddl_columns(SQLITE_DDL).items():
-            existing = self._table_columns(conn, table)
-            if not existing:
-                continue   # brand-new table: CREATE TABLE already made it current
-            for name, ddl_type in columns:
-                if name in existing:
-                    continue
-                try:
-                    conn.execute(
-                        f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}")
-                    applied.append(f"{table}.{name}")
-                except sqlite3.Error:
-                    continue
-        if applied:
-            logger.info("SQLite schema migration applied: %s", ", ".join(applied))
-        return applied
+    def close(self):
+        pass
 
     # -- hot layer -----------------------------------------------------------
 
@@ -739,7 +660,6 @@ class SqliteStorage(Storage):
         now = time.time()
         with self._tx() as conn:
             conn.execute("DELETE FROM live_cache WHERE expires_at < ?", (now,))
-            conn.commit()
             cur = conn.execute("SELECT key FROM live_cache WHERE expires_at >= ?", (now,))
             return [r["key"] for r in cur.fetchall()]
 
@@ -751,7 +671,7 @@ class SqliteStorage(Storage):
 
     def insert_pick_row(self, r: dict) -> bool:
         sql = """
-            INSERT OR IGNORE INTO picks (
+            INSERT INTO picks (
                 dedupe_key, match_id, sport_key, market, outcome_name, line,
                 home_team, away_team, commence_time, p_true, fair_odds,
                 n_books, stdev, cv, state, result, best_book, best_odds,
@@ -765,7 +685,7 @@ class SqliteStorage(Storage):
                 ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?
-            )
+            ) ON CONFLICT(dedupe_key) DO NOTHING
         """
         params = (
             r["dedupe_key"],
@@ -856,8 +776,9 @@ class SqliteStorage(Storage):
             return
         with self._tx() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO verified_sessions (web_user_id, telegram_user_id, username, verified_at) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO verified_sessions (web_user_id, telegram_user_id, username, verified_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(web_user_id) DO UPDATE SET "
+                "telegram_user_id=excluded.telegram_user_id, username=excluded.username, verified_at=excluded.verified_at",
                 (web_user_id.strip(), str(telegram_user_id), username, time.time())
             )
             conn.commit()
@@ -997,7 +918,7 @@ class SqliteStorage(Storage):
                        avg(n_books) AS avg_books,
                        avg(clv) AS avg_clv
                 FROM picks
-                WHERE result IN ('WIN','LOSS','VOID')
+                WHERE result IN ('WIN','LOSS','VOID','HALF_WIN','HALF_LOSS')
             """).fetchone()
             by_market = conn.execute("""
                 SELECT market,
@@ -1018,14 +939,19 @@ class SqliteStorage(Storage):
             """).fetchall()
             # Calibration: bucket by the probability we claimed, then compare it
             # with the realised rate. A model whose 60% bucket wins 75% is
-            # overconfident no matter what the headline hit rate says.
+            # underconfident no matter what the headline hit rate says.
             calibration = conn.execute("""
                 SELECT
-                  min(10, cast(p_true*10 as int)) AS bucket,
+                  CAST(FLOOR(p_true*10) AS INTEGER) AS bucket,
                   count(*) AS n,
                   sum(case when result='WIN' then 1 else 0 end) AS wins,
                   avg(p_true) AS avg_p
                 FROM picks WHERE result IN ('WIN','LOSS') AND p_true IS NOT NULL
+                  AND market <> 'draw_no_bet'
+                  AND (market NOT IN ('totals','home_team_totals','away_team_totals','corners',
+                                      'asian_handicap','spreads')
+                       OR (line IS NOT NULL AND ABS(line*2 - FLOOR(line*2)) < 0.000001
+                           AND ABS(line - FLOOR(line)) > 0.000001))
                 GROUP BY bucket ORDER BY bucket
             """).fetchall()
             pending = conn.execute(
@@ -1040,22 +966,25 @@ class SqliteStorage(Storage):
         wins = int(graded["wins"] or 0)
         losses = int(graded["losses"] or 0)
         voided = int(graded["voids"] or 0)
-        # VOID bets push no money, so the money denominator is WIN+LOSS.
         decided = wins + losses
-        # Flat-stake return: each graded bet risks one unit at the quoted odds.
-        profit = 0.0
-        if decided:
-            with self._tx() as conn:
-                stakes = conn.execute("""
-                    SELECT result, best_odds FROM picks
-                    WHERE result IN ('WIN','LOSS') AND best_odds IS NOT NULL
-                """).fetchall()
-            for row in stakes:
-                odds = float(row["best_odds"] or 0.0)
-                if odds <= 1.0:
-                    continue
-                profit += (odds - 1.0) if row["result"] == "WIN" else -1.0
-        roi = (profit / decided) if decided else None
+        # Financial returns use only quoted recommendations, including refunds
+        # and split payouts. Forecasts are excluded from the stake denominator.
+        from .contracts import unit_profit
+        import math
+        profit, quoted_stakes = 0.0, 0
+        with self._tx() as conn:
+            stakes = conn.execute("""
+                SELECT result, best_odds FROM picks
+                WHERE result IN ('WIN','LOSS','VOID','HALF_WIN','HALF_LOSS')
+                AND best_odds IS NOT NULL AND is_recommendation=1
+            """).fetchall()
+        for row in stakes:
+            odds = float(row['best_odds'] or 0)
+            if not math.isfinite(odds) or odds <= 1:
+                continue
+            profit += unit_profit(row['result'], odds)
+            quoted_stakes += 1
+        roi = profit / quoted_stakes if quoted_stakes else None
 
         def _rate(win: int, total: int) -> Optional[float]:
             return round(win / total, 4) if total else None
@@ -1069,6 +998,7 @@ class SqliteStorage(Storage):
             "awaiting_settlement": int(awaiting or 0),
             "hit_rate": _rate(wins, decided),
             "void_rate": _rate(voided, n),
+            "quoted_recommendations_settled": quoted_stakes,
             "flat_stake_profit_units": round(profit, 4),
             "flat_stake_roi": round(roi, 4) if roi is not None else None,
             "avg_p_true": round(graded["avg_p"], 4) if graded["avg_p"] else None,
@@ -1184,6 +1114,14 @@ class SqliteStorage(Storage):
             "pages": max(1, (int(total or 0) + page_size - 1) // page_size),
         }
 
+    def get_telemetry(self, key: str) -> Any:
+        with self._tx() as conn:
+            row = conn.execute("SELECT val_json FROM system_telemetry WHERE key=?", (key,)).fetchone()
+        return json.loads(row["val_json"]) if row else None
+
+    def set_telemetry(self, key: str, value: Any) -> None:
+        self.admin_set_telemetry(key, value)
+
     def admin_get_telemetry(self) -> list[dict[str, Any]]:
         with self._tx() as conn:
             rows = conn.execute(
@@ -1243,64 +1181,18 @@ class SqliteStorage(Storage):
             "by_prefix": by_prefix,
         }
 
-    def admin_database_info(self) -> dict[str, Any]:
-        """Physical file facts, so the panel can show real growth not estimates."""
-        info: dict[str, Any] = {"path": self.db_path, "exists": False}
-        try:
-            if os.path.exists(self.db_path):
-                info["exists"] = True
-                info["bytes"] = os.path.getsize(self.db_path)
-                info["bytes_on_disk"] = info["bytes"]
-                for suffix in ("-wal", "-shm"):
-                    side = self.db_path + suffix
-                    if os.path.exists(side):
-                        info["bytes"] += os.path.getsize(side)
-                        info.setdefault("sidecars", {})[suffix] = os.path.getsize(side)
-        except OSError as exc:
-            info["error"] = str(exc)
-        try:
-            with self._tx() as conn:
-                info["page_count"] = conn.execute(
-                    "PRAGMA page_count").fetchone()[0]
-                info["page_size"] = conn.execute(
-                    "PRAGMA page_size").fetchone()[0]
-                info["journal_mode"] = conn.execute(
-                    "PRAGMA journal_mode").fetchone()[0]
-                info["integrity"] = conn.execute(
-                    "PRAGMA quick_check").fetchone()[0]
-                info["tables"] = {
-                    r["name"]: r["n"] for r in conn.execute(
-                        "SELECT name, (SELECT count(*) FROM pragma_table_info(name))"
-                        " AS n FROM sqlite_master WHERE type='table'"
-                        " ORDER BY name").fetchall()
-                }
-                info["row_counts"] = {
-                    r["name"]: conn.execute(
-                        f'SELECT count(*) AS c FROM "{r["name"]}"').fetchone()["c"]
-                    for r in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' "
-                        "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
-                    # A table name cannot be bound as a parameter, so it is
-                    # interpolated. Everything the application creates matches
-                    # this, and anything else (a table from a restored backup, a
-                    # future SQLite internal) is reported by name without being
-                    # counted rather than being pasted into the statement.
-                    if _SAFE_TABLE_NAME.match(r["name"])
-                }
-        except sqlite3.Error as exc:
-            info["error"] = str(exc)
-        return info
 
     def log_admin_action(self, admin_id: str, action: str, target: str = "", details: str = "") -> int:
         sql = """
             INSERT INTO admin_audit_logs (admin_id, action, target, details, timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?) RETURNING id
         """
         now_ts = time.time()
         with self._tx() as conn:
             cur = conn.execute(sql, (str(admin_id), action, target, details, now_ts))
+            row = cur.fetchone()
             conn.commit()
-            return cur.lastrowid or 0
+            return row["id"] if row else 0
 
     def list_admin_audit_logs(self, limit: int = 20) -> list[dict]:
         sql = "SELECT * FROM admin_audit_logs ORDER BY timestamp DESC LIMIT ?"
@@ -1351,8 +1243,8 @@ class SqliteStorage(Storage):
     def enqueue_notification(self, dedupe_key: str, text: str) -> bool:
         with self._tx() as conn:
             cur = conn.execute(
-                "INSERT OR IGNORE INTO notification_outbox (dedupe_key, text, status, created_at) "
-                "VALUES (?, ?, 'PENDING', ?)",
+                "INSERT INTO notification_outbox (dedupe_key, text, status, created_at) "
+                "VALUES (?, ?, 'PENDING', ?) ON CONFLICT(dedupe_key) DO NOTHING",
                 (dedupe_key, text, time.time()),
             )
             conn.commit()
@@ -1401,6 +1293,173 @@ class SqliteStorage(Storage):
             )
             conn.commit()
             return int(cur.rowcount or 0)
+
+
+class SqliteStorage(RelationalStorage):
+    """Local/offline relational backend using SQLite WAL."""
+
+    def __init__(self, db_path: str = "data/lisa.db") -> None:
+        self.db_path = db_path
+        folder = os.path.dirname(os.path.abspath(self.db_path))
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        self.ensure_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        # Off by default in SQLite, so sessions.user_id -> users(id) with
+        # ON DELETE CASCADE never actually fired and deleting a user orphaned
+        # its sessions. Enforcing it also rejects rows that violate the
+        # declared relationships, which is the point of declaring them.
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
+    @contextmanager
+    def _tx(self):
+        """Transaction scope that also releases the connection.
+
+        ``sqlite3.Connection.__exit__`` commits or rolls back but does not
+        close, so the original ``with self._tx() as conn:`` pattern left
+        every handle open until the garbage collector got round to it.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def ensure_schema(self) -> None:
+        from .match_history import HISTORY_DDL
+        from .providers.api_football import BUDGET_DDL
+        from .odds_history import ODDS_HISTORY_DDL
+        from .pilot_schema import PILOT_DDL
+        from .provider_credentials import CREDENTIAL_DDL
+        with self._tx() as conn:
+            conn.executescript(SQLITE_DDL)
+            conn.executescript(HISTORY_DDL)
+            conn.executescript(BUDGET_DDL)
+            conn.executescript(ODDS_HISTORY_DDL)
+            conn.executescript(PILOT_DDL)
+            conn.executescript(CREDENTIAL_DDL)
+            self._apply_migrations(conn)
+            conn.commit()
+
+    @staticmethod
+    def _ddl_columns(ddl: str) -> dict[str, list[tuple[str, str]]]:
+        """Columns declared by the CREATE TABLE blocks in ``ddl``.
+
+        Derived from the DDL itself rather than hand-maintained, so a column
+        added to ``SQLITE_DDL`` is automatically covered by the migration path
+        on the next start. Primary-key and constraint lines are skipped: SQLite
+        cannot add a primary key to an existing table.
+        """
+        out: dict[str, list[tuple[str, str]]] = {}
+        for match in re.finditer(
+                r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\);",
+                ddl, flags=re.S | re.I):
+            table, body = match.group(1), match.group(2)
+            cols: list[tuple[str, str]] = []
+            for line in body.splitlines():
+                line = line.strip().rstrip(",")
+                if not line or line.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+                    continue
+                cm = re.match(r"(\w+)\s+(TEXT|REAL|INTEGER|NUMERIC|BLOB)\b", line, flags=re.I)
+                if cm:
+                    cols.append((cm.group(1), cm.group(2).upper()))
+            out[table] = cols
+        return out
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        try:
+            return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
+        except sqlite3.Error:
+            return set()
+
+    def _apply_migrations(self, conn: sqlite3.Connection) -> list[str]:
+        """Bring an existing database up to the current schema, additively.
+
+        ``CREATE TABLE IF NOT EXISTS`` creates *new* tables but never adds a
+        column to a table that already exists, so any database created before a
+        column was introduced kept the old shape and every INSERT naming that
+        column failed with "no such column" — the ledger went dark on upgrade
+        rather than at first use. This walks the DDL and adds whatever the
+        database is missing, so an upgrade is safe and silent.
+        """
+        applied: list[str] = []
+        for table, columns in self._ddl_columns(SQLITE_DDL).items():
+            existing = self._table_columns(conn, table)
+            if not existing:
+                continue   # brand-new table: CREATE TABLE already made it current
+            for name, ddl_type in columns:
+                if name in existing:
+                    continue
+                try:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}")
+                    applied.append(f"{table}.{name}")
+                except sqlite3.Error:
+                    continue
+        if applied:
+            logger.info("SQLite schema migration applied: %s", ", ".join(applied))
+        return applied
+
+    def admin_database_info(self) -> dict[str, Any]:
+        """Physical file facts, so the panel can show real growth not estimates."""
+        info: dict[str, Any] = {"path": self.db_path, "exists": False}
+        try:
+            if os.path.exists(self.db_path):
+                info["exists"] = True
+                info["bytes"] = os.path.getsize(self.db_path)
+                info["bytes_on_disk"] = info["bytes"]
+                for suffix in ("-wal", "-shm"):
+                    side = self.db_path + suffix
+                    if os.path.exists(side):
+                        info["bytes"] += os.path.getsize(side)
+                        info.setdefault("sidecars", {})[suffix] = os.path.getsize(side)
+        except OSError as exc:
+            info["error"] = str(exc)
+        try:
+            with self._tx() as conn:
+                info["page_count"] = conn.execute(
+                    "PRAGMA page_count").fetchone()[0]
+                info["page_size"] = conn.execute(
+                    "PRAGMA page_size").fetchone()[0]
+                info["journal_mode"] = conn.execute(
+                    "PRAGMA journal_mode").fetchone()[0]
+                info["integrity"] = conn.execute(
+                    "PRAGMA quick_check").fetchone()[0]
+                info["tables"] = {
+                    r["name"]: r["n"] for r in conn.execute(
+                        "SELECT name, (SELECT count(*) FROM pragma_table_info(name))"
+                        " AS n FROM sqlite_master WHERE type='table'"
+                        " ORDER BY name").fetchall()
+                }
+                info["row_counts"] = {
+                    r["name"]: conn.execute(
+                        f'SELECT count(*) AS c FROM "{r["name"]}"').fetchone()["c"]
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+                    # A table name cannot be bound as a parameter, so it is
+                    # interpolated. Everything the application creates matches
+                    # this, and anything else (a table from a restored backup, a
+                    # future SQLite internal) is reported by name without being
+                    # counted rather than being pasted into the statement.
+                    if _SAFE_TABLE_NAME.match(r["name"])
+                }
+        except sqlite3.Error as exc:
+            info["error"] = str(exc)
+        return info
+
+
+    def begin_write(self, conn):
+        conn.execute("BEGIN IMMEDIATE")
 
 
 class RedisStorage(Storage):
@@ -1511,159 +1570,12 @@ class RedisStorage(Storage):
         return True
 
 
-POSTGRES_DDL = """
-CREATE TABLE IF NOT EXISTS picks (
-    dedupe_key    TEXT PRIMARY KEY,
-    match_id      TEXT NOT NULL,
-    sport_key     TEXT NOT NULL,
-    market        TEXT NOT NULL,
-    outcome_name  TEXT NOT NULL,
-    line          DOUBLE PRECISION,
-    home_team     TEXT,
-    away_team     TEXT,
-    commence_time TIMESTAMPTZ,
-    p_true        DOUBLE PRECISION NOT NULL,
-    fair_odds     DOUBLE PRECISION NOT NULL,
-    n_books       INTEGER NOT NULL,
-    stdev         DOUBLE PRECISION,
-    cv            DOUBLE PRECISION,
-    state         TEXT NOT NULL,
-    result        TEXT,
-    best_book     TEXT,
-    best_odds     DOUBLE PRECISION,
-    best_ev       DOUBLE PRECISION,
-    closing_odds  DOUBLE PRECISION,
-    closing_p_true DOUBLE PRECISION,
-    clv           DOUBLE PRECISION,
-    conviction_score DOUBLE PRECISION,
-    recommended_stake_pct DOUBLE PRECISION,
-    recommended_units DOUBLE PRECISION,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    settled_at    TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_picks_state ON picks(state);
-CREATE INDEX IF NOT EXISTS idx_picks_match ON picks(match_id);
-"""
+# Imported last: the PostgreSQL implementation shares the relational repositories.
+from .postgres_storage import PostgresBackend
 
 
-class PostgresStorage(Storage):
-    """Cold, audited ledger. Not a hot cache — live telemetry must use the
-    Redis or in-memory driver. Requires the optional ``psycopg`` package."""
+class PostgresStorage(PostgresBackend, RelationalStorage):
+    """Complete pooled PostgreSQL backend for web and worker repositories."""
+    pass
 
-    def __init__(self, dsn: str | None = None, *, conn=None):
-        if conn is None:
-            try:
-                import psycopg
-            except ImportError as exc:  # pragma: no cover
-                raise RuntimeError(
-                    "LISA_STORAGE=postgres requires the 'psycopg' package") from exc
-            conn = psycopg.connect(dsn or "postgresql://localhost:5432/lisa")
-        self.conn = conn
-
-    def ensure_schema(self) -> None:
-        with self.conn.cursor() as cur:
-            cur.execute(POSTGRES_DDL)
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS line DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_odds DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS closing_p_true DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS clv DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS conviction_score DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS recommended_stake_pct DOUBLE PRECISION;")
-            cur.execute("ALTER TABLE picks ADD COLUMN IF NOT EXISTS recommended_units DOUBLE PRECISION;")
-        self.conn.commit()
-
-    # -- hot layer (not supported: Postgres is the cold layer) ---------------
-
-    def upsert_live(self, key: str, data: dict, ttl_seconds: int) -> None:
-        raise NotImplementedError(
-            "PostgresStorage is the cold ledger; use RedisStorage/in-memory "
-            "for the hot live cache.")
-
-    def get_live(self, key: str) -> Optional[dict]:
-        raise NotImplementedError(
-            "PostgresStorage is the cold ledger; use RedisStorage/in-memory "
-            "for the hot live cache.")
-
-    def scan_live_keys(self) -> Iterable[str]:
-        raise NotImplementedError(
-            "PostgresStorage is the cold ledger; use RedisStorage/in-memory "
-            "for the hot live cache.")
-
-    # -- cold layer ----------------------------------------------------------
-
-    def insert_pick(self, pick: Pick) -> bool:
-        r = pick_to_row(pick)
-        sql = (
-            "INSERT INTO picks (dedupe_key, match_id, sport_key, market, "
-            "outcome_name, line, home_team, away_team, commence_time, p_true, "
-            "fair_odds, n_books, stdev, cv, state, result, best_book, "
-            "best_odds, best_ev, closing_odds, closing_p_true, clv, conviction_score, "
-            "recommended_stake_pct, recommended_units, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
-            "ON CONFLICT (dedupe_key) DO NOTHING"
-        )
-        params = (r["dedupe_key"], r["match_id"], r["sport_key"], r["market"],
-                  r["outcome_name"], r["line"], r["home_team"], r["away_team"],
-                  r["commence_time"], r["p_true"], r["fair_odds"], r["n_books"],
-                  r["stdev"], r["cv"], r["state"], r["result"], r["best_book"],
-                  r["best_odds"], r["best_ev"], r["closing_odds"],
-                  r["closing_p_true"], r["clv"], r.get("conviction_score", 0.0),
-                  r.get("recommended_stake_pct", 0.0), r.get("recommended_units", 0.0),
-                  r["created_at"])
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            inserted = cur.rowcount > 0
-        self.conn.commit()
-        return inserted
-
-    def get_pick(self, dedupe_key: str) -> Optional[dict]:
-        sql = "SELECT * FROM picks WHERE dedupe_key = %s"
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (dedupe_key,))
-            r = cur.fetchone()
-            if not r:
-                return None
-            cols = [d[0] for d in cur.description]
-            return dict(zip(cols, r))
-
-    def list_pending_picks(self) -> list[dict]:
-        sql = "SELECT * FROM picks WHERE state = ANY(%s)"
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (list(PENDING_STATES),))
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        return rows
-
-    def list_settled_picks(self) -> list[dict]:
-        sql = "SELECT * FROM picks WHERE state NOT IN ('PENDING')"
-        with self.conn.cursor() as cur:
-            cur.execute(sql)
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        return rows
-
-    def settle_pick(self, dedupe_key: str, result: str,
-                    settled_at: datetime, state: str = "SETTLED") -> bool:
-        sql = (
-            "UPDATE picks SET state = %s, result = %s, settled_at = %s "
-            "WHERE dedupe_key = %s AND state = ANY(%s)"
-        )
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (state, result, settled_at, dedupe_key,
-                              list(PENDING_STATES)))
-            updated = cur.rowcount > 0
-        self.conn.commit()
-        return updated
-
-    def update_pick_closing(self, dedupe_key: str, closing_odds: float,
-                            closing_p_true: Optional[float] = None,
-                            clv: Optional[float] = None) -> bool:
-        sql = (
-            "UPDATE picks SET closing_odds = %s, closing_p_true = %s, clv = %s "
-            "WHERE dedupe_key = %s"
-        )
-        with self.conn.cursor() as cur:
-            cur.execute(sql, (closing_odds, closing_p_true, clv, dedupe_key))
-            updated = cur.rowcount > 0
-        self.conn.commit()
-        return updated
+from .postgres_schema import SCHEMA_V1 as POSTGRES_DDL

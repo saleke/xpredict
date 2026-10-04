@@ -1,12 +1,12 @@
 # LISA Production Dockerfile
-# Zero external dependencies: pure Python standard library runtime
-FROM python:3.12-slim
+# PostgreSQL runtime dependencies are installed in the application image.
+FROM python:3.12-slim AS application
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/engine \
-    LISA_STORAGE=sqlite \
-    LISA_DATABASE_URL=/app/data/lisa.db
+    LISA_STORAGE=postgres \
+    LISA_DATABASE_URL=
 
 WORKDIR /app
 
@@ -17,6 +17,9 @@ RUN groupadd -g 1001 lisa && \
 # Copy engine and web static assets
 COPY --chown=lisa:lisa engine/ /app/engine/
 COPY --chown=lisa:lisa web/ /app/web/
+
+# Install pooled PostgreSQL support; SQLite remains available for offline tests.
+RUN pip install --no-cache-dir "/app/engine[postgres,cloud]"
 
 # Create persistent data directory with proper permissions
 RUN mkdir -p /app/data && chown -R lisa:lisa /app/data
@@ -30,3 +33,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["python3", "-m", "lisa"]
 CMD ["start", "--port", "8080"]
+
+# Test dependencies belong in the dedicated release-check image.
+FROM application AS checks
+USER root
+RUN pip install --no-cache-dir "/app/engine[test]"
+USER lisa
+
+# Ordinary builds retain the application entry point and runtime dependencies.
+FROM application AS runtime

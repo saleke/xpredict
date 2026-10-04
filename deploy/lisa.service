@@ -8,19 +8,18 @@ User=walter
 WorkingDirectory=/home/walter/xpredict
 EnvironmentFile=-/home/walter/xpredict/.env
 Environment=PYTHONPATH=/home/walter/xpredict/engine
-Environment=LISA_STORAGE=sqlite
-Environment=LISA_DATABASE_URL=/home/walter/xpredict/data/lisa.db
-ExecStart=/usr/bin/python3 -m lisa start --port 8080 --dir /home/walter/xpredict/web
+Environment=LISA_STORAGE=postgres
+ExecStart=/home/walter/xpredict/.venv/bin/python -m lisa start --no-ingest --port 8080 --dir /home/walter/xpredict/web
 Restart=always
 RestartSec=5s
 KillMode=mixed
-TimeoutStopSec=10s
+TimeoutStopSec=45s
 
 # Security sandboxing
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/walter/xpredict/data /home/walter/xpredict/web/data
+ReadWritePaths=/home/walter/xpredict/data
 
 # Logging
 StandardOutput=journal

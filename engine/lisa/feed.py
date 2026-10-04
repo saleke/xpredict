@@ -9,8 +9,8 @@ This is the seam between configuration and the board. Two jobs:
     hours later.
 
 ``run_feed``
-    The whole cycle in one call: fetch the calendar from every source that can
-    serve each league, dedupe, fit the model, price what is priced, build the
+    The whole cycle in one call: fetch bulk history and routed verified
+    calendars, dedupe, fit the model, price available markets, build the
     board. This is what a scheduler or a CLI command actually calls.
 
 Honest degradation, which is the whole design constraint here
@@ -31,9 +31,12 @@ how much of it is trustworthy.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -48,7 +51,7 @@ from .providers.base import (
     SourceTier,
     utcnow_ts,
 )
-from .providers.calendar import LEAGUES, LeagueSpec, dedupe_fixtures, sources_for
+from .providers.calendar import LEAGUES, LeagueSpec, dedupe_fixtures
 from .providers.football_data import FootballDataProvider
 from .providers.openligadb import OpenLigaDbProvider
 from .providers.sportsdb import SportsDbProvider
@@ -65,14 +68,6 @@ FETCH_TIMEOUT_SEC = 90.0
 #: leaves a usable board (the winning ladder works unpriced), so it must never
 #: be what pushes the fixtures past their own deadline.
 PRICE_FETCH_TIMEOUT_SEC = 30.0
-
-#: Look-ahead ceiling used when the configured window cannot reach the volume
-#: goal. 24h is the target; this is the widest the board will look without the
-#: operator asking for it. Widening costs no requests -- the fixtures are
-#: already fetched, only re-windowed -- so the only cost of a narrow setting is
-#: an emptier board, which is not a trade worth making silently.
-FALLBACK_WINDOW_HOURS: float = 48.0
-
 
 @dataclass
 class ProviderStatus:
@@ -120,11 +115,19 @@ class FeedReport:
     #: choice that was made and can be disagreed with.
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    timings_ms: dict[str, float] = field(default_factory=dict)
+    fixture_updates: list[dict[str, Any]] = field(default_factory=list)
+    window_selection: dict[str, Any] = field(default_factory=dict)
 
     @property
     def duration_sec(self) -> float:
         end = self.finished or datetime.now(timezone.utc)
         return (end - self.began).total_seconds()
+
+    # Internal settlement evidence; never serialize entire season histories to visitors.
+    active_model: Any = None
+    results: list[dict[str, Any]] = field(default_factory=list)
+    forecast: dict[str, Any] = field(default_factory=dict)
 
     def health(self) -> str:
         """One word, for a dashboard tile."""
@@ -143,7 +146,9 @@ class FeedReport:
             "began": self.began.isoformat(),
             "finished": self.finished.isoformat() if self.finished else None,
             "duration_sec": round(self.duration_sec, 2),
+            "timings_ms": dict(self.timings_ms),
             "window_hours": self.window_hours,
+            "window_selection": dict(self.window_selection),
             "health": self.health(),
             "providers": [p.to_dict() for p in self.providers],
             "leagues": dict(self.leagues),
@@ -218,6 +223,13 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
     statuses: list[ProviderStatus] = []
     providers: list[Any] = []
 
+    if getattr(settings, 'enable_openfootball', True):
+        from .providers.openfootball import OpenFootballProvider
+        bulk = OpenFootballProvider(cache_sec=getattr(settings, 'openfootball_cache_sec', 86400))
+        providers.append(bulk)
+        statuses.append(ProviderStatus(name=bulk.name, configured=True, used=True,
+            leagues=bulk.leagues(), tier=bulk.tier.value))
+
     fdo_token = getattr(settings, "football_data_token", "") or ""
     fdo = FootballDataProvider(fdo_token, transport=transport)
     if fdo_token:
@@ -237,7 +249,7 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
             name=oldb.name, configured=True, used=True,
             leagues=tuple(oldb.leagues()), tier=oldb.tier.value))
 
-    if getattr(settings, "enable_sportsdb", True):
+    if getattr(settings, "enable_sportsdb", False):
         tsdb = SportsDbProvider(getattr(settings, "sportsdb_key", "") or "3",
                                 transport=transport)
         providers.append(tsdb)
@@ -249,17 +261,48 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
                   "supplementary cross-check only, not a model backbone"))
 
     price_sources: list[Any] = []
+    if getattr(settings, 'the_odds_enabled', False) and getattr(settings, 'odds_api_key', ''):
+        from .providers.the_odds_api import TheOddsApiProvider
+        odds = TheOddsApiProvider(settings.odds_api_key, monthly_limit=settings.the_odds_monthly_limit,
+            reserve=settings.the_odds_reserve, daily_limit=settings.the_odds_daily_limit,
+            regions=settings.the_odds_regions, markets=settings.the_odds_markets, ttl=settings.the_odds_cache_sec)
+        price_sources.append(odds)
+        statuses.append(ProviderStatus(name=odds.name, configured=True, used=True,
+            leagues=tuple(odds.leagues()), tier=odds.tier.value))
+    if getattr(settings, 'oddspapi_key', '') and getattr(settings, 'oddspapi_enabled', True):
+        from .providers.oddspapi import OddsPapiProvider
+        odds = OddsPapiProvider(settings.oddspapi_key, monthly_limit=settings.oddspapi_monthly_limit,
+            reserve=settings.oddspapi_reserve, poll_interval_sec=settings.oddspapi_poll_interval_sec,
+            bookmakers=settings.oddspapi_bookmakers)
+        price_sources.append(odds)
+        statuses.append(ProviderStatus(name=odds.name, configured=True, used=True,
+            leagues=tuple(odds.leagues()), tier=odds.tier.value))
+    if getattr(settings, 'allsports_api_key', ''):
+        from .providers.allsports import AllSportsProvider
+        supporting = AllSportsProvider(settings.allsports_api_key,
+            hourly_limit=settings.allsports_hourly_limit, odds_enabled=settings.allsports_odds_enabled,
+            corner_stat_type=settings.allsports_corner_stat_type, bookmakers=settings.allsports_bookmakers)
+        providers.append(supporting)
+        if supporting.odds_enabled:
+            price_sources.append(supporting)
+        statuses.append(ProviderStatus(name=supporting.name, configured=True, used=True,
+            leagues=tuple(supporting.leagues()), tier=supporting.tier.value))
+    if getattr(settings, 'api_football_key', ''):
+        from .providers.api_football import ApiFootballProvider
+        api = ApiFootballProvider(settings.api_football_key,
+            daily_limit=settings.api_football_daily_limit, bookmakers=settings.api_football_bookmakers)
+        providers.append(api)
+        price_sources.append(api)
+        statuses.append(ProviderStatus(name=api.name, configured=True, used=True,
+            leagues=tuple(api.leagues()), tier=api.tier.value))
     sharp_key = getattr(settings, "sharpapi_key", "") or ""
-    if getattr(settings, "enable_sharpapi", True):
+    if getattr(settings, "enable_sharpapi", True) and sharp_key:
         sharp = SharpApiOddsProvider(sharp_key, transport=transport)
         price_sources.append(sharp)
         statuses.append(ProviderStatus(
             name=sharp.name, configured=bool(sharp_key), used=bool(sharp_key),
             leagues=tuple(sharp.leagues()), tier=sharp.tier.value,
-            error="" if sharp_key else
-            "no SHARPAPI_KEY -- fixtures and the winning ladder still work, but "
-            "every pick is unpriced, so the earning ladder, accumulators, "
-            "slippage and CLV are structurally empty (free key at sharpapi.io)"))
+            error=""))
 
     return ProviderSet(calendar=providers, statuses=statuses, transport=transport,
                        prices=price_sources)
@@ -278,98 +321,97 @@ def _parse_iso(value: str) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def calendar_routes(providers, leagues):
+    """One verified calendar per league, with existing sources as fallbacks."""
+    by_name = {p.name: p for p in providers if p.name != 'openfootball'}
+    priority = ('openligadb', 'football_data', 'allsports', 'api_football', 'sportsdb')
+    ordered = [name for name in priority if name in by_name]
+    ordered += sorted(set(by_name) - set(ordered))
+    return {league: [name for name in ordered if league in by_name[name].leagues()]
+            for league in leagues}
+
+
 def fetch_calendar(providers: Sequence[Any], leagues: Sequence[str],
-                   statuses: list[ProviderStatus],
-                   *, max_workers: int = 4) -> dict[str, list[dict[str, Any]]]:
-    """Fetch every league from every source that can serve it.
+                   statuses: list[ProviderStatus], *, max_workers: int = 4,
+                   purpose: str = 'ordinary') -> dict[str, list[dict[str, Any]]]:
+    """Fetch a primary calendar, then only failed/empty leagues' fallbacks.
 
-    Cross-source in parallel, but *within* a source serialised: the sources have
-    independent rate limits, so four hosts can work concurrently while each
-    host's own pacing is respected by the transport's token bucket. Fanning out
-    per-league within a single host would defeat that pacing and earn a 429.
-
-    One league's failure never removes another league's data.
+    Hosts remain independent and leagues within each host remain serial. Bulk
+    CC0 history is supplementary; it never satisfies the verified-calendar slot.
+    Settlement does not download these provisional files at all.
     """
-    results: dict[str, list[dict[str, Any]]] = {key: [] for key in leagues}
-    by_name = {getattr(p, "name", ""): p for p in providers}
+    results = {key: [] for key in leagues}
+    by_name = {p.name: p for p in providers}
+    routes = calendar_routes(providers, leagues)
+    unresolved = {league for league, sources in routes.items() if sources}
+    deadline = time.monotonic() + FETCH_TIMEOUT_SEC
+    from .job_budget import current_deadline, execution_budget
+    from .providers.diagnostics import safe_error_summary
+    job_deadline = current_deadline()
+    status_by_name = {s.name: s for s in statuses}
+    for name in by_name:
+        if name in status_by_name:
+            status_by_name[name].used = False
 
-    # Group jobs by source and run one thread per source. Within a source the
-    # leagues stay serialised, because that host's rate limit is what is being
-    # respected: 14 football-data.org leagues at the free tier's 10 req/min is
-    # ~85s of serial work, and fanning those out per-league only converts the
-    # pacing into 429s.
-    by_source: dict[str, list[str]] = {}
-    for league in leagues:
-        for source in sources_for(league):
-            if source in by_name:
-                by_source.setdefault(source, []).append(league)
-
-    if not by_source:
-        return results
-
-    started = time.monotonic()
-    deadline = started + FETCH_TIMEOUT_SEC
-
-    def run_source(item: tuple[str, list[str]]) -> list[tuple[str, str, FixturesResult | None, str]]:
+    def run_source(item):
         source, source_leagues = item
         provider = by_name[source]
-        rows: list[tuple[str, str, FixturesResult | None, str]] = []
-        for league in source_leagues:
-            if time.monotonic() > deadline:
-                # Budget spent. Say so per league rather than silently
-                # returning fewer leagues than were asked for -- a truncated
-                # calendar is indistinguishable from a quiet one otherwise.
-                rows.append((source, league, None,
-                             f"skipped: the {FETCH_TIMEOUT_SEC:.0f}s fetch budget was "
-                             f"already spent on this cycle (host rate limit)"))
-                continue
-            try:
-                rows.append((source, league, provider.get_fixtures(league), ""))
-            except ProviderError as exc:
-                # ProviderError covers every classified failure: auth, rate
-                # limit, transport, parse. Anything else is caught below, but
-                # the common paths never reach that.
-                rows.append((source, league, None, f"{type(exc).__name__}: {exc}"))
-            except Exception as exc:  # pragma: no cover - defensive
-                rows.append((source, league, None,
-                             f"unexpected {type(exc).__name__}: {exc}"))
+        rows = []
+        with execution_budget(deadline=min(deadline, job_deadline) if job_deadline else deadline):
+            for league in source_leagues:
+                if time.monotonic() >= deadline:
+                    rows.append((source, league, None, 'skipped: calendar time budget exhausted'))
+                    continue
+                try:
+                    rows.append((source, league, provider.get_fixtures(league), ''))
+                except Exception as exc:
+                    rows.append((source, league, None, safe_error_summary(exc)))
         return rows
 
-    workers = min(max(1, max_workers), len(by_source))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for batch in pool.map(run_source, sorted(by_source.items())):
-            for source, league, result, error in batch:
-                status = next((s for s in statuses if s.name == source), None)
-                if status is not None and league not in status.leagues:
-                    status.leagues = status.leagues + (league,)
-                if error:
-                    if status is not None:
-                        status.error = (status.error + "; " + error).strip("; ")
-                        if not error.startswith("skipped:"):
-                            status.used = False
-                    # A budget skip is expected and self-explaining; logging it
-                    # at WARNING would bury the genuine failures underneath a
-                    # line the operator already knows about. It is still recorded
-                    # on the provider status, so it is never silent.
-                    if error.startswith("skipped:"):
-                        logger.info("fetch skipped: %s/%s -- %s", source, league, error)
-                    else:
-                        logger.warning("fetch failed: %s/%s -- %s", source, league, error)
-                    continue
-                if result is None:
-                    continue
-                results[league].extend(result.fixtures)
-                if status is not None:
-                    status.fixtures += len(result.fixtures)
-
-    slow = time.monotonic() - started
-    if slow > FETCH_TIMEOUT_SEC:
-        logger.warning("fetch phase took %.1fs, over the %.0fs budget",
-                       slow, FETCH_TIMEOUT_SEC)
+    rounds = max((len(route) for route in routes.values()), default=0)
+    bulk = by_name.get('openfootball') if purpose != 'settlement' else None
+    for index in range(max(rounds, 1 if bulk else 0)):
+        jobs = {}
+        if index == 0 and bulk:
+            supported = [league for league in leagues if league in bulk.leagues()]
+            if supported:
+                jobs[bulk.name] = supported
+        for league in leagues:
+            if league in unresolved and index < len(routes[league]):
+                jobs.setdefault(routes[league][index], []).append(league)
+        if not jobs:
+            continue
+        # Retain the existing budget rotation without requesting every source.
+        for source, keys in jobs.items():
+            rotation = getattr(by_name[source], 'coverage_rotation', 0)
+            if type(rotation) is int and rotation and keys:
+                offset = rotation % len(keys)
+                jobs[source] = keys[offset:] + keys[:offset]
+        with ThreadPoolExecutor(max_workers=min(max(1, max_workers), len(jobs))) as pool:
+            for batch in pool.map(run_source, sorted(jobs.items())):
+                for source, league, result, error in batch:
+                    status = status_by_name.get(source)
+                    if error:
+                        if status:
+                            status.error = (status.error + '; ' + error).strip('; ')
+                            status.degraded = True
+                        logger.warning('calendar %s/%s: %s', source, league, error)
+                        continue
+                    if result is None:
+                        continue
+                    results[league].extend(result.fixtures)
+                    if status:
+                        status.used = True
+                        status.fixtures += len(result.fixtures)
+                        if getattr(result, 'warnings', ()):
+                            status.degraded = True
+                            status.error = (status.error + '; ' + '; '.join(result.warnings)).strip('; ')
+                    if source != 'openfootball' and result.fixtures:
+                        unresolved.discard(league)
     return results
 
 
-def to_scored(rows: Iterable[Mapping[str, Any]], league: str
+def to_scored(rows: Iterable[Mapping[str, Any]], league: str, *, as_of=None
               ) -> list[ScoredMatch]:
     """Normalised finished rows the model can train on.
 
@@ -378,17 +420,22 @@ def to_scored(rows: Iterable[Mapping[str, Any]], league: str
     wrong goal corrupts every rating for both clubs involved.
     """
     out: list[ScoredMatch] = []
+    as_of = as_of or datetime.now(timezone.utc)
     for row in rows:
         if not row.get("completed"):
             continue
         home_score, away_score = row.get("home_score"), row.get("away_score")
-        if not isinstance(home_score, int) or not isinstance(away_score, int):
+        if type(home_score) is not int or type(away_score) is not int:
             continue
         if home_score < 0 or away_score < 0:
             continue
         kickoff = _parse_iso(row.get("kickoff", ""))
         if kickoff is None:
             continue
+        if row.get('result_available_after'):
+            available = _parse_iso(row['result_available_after'])
+            if available is None or available > as_of:
+                continue
         out.append(ScoredMatch(league, kickoff, str(row.get("home_team", "")),
                                str(row.get("away_team", "")), home_score, away_score))
     return out
@@ -398,7 +445,11 @@ def to_fixtures(rows: Iterable[Mapping[str, Any]]) -> list[Fixture]:
     """Upcoming rows in the window, as board inputs."""
     out: list[Fixture] = []
     for row in rows:
-        if row.get("completed"):
+        if (row.get("completed") or row.get('discovery_only')
+                or row.get('kickoff_time_known') is False
+                or str(row.get('status', '')).upper() in
+                ('CANCELED', 'CANCELLED', 'POSTPONED', 'SUSPENDED', 'ABANDONED',
+                 'FINISHED', 'FT', 'AET', 'PEN', 'LIVE', 'IN_PLAY', '1H', '2H', 'HT', 'ET')):
             continue
         kickoff = _parse_iso(row.get("kickoff", ""))
         if kickoff is None:
@@ -418,62 +469,113 @@ def run_feed(settings: Any, *, providers: Optional[ProviderSet] = None,
              now: Optional[datetime] = None,
              window_hours: Optional[float] = None,
              prices: Optional[Mapping[str, Sequence[MarketPrice]]] = None,
-             model: Optional[DixonColesModel] = None) -> FeedReport:
+             model: Optional[DixonColesModel] = None, history=None) -> FeedReport:
     """The full cycle. Always returns a report; never raises for a data fault."""
+    from .config import paper_settings
+    settings = paper_settings(settings)
     now = now or datetime.now(timezone.utc)
     window = window_hours if window_hours is not None else \
         float(getattr(settings, "board_window_hours", 48.0))
     report = FeedReport(began=now, window_hours=window)
+    began_clock = time.perf_counter()
+    def finish():
+        report.finished = datetime.now(timezone.utc)
+        report.timings_ms['total'] = (time.perf_counter()-began_clock)*1000
+        return report
 
     try:
         provider_set = providers or build_providers(settings)
     except Exception as exc:
         report.errors.append(f"could not build providers: {exc}")
-        report.finished = datetime.now(timezone.utc)
-        return report
+        return finish()
 
-    report.providers = list(provider_set.statuses)
-    leagues = list(getattr(settings, "board_leagues", []) or _default_leagues())
+    report.providers = [replace(s) for s in provider_set.statuses]
+    leagues = list(getattr(settings, "board_leagues", []) or _default_leagues(settings))
     if not leagues:
         report.errors.append(
             "no leagues configured; set LISA_BOARD_LEAGUES (comma-separated "
             "canonical keys such as soccer_epl)")
-        report.finished = datetime.now(timezone.utc)
-        return report
+        return finish()
 
     try:
+        phase = time.perf_counter()
         raw = fetch_calendar(provider_set.calendar, leagues, report.providers)
     except Exception as exc:
         report.errors.append(f"calendar fetch failed: {exc}")
-        report.finished = datetime.now(timezone.utc)
-        return report
+        return finish()
+    finally:
+        report.timings_ms['calendar'] = (time.perf_counter()-phase)*1000
 
-    cutoff = (now.timestamp(), now.timestamp() + window * 3600.0)
+    report.fixture_updates = [dict(row) for rows in raw.values() for row in rows]
+    phase = time.perf_counter()
+
+    report.results = [dict(r) for rows in raw.values() for r in rows
+                      if r.get("completed") or str(r.get("status", "")).upper() in ("CANCELED", "CANCELLED")]
+    from .data_quality import reconcile_results
+    _, conflicts = reconcile_results(report.results)
+    if conflicts:
+        report.notes.append(f'{len(conflicts)} cross-source result disagreements; affected results withheld from training/settlement')
+
     for league, rows in raw.items():
         unique = dedupe_fixtures(rows)
+        raw[league] = unique
         report.duplicates_removed += len(rows) - len(unique)
         report.results_collected += sum(1 for r in unique if r.get("completed"))
-        in_window = [r for r in unique
-                     if not r.get("completed") and cutoff[0] <= r.get("epoch", 0) <= cutoff[1]]
-        if in_window:
-            report.leagues[league] = len(in_window)
-        report.fixtures_in_window += len(in_window)
+    initial_fixtures = [f for f in to_fixtures(
+        r for league in leagues for r in raw.get(league, ()))
+        if now < f.kickoff <= now + timedelta(hours=window)]
+    for fixture in initial_fixtures:
+        report.leagues[fixture.sport_key] = report.leagues.get(fixture.sport_key, 0) + 1
+    report.fixtures_in_window = len(initial_fixtures)
 
-    # Fit on every finished result we hold, across all leagues. Pooling is
-    # deliberate: a league with 9 results cannot fit anything alone, but the
-    # *ratings* it contributes are still informative next to other leagues, and
-    # a team is a team regardless of which division it plays in. Leagues that do
-    # not share a strength scale would need a normalisation step here.
-    training = [m for league in leagues for m in to_scored(raw.get(league, ()), league)]
-    active = model or DixonColesModel(
+    # Recover persisted results, reconcile source conflicts, and exclude recent
+    # kickoffs. The default model fits each competition independently; sparse
+    # leagues retain their priors rather than borrowing another league's scale.
+    if history is not None:
+        history.ingest(report.results, observed_at=now)
+        historical = history.results(leagues, as_of=now)
+        training = [m for league in leagues for m in to_scored(
+            [r for r in historical if r.get('sport_key') == league], league, as_of=now)]
+    else:
+        accepted, _ = reconcile_results(report.results)
+        training = [m for league in leagues for m in to_scored(
+            dedupe_fixtures(r for r in accepted if r.get('sport_key') == league), league, as_of=now)]
+    training = [m for m in training if m.kickoff + timedelta(hours=3) < now]
+    from .league_model import LeagueGoalModel
+    active = model or LeagueGoalModel(
         shrinkage=float(getattr(settings, "model_shrinkage", 8.0)),
         xi=float(getattr(settings, "model_xi", 0.55)),
         base_mu=float(getattr(settings, "model_base_mu", 1.35)),
+        home_adv=float(getattr(settings, "model_home_adv", 0.24)),
     )
+    if isinstance(active, LeagueGoalModel) and history is not None:
+        active.cache_storage = history.storage
     if training:
-        fit_report = active.fit(training, as_of=now)
-        if fit_report is not None:
-            report.model = fit_report.to_dict()
+        fingerprint = hashlib.sha256(json.dumps([
+            now.date().isoformat(),
+            sorted((m.league, m.kickoff.isoformat(), m.home, m.away, m.home_score, m.away_score)
+                   for m in training),
+            [getattr(settings, k) for k in ("model_base_mu", "model_home_adv", "model_shrinkage", "model_xi")],
+        ]).encode()).hexdigest()
+        if getattr(active, "_training_fingerprint", None) != fingerprint:
+            active.fit(training, as_of=now)
+            active._training_fingerprint = fingerprint
+        report.active_model = active
+        if active.report is not None:
+            report.model = active.report.to_dict()
+            report.model["training_fingerprint"] = fingerprint
+            if hasattr(active, 'diagnostics'):
+                report.model['leagues'] = active.diagnostics()
+                from .corners import CornerTotalModel
+                corner_rows = historical if history is not None else report.results
+                corner_key = hashlib.sha256(json.dumps(sorted(
+                    (r.get('sport_key'), r.get('match_id'), r.get('home_corners'), r.get('away_corners'))
+                    for r in corner_rows), default=str).encode()).hexdigest()
+                if getattr(active, '_corner_fingerprint', None) != (corner_key, now.date()):
+                    active.corners = {league: CornerTotalModel().fit(
+                        [r for r in corner_rows if r.get('sport_key') == league], as_of=now) for league in leagues}
+                    active._corner_fingerprint = (corner_key, now.date())
+                report.model['corner_matches'] = {league: m.matches for league, m in active.corners.items()}
     else:
         # The provider failures have to be surfaced *here*, not only on the
         # success path below. This return used to skip that collection
@@ -483,70 +585,101 @@ def run_feed(settings: Any, *, providers: Optional[ProviderSet] = None,
         # symptom and never the cause.
         _collect_provider_errors(report)
         report.errors.append("no finished results available; model not fitted")
-        report.finished = datetime.now(timezone.utc)
-        return report
+        report.timings_ms['history_and_model'] = (time.perf_counter()-phase)*1000
+        return finish()
 
-    fixtures = to_fixtures(
-        [r for league in leagues for r in raw.get(league, ())
-         if not r.get("completed") and cutoff[0] <= r.get("epoch", 0) <= cutoff[1]])
+    report.timings_ms['history_and_model'] = (time.perf_counter()-phase)*1000
+
+    # Choose the final horizon before prices or predictions are computed. Only
+    # verified, future fixtures with ratings can justify extending it. This
+    # avoids both a fixed 48h ceiling and spending quota twice after widening.
+    upcoming = sorted((f for f in to_fixtures(
+        r for league in leagues for r in raw.get(league, ())) if f.kickoff > now),
+        key=lambda f: (f.kickoff, f.match_id))
+    modelled = []
+    for fixture in upcoming:
+        fixture_model = active.for_league(fixture.sport_key) if hasattr(active, 'for_league') else active
+        if fixture_model.knows(fixture.home) and fixture_model.knows(fixture.away):
+            modelled.append(fixture)
+    target = max(1, int(getattr(settings, "board_volume_target", 12)))
+    configured_window = window
+    initial_end = now + timedelta(hours=window)
+    initial_count = sum(f.kickoff <= initial_end for f in modelled)
+    if initial_count < target and modelled:
+        nearest_end = modelled[min(target, len(modelled)) - 1].kickoff
+        window = max(window, float(math.ceil((nearest_end - now).total_seconds() / 3600)))
+    end = now + timedelta(hours=window)
+    fixtures = [f for f in upcoming if f.kickoff <= end]
+    report.window_hours = window
+    report.window_selection = {
+        'mode': 'nearest_upcoming', 'configured_hours': configured_window,
+        'effective_hours': window, 'expanded': window > configured_window,
+        'available_verified': len(upcoming), 'available_modelled': len(modelled),
+        'next_kickoff': upcoming[0].kickoff.isoformat() if upcoming else None,
+        'next_forecast_kickoff': modelled[0].kickoff.isoformat() if modelled else None,
+        'volume_target': target,
+    }
+    if window > configured_window:
+        report.notes.append(
+            f"Widened the look-ahead from {configured_window:g}h to {window:g}h "
+            f"to include the nearest forecastable fixtures: {initial_count} "
+            f"fixture(s) against a target of {target}; the selected window holds "
+            f"{sum(f.kickoff <= end for f in modelled)}. Calendar fetched once; "
+            "one price-fetch pass for the final window.")
+    report.leagues = {}
+    for fixture in fixtures:
+        report.leagues[fixture.sport_key] = report.leagues.get(fixture.sport_key, 0) + 1
+    report.fixtures_in_window = len(fixtures)
 
     # Prices are fetched only for the fixtures actually in the window. Fetching
     # first and matching afterwards would spend the free tier's twelve requests
     # a minute reading prices for matches that were never going to be on the
     # board.
     prices = dict(prices or {})
+    phase = time.perf_counter()
     if not prices:
         prices = fetch_prices(provider_set, fixtures, settings, report,
                              window=window, now=now)
+    report.timings_ms['prices'] = (time.perf_counter()-phase)*1000
 
-    target = int(getattr(settings, "board_volume_target", 12))
-    board = OpportunityBoard(active, volume_target=target).build(
+    phase = time.perf_counter()
+    board = build_board(active, settings).build(
         fixtures, prices, now=now, window_hours=window)
+    board_time = (time.perf_counter()-phase)*1000
 
-    # The configured window is the *target*, not a hard limit. When it cannot
-    # reach the volume goal -- an international week with nothing scheduled --
-    # widening it costs nothing: the calendar rows are already in `raw`, and
-    # only the board build is repeated. Publishing an empty board while the
-    # next 24 hours of the same feed hold real fixtures would report a coverage
-    # problem that does not exist.
-    #
-    # The wider window is adopted only if it genuinely finds more fixtures. If
-    # it finds the same none, the configured window stands, so the coverage note
-    # describes the window the operator actually set.
-    if (not board.coverage.meets_volume_target
-            and window < FALLBACK_WINDOW_HOURS):
-        wide = to_fixtures(
-            [r for league in leagues for r in raw.get(league, ())
-             if not r.get("completed")
-             and now.timestamp() <= r.get("epoch", 0)
-             <= now.timestamp() + FALLBACK_WINDOW_HOURS * 3600.0])
-        if len(wide) > len(fixtures):
-            # Prices were fetched for the narrow window, so a fixture that only
-            # the wide window contains is unpriced rather than wrongly priced.
-            # That is the safe direction to widen in: it can add fixtures, it
-            # can never attach one match's price to another match.
-            narrow_count = board.coverage.fixtures_modelled
-            narrow_window = window
-            window = FALLBACK_WINDOW_HOURS
-            fixtures = wide
-            if not prices:
-                prices = fetch_prices(provider_set, fixtures, settings, report,
-                                      window=window, now=now)
-            report.window_hours = window
-            report.notes.append(
-                f"Widened the look-ahead from {narrow_window:.0f}h to "
-                f"{window:.0f}h: the shorter window held {narrow_count} "
-                f"fixture(s) against a target of {target}, and the wider one "
-                f"holds {len(wide)}. No extra requests were spent -- the same "
-                f"fetched fixtures were re-windowed."
-            )
-            board = OpportunityBoard(active, volume_target=target).build(
-                fixtures, prices, now=now, window_hours=window)
-
+    report.timings_ms['board'] = board_time
     report.board = board
+    forecast_rows = []
+    for fixture in fixtures:
+        fixture_model = active.for_league(fixture.sport_key) if hasattr(active, 'for_league') else active
+        if not fixture_model.knows(fixture.home) or not fixture_model.knows(fixture.away):
+            continue
+        pred = fixture_model.predict(fixture.home, fixture.away)
+        forecast_rows.append({
+            "match_id": fixture.match_id, "home": fixture.home, "away": fixture.away,
+            "sport_key": fixture.sport_key, "league": fixture.sport_key, "commence_at": fixture.kickoff.isoformat(),
+            "market": None, "model": {"ready": not board.unproven,
+                "p_home": pred["p_home"], "p_draw": pred["p_draw"], "p_away": pred["p_away"]},
+            "micro": {"double_chance": pred.get("double_chance", {}),
+                "home_team_over": pred.get("home_team_over", {}),
+                "away_team_over": pred.get("away_team_over", {}),
+                "p_btts": pred["p_btts"], "p_over_2_5": pred["over"].get("2.5"),
+                "expected_goals_home": pred["expected_goals"]["home"],
+                "expected_goals_away": pred["expected_goals"]["away"],
+                "most_likely_scores": [{"score": f"{r['home_goals']}-{r['away_goals']}",
+                    "p": r["p"]} for r in pred["most_likely_scores"][:5]]},
+            "uncertainty": {"level": "high" if board.unproven else "medium",
+                "reasons": ["Independent model forecast; not a bookmaker consensus"]},
+        })
+    forecast_rows.sort(key=lambda r: (datetime.fromisoformat(r['commence_at']),
+        -max(r['model']['p_home'], r['model']['p_draw'], r['model']['p_away']), r['match_id']))
+    report.forecast = {"kind": "match_forecast_bulletin", "mode": "live_model",
+        "generated_at": now.isoformat(), "day": now.date().isoformat(),
+        "window_hours": window, "window_selection": dict(report.window_selection),
+        "count": len(forecast_rows), "matches": forecast_rows,
+        "disclaimer": "Model forecasts, not guaranteed outcomes. Unpriced selections have no measured EV."}
     _collect_provider_errors(report)
-    report.finished = datetime.now(timezone.utc)
-    return report
+    return finish()
 
 
 def fetch_prices(provider_set: ProviderSet, fixtures: Sequence[Fixture],
@@ -578,24 +711,45 @@ def fetch_prices(provider_set: ProviderSet, fixtures: Sequence[Fixture],
                 max_pages=int(getattr(settings, "sharpapi_max_pages", 6)),
                 deadline=started + timedelta(seconds=PRICE_FETCH_TIMEOUT_SEC))
         except Exception as exc:
-            logger.warning("prices: %s fetch failed: %s", source.name, exc)
-            report.errors.append(f"{source.name}: price fetch failed: {exc}")
+            from .providers.diagnostics import safe_error_summary
+            logger.warning("prices: %s fetch failed: %s", source.name, safe_error_summary(exc))
+            report.errors.append(f"{source.name}: price fetch failed: {safe_error_summary(exc)}")
             continue
 
         if snapshot.error:
             report.errors.append(f"{source.name}: {snapshot.error}")
 
-        outcome = source.match(
-            snapshot.quotes, fixtures,
-            max_kickoff_gap_h=float(getattr(settings, "sharpapi_max_kickoff_gap_h",
-                                             6.0)))
-        priced.update(outcome.prices)
+        if getattr(source, 'storage', None) is not None and source.name != 'oddspapi':
+            from .odds_history import OddsHistoryRepository
+            observed_at = datetime.now(timezone.utc).isoformat()
+            OddsHistoryRepository(source.storage).ingest([{
+                'source': source.name, 'event_id': q.event_id, 'bookmaker': q.book_key,
+                'observed_at': observed_at, 'odds': q.odds, 'market': q.market,
+                'selection': q.selection, 'line': q.line, 'period': 'regulation',
+                'provider_reported_update_at': q.updated_at.isoformat() if q.updated_at else None,
+                'detail': 'Snapshot seen by worker; retrieval time is not bookmaker freshness.'
+            } for q in snapshot.quotes])
+
+        try:
+            outcome = source.match(snapshot.quotes, fixtures,
+                max_kickoff_gap_h=float(getattr(settings, 'sharpapi_max_kickoff_gap_h', 6.0)))
+        except Exception as exc:
+            report.errors.append(f'{source.name}: quote matching failed: {type(exc).__name__}; details omitted')
+            continue
+        for fixture_id, offers in outcome.prices.items():
+            priced[fixture_id] = tuple(priced.get(fixture_id, ())) + tuple(offers)
+        previous_sources = dict(report.prices.get('sources', {}))
         report.prices = snapshot.to_dict()
+        previous_sources[source.name] = snapshot.to_dict()
+        report.prices['sources'] = previous_sources
         report.price_match = outcome.to_dict()
         for status in report.providers:
             if status.name == source.name:
                 status.fixtures = len(outcome.prices)
-                status.used = True
+                if snapshot.error:
+                    status.error = (status.error+'; '+snapshot.error).strip('; ')
+                    status.degraded = True
+                status.used = bool(snapshot.quotes or not snapshot.error)
         logger.info(
             "prices: %s rows=%d quotes=%d dropped=%d events=%d matched=%d "
             "ambiguous=%d stopped=%s",
@@ -620,13 +774,33 @@ def _collect_provider_errors(report: FeedReport) -> None:
             report.errors.append(f"{status.name}: {status.error}")
 
 
-def _default_leagues() -> list[str]:
-    """The leagues that work with no credentials at all.
+def build_board(model: DixonColesModel, settings: Any) -> OpportunityBoard:
+    """One configuration seam, shared by narrow and fallback windows."""
+    fields = {"min_ev": "board_min_ev", "min_model_prob": "board_min_model_prob",
+        "min_fair_odds": "board_min_fair_odds", "min_accumulator_prob": "board_min_accumulator_prob",
+        "kelly_fraction": "board_kelly_fraction", "max_stake": "board_max_stake",
+        "max_total_line": "board_max_total_line", "accumulator_sizes": "board_accumulator_sizes",
+        "volume_target": "board_volume_target"}
+    from .model_policy import EvidenceGate, configuration_hash
+    return OpportunityBoard(model, evidence_gate=EvidenceGate(getattr(settings, 'model_validation_path', '')),
+                            configuration_hash=configuration_hash(settings),
+                            **{k: getattr(settings, v) for k, v in fields.items()
+                                     if hasattr(settings, v)})
 
-    OpenLigaDB needs nothing, so a zero-config install still produces a board
-    from German football rather than an error page. Everything else is opt-in.
+
+def _default_leagues(settings: Any = None) -> list[str]:
+    """Leagues served by the enabled bulk inputs or configured live feeds.
+
+    Bulk coverage supplies history/discovery only. Upcoming selections still
+    require a timed calendar observation and known teams in the league model.
     """
-    return [key for key, spec in LEAGUES.items() if spec.oldb]
+    from .providers.api_football import COMPETITIONS
+    from .providers.openfootball import FILES
+    return [key for key, spec in LEAGUES.items()
+            if (spec.oldb and getattr(settings, "enable_openligadb", True))
+            or (spec.fdo and getattr(settings, "football_data_token", ""))
+            or (key in FILES and getattr(settings, 'enable_openfootball', True))
+            or (key in COMPETITIONS and getattr(settings, 'api_football_key', ''))]
 
 
 __all__ = [

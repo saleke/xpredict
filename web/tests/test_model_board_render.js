@@ -459,6 +459,35 @@ check('row values are HTML-escaped', () => {
   assert(/&lt;img/.test(ladders), 'team name should appear escaped');
 });
 
+check('dedicated micro-bets view renders selections and shares board status', () => {
+  const { app, getEl } = loadApp();
+  app.state.modelBoard = boardPayload({ micro_bets: [unpricedOpportunity({
+    market: 'btts', selection: 'Yes',
+  })] });
+  app.state.modelBoardState = 'ready';
+  app.renderModelBoard();
+  const html = getEl('micro-markets').innerHTML;
+  assert(/btts/.test(html) && /Yes/.test(html), 'micro selection must be visible');
+  assert(/n\/a/.test(html), 'absent market prices must remain absent');
+  assert(getEl('micro-count-badge').textContent === ' (1)', 'micro count must match');
+  assert(getEl('micro-status').innerHTML === getEl('mb-status').innerHTML, 'status must match');
+  assert(app.VALID_VIEWS.has('micro-bets'), 'micro-bets navigation must be enabled');
+});
+
+check('dedicated micro-bets view clears selections after a failed request', () => {
+  const { app, getEl } = loadApp();
+  app.state.modelBoard = boardPayload();
+  app.state.modelBoardState = 'ready';
+  app.renderModelBoard();
+  app.state.modelBoard = null;
+  app.state.modelBoardState = 'failed';
+  app.state.modelBoardError = 'provider unavailable';
+  app.renderModelBoard();
+  assert(getEl('micro-markets').innerHTML === '', 'failed request must clear markets');
+  assert(/provider unavailable/.test(getEl('micro-status').innerHTML));
+  assert(getEl('micro-count-badge').style.display === 'none', 'failed request must hide count');
+});
+
 // ---------------------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

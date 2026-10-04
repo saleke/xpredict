@@ -1,0 +1,2377 @@
+{
+  "model_version": "league-dixon-coles-v2",
+  "evaluation": "untuned blocked chronological test",
+  "test_from": "2024-07-01T00:00:00+00:00",
+  "source_matches": 7156,
+  "source_hashes": {
+    "engine/lisa/historical/D1_2122.csv": "034d0e1296e944dddf25e3c91b85ef5bd1ad25661b89d73878f5c73bfea4b9fc",
+    "engine/lisa/historical/D1_2223.csv": "b716517b25033ce8e0243e967aa961876425a4c41e97c8aa8fa59f2aca061341",
+    "engine/lisa/historical/D1_2324.csv": "1de8bc12a133dbbf71bc6ffda62082642f087f61b1b7c15ae9f2d320876fb07e",
+    "engine/lisa/historical/D1_2425.csv": "a295c58033cfe6393cbbc28f7db85671839b960c5f1153fd3678e20ad2adb92e",
+    "engine/lisa/historical/E0_2122.csv": "335afcbabeb2939fa10ab39ba3e8215072d0b577cb8d0705c1e44c56e934e703",
+    "engine/lisa/historical/E0_2223.csv": "8442792d3b614c94ea3cf381bd2736805889cc1713169035368fff19c3d02380",
+    "engine/lisa/historical/E0_2324.csv": "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3",
+    "engine/lisa/historical/E0_2425.csv": "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4",
+    "engine/lisa/historical/F1_2122.csv": "9e9eaefb8704264f8d55a718a119d940de4af7d7b4217ac4097b957406e16213",
+    "engine/lisa/historical/F1_2223.csv": "18ea07d922e8b6360b81189637efd5aaf44779765db856bff208d5b1acf69b2f",
+    "engine/lisa/historical/F1_2324.csv": "ca0a4bf51d5b1ccfd0e1558ea41de6bb829df6c96c759888a87248d296d5adb7",
+    "engine/lisa/historical/F1_2425.csv": "fe6ae6a0c30d05f0ac88e0fc4a31452c7203e2b444703dfa941e22f38f20ab63",
+    "engine/lisa/historical/I1_2122.csv": "6a9555d5a90e652a883fd2862a52545c06e264016cd770347c067a6d7c993170",
+    "engine/lisa/historical/I1_2223.csv": "9960837f37a97ae700f876c87b85a8b7a2f5a5d05a53077830c21b9db8880c45",
+    "engine/lisa/historical/I1_2324.csv": "343a89db026fe4204ebeabd663cdfee8d02a45457828fc1cb63fa630ca170723",
+    "engine/lisa/historical/I1_2425.csv": "79d87a5b18771e066ac7419b7876bfd9771a68ca117a9712375d6bc9685abee3",
+    "engine/lisa/historical/SP1_2122.csv": "2d9e619700712823d15716c07715133f8c3b1a09046930dcfc785a38633dee2e",
+    "engine/lisa/historical/SP1_2223.csv": "53348112526b5165539df240be350083989bb258f30c0ff7cacbc0165ca7e4b3",
+    "engine/lisa/historical/SP1_2324.csv": "5323f596c7ed318e4bce95557a369d809d98501fa499ea5f41350cd45cf3c7d9",
+    "engine/lisa/historical/SP1_2425.csv": "c086e96d6a53f6e6c0fce4e35db0d1728c773b4362323da0161a34769e315a36"
+  },
+  "limitations": [
+    "Retrospective archive; publication times and subsequent data corrections unavailable",
+    "Monthly fit freezes all features before each evaluated month; unknown teams are skipped",
+    "Market baseline is normalized archive Bet365 odds; quote time unavailable",
+    "No historical corner odds, so no corner ROI or executable-price validation",
+    "No tuning/calibration on this evaluation period; no profitability approval artifact generated"
+  ],
+  "leagues": {
+    "soccer_epl": {
+      "unknown_team_matches_skipped": 3,
+      "markets": {
+        "btts_yes": {
+          "samples": 377,
+          "brier": 0.245181,
+          "log_loss": 0.683591,
+          "ece": 0.023376,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 23,
+              "predicted": 0.46924,
+              "observed": 0.47826
+            },
+            {
+              "bin": 5,
+              "n": 163,
+              "predicted": 0.55965,
+              "observed": 0.55828
+            },
+            {
+              "bin": 6,
+              "n": 183,
+              "predicted": 0.63725,
+              "observed": 0.59563
+            },
+            {
+              "bin": 7,
+              "n": 8,
+              "predicted": 0.72075,
+              "observed": 0.625
+            }
+          ]
+        },
+        "corners_league_poisson_baseline": {
+          "samples": 367,
+          "brier": 0.242994,
+          "log_loss": 0.679092,
+          "ece": 0.022566,
+          "calibration_bins": [
+            {
+              "bin": 5,
+              "n": 232,
+              "predicted": 0.59701,
+              "observed": 0.60345
+            },
+            {
+              "bin": 6,
+              "n": 135,
+              "predicted": 0.60584,
+              "observed": 0.55556
+            }
+          ]
+        },
+        "corners_over_9_5": {
+          "samples": 367,
+          "brier": 0.248159,
+          "log_loss": 0.691024,
+          "ece": 0.057807,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 30,
+              "predicted": 0.47213,
+              "observed": 0.6
+            },
+            {
+              "bin": 5,
+              "n": 156,
+              "predicted": 0.55753,
+              "observed": 0.58333
+            },
+            {
+              "bin": 6,
+              "n": 147,
+              "predicted": 0.64198,
+              "observed": 0.59184
+            },
+            {
+              "bin": 7,
+              "n": 33,
+              "predicted": 0.7317,
+              "observed": 0.57576
+            },
+            {
+              "bin": 8,
+              "n": 1,
+              "predicted": 0.8358,
+              "observed": 0.0
+            }
+          ]
+        },
+        "double_chance_1x": {
+          "samples": 377,
+          "brier": 0.200935,
+          "log_loss": 0.586136,
+          "ece": 0.041676,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 5,
+              "predicted": 0.26422,
+              "observed": 0.2
+            },
+            {
+              "bin": 3,
+              "n": 12,
+              "predicted": 0.35824,
+              "observed": 0.25
+            },
+            {
+              "bin": 4,
+              "n": 33,
+              "predicted": 0.45881,
+              "observed": 0.42424
+            },
+            {
+              "bin": 5,
+              "n": 48,
+              "predicted": 0.55656,
+              "observed": 0.47917
+            },
+            {
+              "bin": 6,
+              "n": 85,
+              "predicted": 0.65048,
+              "observed": 0.6
+            },
+            {
+              "bin": 7,
+              "n": 103,
+              "predicted": 0.75014,
+              "observed": 0.71845
+            },
+            {
+              "bin": 8,
+              "n": 71,
+              "predicted": 0.84239,
+              "observed": 0.85915
+            },
+            {
+              "bin": 9,
+              "n": 20,
+              "predicted": 0.92546,
+              "observed": 0.95
+            }
+          ]
+        },
+        "goals_over_2_5": {
+          "samples": 377,
+          "brier": 0.239526,
+          "log_loss": 0.672073,
+          "ece": 0.023751,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 3,
+              "predicted": 0.37523,
+              "observed": 0.66667
+            },
+            {
+              "bin": 4,
+              "n": 39,
+              "predicted": 0.45611,
+              "observed": 0.35897
+            },
+            {
+              "bin": 5,
+              "n": 180,
+              "predicted": 0.55958,
+              "observed": 0.56111
+            },
+            {
+              "bin": 6,
+              "n": 136,
+              "predicted": 0.64132,
+              "observed": 0.625
+            },
+            {
+              "bin": 7,
+              "n": 19,
+              "predicted": 0.72617,
+              "observed": 0.63158
+            }
+          ]
+        },
+        "h2h_home": {
+          "samples": 377,
+          "brier": 0.212242,
+          "log_loss": 0.611296,
+          "ece": 0.048408,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 5,
+              "predicted": 0.07987,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 31,
+              "predicted": 0.1672,
+              "observed": 0.12903
+            },
+            {
+              "bin": 2,
+              "n": 53,
+              "predicted": 0.25567,
+              "observed": 0.24528
+            },
+            {
+              "bin": 3,
+              "n": 85,
+              "predicted": 0.34948,
+              "observed": 0.32941
+            },
+            {
+              "bin": 4,
+              "n": 86,
+              "predicted": 0.44856,
+              "observed": 0.5
+            },
+            {
+              "bin": 5,
+              "n": 58,
+              "predicted": 0.54785,
+              "observed": 0.46552
+            },
+            {
+              "bin": 6,
+              "n": 45,
+              "predicted": 0.64661,
+              "observed": 0.57778
+            },
+            {
+              "bin": 7,
+              "n": 10,
+              "predicted": 0.75377,
+              "observed": 0.9
+            },
+            {
+              "bin": 8,
+              "n": 4,
+              "predicted": 0.83682,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_goals_over_2_5": {
+          "samples": 377,
+          "brier": 0.241611,
+          "log_loss": 0.675932,
+          "ece": 0.028241,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 1,
+              "predicted": 0.39747,
+              "observed": 0.0
+            },
+            {
+              "bin": 4,
+              "n": 30,
+              "predicted": 0.46026,
+              "observed": 0.5
+            },
+            {
+              "bin": 5,
+              "n": 166,
+              "predicted": 0.54765,
+              "observed": 0.54819
+            },
+            {
+              "bin": 6,
+              "n": 146,
+              "predicted": 0.63394,
+              "observed": 0.57534
+            },
+            {
+              "bin": 7,
+              "n": 34,
+              "predicted": 0.71802,
+              "observed": 0.70588
+            }
+          ]
+        },
+        "market_goals_over_2_5_model_paired": {
+          "samples": 377,
+          "brier": 0.239526,
+          "log_loss": 0.672073,
+          "ece": 0.023751,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 3,
+              "predicted": 0.37523,
+              "observed": 0.66667
+            },
+            {
+              "bin": 4,
+              "n": 39,
+              "predicted": 0.45611,
+              "observed": 0.35897
+            },
+            {
+              "bin": 5,
+              "n": 180,
+              "predicted": 0.55958,
+              "observed": 0.56111
+            },
+            {
+              "bin": 6,
+              "n": 136,
+              "predicted": 0.64132,
+              "observed": 0.625
+            },
+            {
+              "bin": 7,
+              "n": 19,
+              "predicted": 0.72617,
+              "observed": 0.63158
+            }
+          ]
+        },
+        "market_home": {
+          "samples": 377,
+          "brier": 0.20459,
+          "log_loss": 0.592528,
+          "ece": 0.059133,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 3,
+              "predicted": 0.08576,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 41,
+              "predicted": 0.15549,
+              "observed": 0.07317
+            },
+            {
+              "bin": 2,
+              "n": 48,
+              "predicted": 0.24855,
+              "observed": 0.1875
+            },
+            {
+              "bin": 3,
+              "n": 75,
+              "predicted": 0.35662,
+              "observed": 0.32
+            },
+            {
+              "bin": 4,
+              "n": 65,
+              "predicted": 0.45018,
+              "observed": 0.47692
+            },
+            {
+              "bin": 5,
+              "n": 56,
+              "predicted": 0.55599,
+              "observed": 0.53571
+            },
+            {
+              "bin": 6,
+              "n": 50,
+              "predicted": 0.65484,
+              "observed": 0.6
+            },
+            {
+              "bin": 7,
+              "n": 26,
+              "predicted": 0.73519,
+              "observed": 0.53846
+            },
+            {
+              "bin": 8,
+              "n": 13,
+              "predicted": 0.8267,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home_model_paired": {
+          "samples": 377,
+          "brier": 0.212242,
+          "log_loss": 0.611296,
+          "ece": 0.048408,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 5,
+              "predicted": 0.07987,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 31,
+              "predicted": 0.1672,
+              "observed": 0.12903
+            },
+            {
+              "bin": 2,
+              "n": 53,
+              "predicted": 0.25567,
+              "observed": 0.24528
+            },
+            {
+              "bin": 3,
+              "n": 85,
+              "predicted": 0.34948,
+              "observed": 0.32941
+            },
+            {
+              "bin": 4,
+              "n": 86,
+              "predicted": 0.44856,
+              "observed": 0.5
+            },
+            {
+              "bin": 5,
+              "n": 58,
+              "predicted": 0.54785,
+              "observed": 0.46552
+            },
+            {
+              "bin": 6,
+              "n": 45,
+              "predicted": 0.64661,
+              "observed": 0.57778
+            },
+            {
+              "bin": 7,
+              "n": 10,
+              "predicted": 0.75377,
+              "observed": 0.9
+            },
+            {
+              "bin": 8,
+              "n": 4,
+              "predicted": 0.83682,
+              "observed": 1.0
+            }
+          ]
+        }
+      }
+    },
+    "soccer_france_ligue_one": {
+      "unknown_team_matches_skipped": 0,
+      "markets": {
+        "btts_yes": {
+          "samples": 306,
+          "brier": 0.247347,
+          "log_loss": 0.687881,
+          "ece": 0.036669,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 64,
+              "predicted": 0.4672,
+              "observed": 0.54688
+            },
+            {
+              "bin": 5,
+              "n": 176,
+              "predicted": 0.54783,
+              "observed": 0.56818
+            },
+            {
+              "bin": 6,
+              "n": 66,
+              "predicted": 0.62941,
+              "observed": 0.59091
+            }
+          ]
+        },
+        "corners_league_poisson_baseline": {
+          "samples": 306,
+          "brier": 0.246864,
+          "log_loss": 0.686866,
+          "ece": 0.025131,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 306,
+              "predicted": 0.46304,
+              "observed": 0.43791
+            }
+          ]
+        },
+        "corners_over_9_5": {
+          "samples": 306,
+          "brier": 0.25406,
+          "log_loss": 0.701668,
+          "ece": 0.069024,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 57,
+              "predicted": 0.37128,
+              "observed": 0.50877
+            },
+            {
+              "bin": 4,
+              "n": 180,
+              "predicted": 0.44824,
+              "observed": 0.43333
+            },
+            {
+              "bin": 5,
+              "n": 65,
+              "predicted": 0.53945,
+              "observed": 0.41538
+            },
+            {
+              "bin": 6,
+              "n": 4,
+              "predicted": 0.63409,
+              "observed": 0.0
+            }
+          ]
+        },
+        "double_chance_1x": {
+          "samples": 306,
+          "brier": 0.194258,
+          "log_loss": 0.571858,
+          "ece": 0.029282,
+          "calibration_bins": [
+            {
+              "bin": 1,
+              "n": 1,
+              "predicted": 0.18716,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 1,
+              "predicted": 0.22002,
+              "observed": 0.0
+            },
+            {
+              "bin": 3,
+              "n": 11,
+              "predicted": 0.36285,
+              "observed": 0.45455
+            },
+            {
+              "bin": 4,
+              "n": 35,
+              "predicted": 0.45675,
+              "observed": 0.4
+            },
+            {
+              "bin": 5,
+              "n": 51,
+              "predicted": 0.54955,
+              "observed": 0.54902
+            },
+            {
+              "bin": 6,
+              "n": 70,
+              "predicted": 0.65344,
+              "observed": 0.65714
+            },
+            {
+              "bin": 7,
+              "n": 81,
+              "predicted": 0.74784,
+              "observed": 0.76543
+            },
+            {
+              "bin": 8,
+              "n": 51,
+              "predicted": 0.83955,
+              "observed": 0.90196
+            },
+            {
+              "bin": 9,
+              "n": 5,
+              "predicted": 0.93272,
+              "observed": 0.8
+            }
+          ]
+        },
+        "goals_over_2_5": {
+          "samples": 306,
+          "brier": 0.242423,
+          "log_loss": 0.677255,
+          "ece": 0.049339,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 8,
+              "predicted": 0.38138,
+              "observed": 0.375
+            },
+            {
+              "bin": 4,
+              "n": 82,
+              "predicted": 0.45721,
+              "observed": 0.53659
+            },
+            {
+              "bin": 5,
+              "n": 130,
+              "predicted": 0.54915,
+              "observed": 0.50769
+            },
+            {
+              "bin": 6,
+              "n": 71,
+              "predicted": 0.63955,
+              "observed": 0.61972
+            },
+            {
+              "bin": 7,
+              "n": 14,
+              "predicted": 0.74639,
+              "observed": 0.85714
+            },
+            {
+              "bin": 8,
+              "n": 1,
+              "predicted": 0.80949,
+              "observed": 1.0
+            }
+          ]
+        },
+        "h2h_home": {
+          "samples": 306,
+          "brier": 0.215625,
+          "log_loss": 0.620282,
+          "ece": 0.049711,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 1,
+              "predicted": 0.05666,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 10,
+              "predicted": 0.16832,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 59,
+              "predicted": 0.25224,
+              "observed": 0.28814
+            },
+            {
+              "bin": 3,
+              "n": 61,
+              "predicted": 0.35125,
+              "observed": 0.34426
+            },
+            {
+              "bin": 4,
+              "n": 67,
+              "predicted": 0.45229,
+              "observed": 0.49254
+            },
+            {
+              "bin": 5,
+              "n": 56,
+              "predicted": 0.53981,
+              "observed": 0.55357
+            },
+            {
+              "bin": 6,
+              "n": 42,
+              "predicted": 0.64794,
+              "observed": 0.80952
+            },
+            {
+              "bin": 7,
+              "n": 7,
+              "predicted": 0.73827,
+              "observed": 0.71429
+            },
+            {
+              "bin": 8,
+              "n": 3,
+              "predicted": 0.8352,
+              "observed": 0.66667
+            }
+          ]
+        },
+        "market_goals_over_2_5": {
+          "samples": 306,
+          "brier": 0.238247,
+          "log_loss": 0.669057,
+          "ece": 0.023928,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 89,
+              "predicted": 0.46529,
+              "observed": 0.4382
+            },
+            {
+              "bin": 5,
+              "n": 139,
+              "predicted": 0.54145,
+              "observed": 0.56115
+            },
+            {
+              "bin": 6,
+              "n": 66,
+              "predicted": 0.63584,
+              "observed": 0.65152
+            },
+            {
+              "bin": 7,
+              "n": 12,
+              "predicted": 0.73856,
+              "observed": 0.83333
+            }
+          ]
+        },
+        "market_goals_over_2_5_model_paired": {
+          "samples": 306,
+          "brier": 0.242423,
+          "log_loss": 0.677255,
+          "ece": 0.049339,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 8,
+              "predicted": 0.38138,
+              "observed": 0.375
+            },
+            {
+              "bin": 4,
+              "n": 82,
+              "predicted": 0.45721,
+              "observed": 0.53659
+            },
+            {
+              "bin": 5,
+              "n": 130,
+              "predicted": 0.54915,
+              "observed": 0.50769
+            },
+            {
+              "bin": 6,
+              "n": 71,
+              "predicted": 0.63955,
+              "observed": 0.61972
+            },
+            {
+              "bin": 7,
+              "n": 14,
+              "predicted": 0.74639,
+              "observed": 0.85714
+            },
+            {
+              "bin": 8,
+              "n": 1,
+              "predicted": 0.80949,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home": {
+          "samples": 306,
+          "brier": 0.212504,
+          "log_loss": 0.61304,
+          "ece": 0.042448,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 2,
+              "predicted": 0.06711,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 28,
+              "predicted": 0.16483,
+              "observed": 0.17857
+            },
+            {
+              "bin": 2,
+              "n": 52,
+              "predicted": 0.25554,
+              "observed": 0.28846
+            },
+            {
+              "bin": 3,
+              "n": 48,
+              "predicted": 0.34843,
+              "observed": 0.35417
+            },
+            {
+              "bin": 4,
+              "n": 59,
+              "predicted": 0.44723,
+              "observed": 0.42373
+            },
+            {
+              "bin": 5,
+              "n": 49,
+              "predicted": 0.54493,
+              "observed": 0.65306
+            },
+            {
+              "bin": 6,
+              "n": 48,
+              "predicted": 0.65255,
+              "observed": 0.70833
+            },
+            {
+              "bin": 7,
+              "n": 17,
+              "predicted": 0.74421,
+              "observed": 0.70588
+            },
+            {
+              "bin": 8,
+              "n": 3,
+              "predicted": 0.84367,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home_model_paired": {
+          "samples": 306,
+          "brier": 0.215625,
+          "log_loss": 0.620282,
+          "ece": 0.049711,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 1,
+              "predicted": 0.05666,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 10,
+              "predicted": 0.16832,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 59,
+              "predicted": 0.25224,
+              "observed": 0.28814
+            },
+            {
+              "bin": 3,
+              "n": 61,
+              "predicted": 0.35125,
+              "observed": 0.34426
+            },
+            {
+              "bin": 4,
+              "n": 67,
+              "predicted": 0.45229,
+              "observed": 0.49254
+            },
+            {
+              "bin": 5,
+              "n": 56,
+              "predicted": 0.53981,
+              "observed": 0.55357
+            },
+            {
+              "bin": 6,
+              "n": 42,
+              "predicted": 0.64794,
+              "observed": 0.80952
+            },
+            {
+              "bin": 7,
+              "n": 7,
+              "predicted": 0.73827,
+              "observed": 0.71429
+            },
+            {
+              "bin": 8,
+              "n": 3,
+              "predicted": 0.8352,
+              "observed": 0.66667
+            }
+          ]
+        }
+      }
+    },
+    "soccer_germany_bundesliga": {
+      "unknown_team_matches_skipped": 4,
+      "markets": {
+        "btts_yes": {
+          "samples": 302,
+          "brier": 0.245556,
+          "log_loss": 0.684382,
+          "ece": 0.067662,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 3,
+              "predicted": 0.48854,
+              "observed": 0.66667
+            },
+            {
+              "bin": 5,
+              "n": 66,
+              "predicted": 0.56047,
+              "observed": 0.54545
+            },
+            {
+              "bin": 6,
+              "n": 190,
+              "predicted": 0.64613,
+              "observed": 0.55789
+            },
+            {
+              "bin": 7,
+              "n": 41,
+              "predicted": 0.72011,
+              "observed": 0.68293
+            },
+            {
+              "bin": 8,
+              "n": 2,
+              "predicted": 0.80951,
+              "observed": 0.5
+            }
+          ]
+        },
+        "corners_league_poisson_baseline": {
+          "samples": 282,
+          "brier": 0.249586,
+          "log_loss": 0.692319,
+          "ece": 0.009837,
+          "calibration_bins": [
+            {
+              "bin": 5,
+              "n": 282,
+              "predicted": 0.51144,
+              "observed": 0.52128
+            }
+          ]
+        },
+        "corners_over_9_5": {
+          "samples": 282,
+          "brier": 0.249988,
+          "log_loss": 0.693167,
+          "ece": 0.048806,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 15,
+              "predicted": 0.36686,
+              "observed": 0.33333
+            },
+            {
+              "bin": 4,
+              "n": 118,
+              "predicted": 0.46026,
+              "observed": 0.52542
+            },
+            {
+              "bin": 5,
+              "n": 128,
+              "predicted": 0.54216,
+              "observed": 0.55469
+            },
+            {
+              "bin": 6,
+              "n": 21,
+              "predicted": 0.61749,
+              "observed": 0.42857
+            }
+          ]
+        },
+        "double_chance_1x": {
+          "samples": 302,
+          "brier": 0.220408,
+          "log_loss": 0.636125,
+          "ece": 0.086278,
+          "calibration_bins": [
+            {
+              "bin": 1,
+              "n": 4,
+              "predicted": 0.16406,
+              "observed": 0.25
+            },
+            {
+              "bin": 2,
+              "n": 7,
+              "predicted": 0.25757,
+              "observed": 0.42857
+            },
+            {
+              "bin": 3,
+              "n": 16,
+              "predicted": 0.35635,
+              "observed": 0.375
+            },
+            {
+              "bin": 4,
+              "n": 19,
+              "predicted": 0.45828,
+              "observed": 0.57895
+            },
+            {
+              "bin": 5,
+              "n": 30,
+              "predicted": 0.55121,
+              "observed": 0.53333
+            },
+            {
+              "bin": 6,
+              "n": 51,
+              "predicted": 0.65575,
+              "observed": 0.60784
+            },
+            {
+              "bin": 7,
+              "n": 80,
+              "predicted": 0.74797,
+              "observed": 0.5875
+            },
+            {
+              "bin": 8,
+              "n": 58,
+              "predicted": 0.85076,
+              "observed": 0.75862
+            },
+            {
+              "bin": 9,
+              "n": 37,
+              "predicted": 0.93953,
+              "observed": 0.91892
+            }
+          ]
+        },
+        "goals_over_2_5": {
+          "samples": 302,
+          "brier": 0.238081,
+          "log_loss": 0.670671,
+          "ece": 0.053008,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 1,
+              "predicted": 0.38702,
+              "observed": 1.0
+            },
+            {
+              "bin": 4,
+              "n": 18,
+              "predicted": 0.45709,
+              "observed": 0.44444
+            },
+            {
+              "bin": 5,
+              "n": 79,
+              "predicted": 0.55935,
+              "observed": 0.5443
+            },
+            {
+              "bin": 6,
+              "n": 112,
+              "predicted": 0.64933,
+              "observed": 0.58036
+            },
+            {
+              "bin": 7,
+              "n": 64,
+              "predicted": 0.73735,
+              "observed": 0.70312
+            },
+            {
+              "bin": 8,
+              "n": 22,
+              "predicted": 0.84115,
+              "observed": 0.68182
+            },
+            {
+              "bin": 9,
+              "n": 6,
+              "predicted": 0.92637,
+              "observed": 0.83333
+            }
+          ]
+        },
+        "h2h_home": {
+          "samples": 302,
+          "brier": 0.207488,
+          "log_loss": 0.603118,
+          "ece": 0.065533,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 8,
+              "predicted": 0.0667,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 29,
+              "predicted": 0.15161,
+              "observed": 0.13793
+            },
+            {
+              "bin": 2,
+              "n": 36,
+              "predicted": 0.24742,
+              "observed": 0.19444
+            },
+            {
+              "bin": 3,
+              "n": 60,
+              "predicted": 0.35346,
+              "observed": 0.35
+            },
+            {
+              "bin": 4,
+              "n": 65,
+              "predicted": 0.44809,
+              "observed": 0.35385
+            },
+            {
+              "bin": 5,
+              "n": 35,
+              "predicted": 0.54567,
+              "observed": 0.4
+            },
+            {
+              "bin": 6,
+              "n": 31,
+              "predicted": 0.64923,
+              "observed": 0.64516
+            },
+            {
+              "bin": 7,
+              "n": 20,
+              "predicted": 0.74073,
+              "observed": 0.55
+            },
+            {
+              "bin": 8,
+              "n": 13,
+              "predicted": 0.85022,
+              "observed": 0.92308
+            },
+            {
+              "bin": 9,
+              "n": 5,
+              "predicted": 0.92665,
+              "observed": 0.8
+            }
+          ]
+        },
+        "market_goals_over_2_5": {
+          "samples": 302,
+          "brier": 0.227721,
+          "log_loss": 0.647459,
+          "ece": 0.038424,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 1,
+              "predicted": 0.39747,
+              "observed": 0.0
+            },
+            {
+              "bin": 4,
+              "n": 29,
+              "predicted": 0.46385,
+              "observed": 0.37931
+            },
+            {
+              "bin": 5,
+              "n": 131,
+              "predicted": 0.55229,
+              "observed": 0.54198
+            },
+            {
+              "bin": 6,
+              "n": 104,
+              "predicted": 0.63657,
+              "observed": 0.70192
+            },
+            {
+              "bin": 7,
+              "n": 34,
+              "predicted": 0.73112,
+              "observed": 0.73529
+            },
+            {
+              "bin": 8,
+              "n": 3,
+              "predicted": 0.82233,
+              "observed": 0.66667
+            }
+          ]
+        },
+        "market_goals_over_2_5_model_paired": {
+          "samples": 302,
+          "brier": 0.238081,
+          "log_loss": 0.670671,
+          "ece": 0.053008,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 1,
+              "predicted": 0.38702,
+              "observed": 1.0
+            },
+            {
+              "bin": 4,
+              "n": 18,
+              "predicted": 0.45709,
+              "observed": 0.44444
+            },
+            {
+              "bin": 5,
+              "n": 79,
+              "predicted": 0.55935,
+              "observed": 0.5443
+            },
+            {
+              "bin": 6,
+              "n": 112,
+              "predicted": 0.64933,
+              "observed": 0.58036
+            },
+            {
+              "bin": 7,
+              "n": 64,
+              "predicted": 0.73735,
+              "observed": 0.70312
+            },
+            {
+              "bin": 8,
+              "n": 22,
+              "predicted": 0.84115,
+              "observed": 0.68182
+            },
+            {
+              "bin": 9,
+              "n": 6,
+              "predicted": 0.92637,
+              "observed": 0.83333
+            }
+          ]
+        },
+        "market_home": {
+          "samples": 302,
+          "brier": 0.200365,
+          "log_loss": 0.584885,
+          "ece": 0.075444,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 3,
+              "predicted": 0.08404,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 26,
+              "predicted": 0.15643,
+              "observed": 0.11538
+            },
+            {
+              "bin": 2,
+              "n": 30,
+              "predicted": 0.25656,
+              "observed": 0.16667
+            },
+            {
+              "bin": 3,
+              "n": 65,
+              "predicted": 0.34979,
+              "observed": 0.26154
+            },
+            {
+              "bin": 4,
+              "n": 60,
+              "predicted": 0.44258,
+              "observed": 0.38333
+            },
+            {
+              "bin": 5,
+              "n": 54,
+              "predicted": 0.54717,
+              "observed": 0.48148
+            },
+            {
+              "bin": 6,
+              "n": 29,
+              "predicted": 0.64534,
+              "observed": 0.48276
+            },
+            {
+              "bin": 7,
+              "n": 23,
+              "predicted": 0.74422,
+              "observed": 0.78261
+            },
+            {
+              "bin": 8,
+              "n": 11,
+              "predicted": 0.8399,
+              "observed": 0.81818
+            },
+            {
+              "bin": 9,
+              "n": 1,
+              "predicted": 0.90732,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home_model_paired": {
+          "samples": 302,
+          "brier": 0.207488,
+          "log_loss": 0.603118,
+          "ece": 0.065533,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 8,
+              "predicted": 0.0667,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 29,
+              "predicted": 0.15161,
+              "observed": 0.13793
+            },
+            {
+              "bin": 2,
+              "n": 36,
+              "predicted": 0.24742,
+              "observed": 0.19444
+            },
+            {
+              "bin": 3,
+              "n": 60,
+              "predicted": 0.35346,
+              "observed": 0.35
+            },
+            {
+              "bin": 4,
+              "n": 65,
+              "predicted": 0.44809,
+              "observed": 0.35385
+            },
+            {
+              "bin": 5,
+              "n": 35,
+              "predicted": 0.54567,
+              "observed": 0.4
+            },
+            {
+              "bin": 6,
+              "n": 31,
+              "predicted": 0.64923,
+              "observed": 0.64516
+            },
+            {
+              "bin": 7,
+              "n": 20,
+              "predicted": 0.74073,
+              "observed": 0.55
+            },
+            {
+              "bin": 8,
+              "n": 13,
+              "predicted": 0.85022,
+              "observed": 0.92308
+            },
+            {
+              "bin": 9,
+              "n": 5,
+              "predicted": 0.92665,
+              "observed": 0.8
+            }
+          ]
+        }
+      }
+    },
+    "soccer_italy_serie_a": {
+      "unknown_team_matches_skipped": 5,
+      "markets": {
+        "btts_yes": {
+          "samples": 375,
+          "brier": 0.251564,
+          "log_loss": 0.696349,
+          "ece": 0.044105,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 15,
+              "predicted": 0.37405,
+              "observed": 0.46667
+            },
+            {
+              "bin": 4,
+              "n": 161,
+              "predicted": 0.45699,
+              "observed": 0.50932
+            },
+            {
+              "bin": 5,
+              "n": 178,
+              "predicted": 0.54296,
+              "observed": 0.51124
+            },
+            {
+              "bin": 6,
+              "n": 21,
+              "predicted": 0.62285,
+              "observed": 0.57143
+            }
+          ]
+        },
+        "corners_league_poisson_baseline": {
+          "samples": 361,
+          "brier": 0.24866,
+          "log_loss": 0.690466,
+          "ece": 0.029783,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 361,
+              "predicted": 0.48131,
+              "observed": 0.45152
+            }
+          ]
+        },
+        "corners_over_9_5": {
+          "samples": 361,
+          "brier": 0.245837,
+          "log_loss": 0.684781,
+          "ece": 0.061007,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 9,
+              "predicted": 0.27442,
+              "observed": 0.22222
+            },
+            {
+              "bin": 3,
+              "n": 83,
+              "predicted": 0.3678,
+              "observed": 0.46988
+            },
+            {
+              "bin": 4,
+              "n": 148,
+              "predicted": 0.45131,
+              "observed": 0.39865
+            },
+            {
+              "bin": 5,
+              "n": 99,
+              "predicted": 0.54379,
+              "observed": 0.51515
+            },
+            {
+              "bin": 6,
+              "n": 21,
+              "predicted": 0.62643,
+              "observed": 0.52381
+            },
+            {
+              "bin": 7,
+              "n": 1,
+              "predicted": 0.70246,
+              "observed": 1.0
+            }
+          ]
+        },
+        "double_chance_1x": {
+          "samples": 375,
+          "brier": 0.181084,
+          "log_loss": 0.540616,
+          "ece": 0.069446,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 1,
+              "predicted": 0.28879,
+              "observed": 0.0
+            },
+            {
+              "bin": 3,
+              "n": 11,
+              "predicted": 0.36621,
+              "observed": 0.27273
+            },
+            {
+              "bin": 4,
+              "n": 46,
+              "predicted": 0.46197,
+              "observed": 0.32609
+            },
+            {
+              "bin": 5,
+              "n": 50,
+              "predicted": 0.54947,
+              "observed": 0.46
+            },
+            {
+              "bin": 6,
+              "n": 97,
+              "predicted": 0.65425,
+              "observed": 0.70103
+            },
+            {
+              "bin": 7,
+              "n": 89,
+              "predicted": 0.74911,
+              "observed": 0.78652
+            },
+            {
+              "bin": 8,
+              "n": 75,
+              "predicted": 0.84545,
+              "observed": 0.92
+            },
+            {
+              "bin": 9,
+              "n": 6,
+              "predicted": 0.90952,
+              "observed": 1.0
+            }
+          ]
+        },
+        "goals_over_2_5": {
+          "samples": 375,
+          "brier": 0.247219,
+          "log_loss": 0.687601,
+          "ece": 0.041275,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 3,
+              "predicted": 0.29199,
+              "observed": 0.0
+            },
+            {
+              "bin": 3,
+              "n": 50,
+              "predicted": 0.36219,
+              "observed": 0.36
+            },
+            {
+              "bin": 4,
+              "n": 168,
+              "predicted": 0.4572,
+              "observed": 0.49405
+            },
+            {
+              "bin": 5,
+              "n": 117,
+              "predicted": 0.5461,
+              "observed": 0.49573
+            },
+            {
+              "bin": 6,
+              "n": 36,
+              "predicted": 0.63047,
+              "observed": 0.58333
+            },
+            {
+              "bin": 7,
+              "n": 1,
+              "predicted": 0.71155,
+              "observed": 0.0
+            }
+          ]
+        },
+        "h2h_home": {
+          "samples": 375,
+          "brier": 0.201926,
+          "log_loss": 0.589644,
+          "ece": 0.078222,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 1,
+              "predicted": 0.09985,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 20,
+              "predicted": 0.16807,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 75,
+              "predicted": 0.24912,
+              "observed": 0.21333
+            },
+            {
+              "bin": 3,
+              "n": 80,
+              "predicted": 0.35783,
+              "observed": 0.2625
+            },
+            {
+              "bin": 4,
+              "n": 87,
+              "predicted": 0.44903,
+              "observed": 0.47126
+            },
+            {
+              "bin": 5,
+              "n": 51,
+              "predicted": 0.55013,
+              "observed": 0.43137
+            },
+            {
+              "bin": 6,
+              "n": 50,
+              "predicted": 0.64802,
+              "observed": 0.78
+            },
+            {
+              "bin": 7,
+              "n": 11,
+              "predicted": 0.72982,
+              "observed": 0.81818
+            }
+          ]
+        },
+        "market_goals_over_2_5": {
+          "samples": 375,
+          "brier": 0.24364,
+          "log_loss": 0.680367,
+          "ece": 0.036622,
+          "calibration_bins": [
+            {
+              "bin": 3,
+              "n": 29,
+              "predicted": 0.37099,
+              "observed": 0.37931
+            },
+            {
+              "bin": 4,
+              "n": 201,
+              "predicted": 0.45103,
+              "observed": 0.43284
+            },
+            {
+              "bin": 5,
+              "n": 123,
+              "predicted": 0.53635,
+              "observed": 0.58537
+            },
+            {
+              "bin": 6,
+              "n": 20,
+              "predicted": 0.6184,
+              "observed": 0.45
+            },
+            {
+              "bin": 7,
+              "n": 2,
+              "predicted": 0.71882,
+              "observed": 0.5
+            }
+          ]
+        },
+        "market_goals_over_2_5_model_paired": {
+          "samples": 375,
+          "brier": 0.247219,
+          "log_loss": 0.687601,
+          "ece": 0.041275,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 3,
+              "predicted": 0.29199,
+              "observed": 0.0
+            },
+            {
+              "bin": 3,
+              "n": 50,
+              "predicted": 0.36219,
+              "observed": 0.36
+            },
+            {
+              "bin": 4,
+              "n": 168,
+              "predicted": 0.4572,
+              "observed": 0.49405
+            },
+            {
+              "bin": 5,
+              "n": 117,
+              "predicted": 0.5461,
+              "observed": 0.49573
+            },
+            {
+              "bin": 6,
+              "n": 36,
+              "predicted": 0.63047,
+              "observed": 0.58333
+            },
+            {
+              "bin": 7,
+              "n": 1,
+              "predicted": 0.71155,
+              "observed": 0.0
+            }
+          ]
+        },
+        "market_home": {
+          "samples": 375,
+          "brier": 0.194436,
+          "log_loss": 0.571222,
+          "ece": 0.052516,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 3,
+              "predicted": 0.07717,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 48,
+              "predicted": 0.17029,
+              "observed": 0.0625
+            },
+            {
+              "bin": 2,
+              "n": 56,
+              "predicted": 0.25255,
+              "observed": 0.26786
+            },
+            {
+              "bin": 3,
+              "n": 68,
+              "predicted": 0.35235,
+              "observed": 0.26471
+            },
+            {
+              "bin": 4,
+              "n": 67,
+              "predicted": 0.45015,
+              "observed": 0.40299
+            },
+            {
+              "bin": 5,
+              "n": 56,
+              "predicted": 0.54229,
+              "observed": 0.51786
+            },
+            {
+              "bin": 6,
+              "n": 45,
+              "predicted": 0.64796,
+              "observed": 0.66667
+            },
+            {
+              "bin": 7,
+              "n": 29,
+              "predicted": 0.74042,
+              "observed": 0.7931
+            },
+            {
+              "bin": 8,
+              "n": 3,
+              "predicted": 0.80883,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home_model_paired": {
+          "samples": 375,
+          "brier": 0.201926,
+          "log_loss": 0.589644,
+          "ece": 0.078222,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 1,
+              "predicted": 0.09985,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 20,
+              "predicted": 0.16807,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 75,
+              "predicted": 0.24912,
+              "observed": 0.21333
+            },
+            {
+              "bin": 3,
+              "n": 80,
+              "predicted": 0.35783,
+              "observed": 0.2625
+            },
+            {
+              "bin": 4,
+              "n": 87,
+              "predicted": 0.44903,
+              "observed": 0.47126
+            },
+            {
+              "bin": 5,
+              "n": 51,
+              "predicted": 0.55013,
+              "observed": 0.43137
+            },
+            {
+              "bin": 6,
+              "n": 50,
+              "predicted": 0.64802,
+              "observed": 0.78
+            },
+            {
+              "bin": 7,
+              "n": 11,
+              "predicted": 0.72982,
+              "observed": 0.81818
+            }
+          ]
+        }
+      }
+    },
+    "soccer_spain_la_liga": {
+      "unknown_team_matches_skipped": 4,
+      "markets": {
+        "btts_yes": {
+          "samples": 376,
+          "brier": 0.244589,
+          "log_loss": 0.682056,
+          "ece": 0.036392,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 1,
+              "predicted": 0.29797,
+              "observed": 1.0
+            },
+            {
+              "bin": 3,
+              "n": 17,
+              "predicted": 0.37102,
+              "observed": 0.29412
+            },
+            {
+              "bin": 4,
+              "n": 157,
+              "predicted": 0.45732,
+              "observed": 0.50318
+            },
+            {
+              "bin": 5,
+              "n": 148,
+              "predicted": 0.54377,
+              "observed": 0.56757
+            },
+            {
+              "bin": 6,
+              "n": 52,
+              "predicted": 0.64044,
+              "observed": 0.65385
+            },
+            {
+              "bin": 7,
+              "n": 1,
+              "predicted": 0.74655,
+              "observed": 1.0
+            }
+          ]
+        },
+        "corners_league_poisson_baseline": {
+          "samples": 369,
+          "brier": 0.248742,
+          "log_loss": 0.690629,
+          "ece": 0.00464,
+          "calibration_bins": [
+            {
+              "bin": 4,
+              "n": 369,
+              "predicted": 0.47076,
+              "observed": 0.46612
+            }
+          ]
+        },
+        "corners_over_9_5": {
+          "samples": 369,
+          "brier": 0.243389,
+          "log_loss": 0.679415,
+          "ece": 0.01088,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 12,
+              "predicted": 0.27263,
+              "observed": 0.25
+            },
+            {
+              "bin": 3,
+              "n": 80,
+              "predicted": 0.36247,
+              "observed": 0.3875
+            },
+            {
+              "bin": 4,
+              "n": 147,
+              "predicted": 0.45451,
+              "observed": 0.46259
+            },
+            {
+              "bin": 5,
+              "n": 118,
+              "predicted": 0.53549,
+              "observed": 0.5339
+            },
+            {
+              "bin": 6,
+              "n": 12,
+              "predicted": 0.61382,
+              "observed": 0.58333
+            }
+          ]
+        },
+        "double_chance_1x": {
+          "samples": 376,
+          "brier": 0.184093,
+          "log_loss": 0.548467,
+          "ece": 0.030857,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 1,
+              "predicted": 0.08352,
+              "observed": 0.0
+            },
+            {
+              "bin": 2,
+              "n": 2,
+              "predicted": 0.26857,
+              "observed": 0.0
+            },
+            {
+              "bin": 3,
+              "n": 8,
+              "predicted": 0.34844,
+              "observed": 0.375
+            },
+            {
+              "bin": 4,
+              "n": 27,
+              "predicted": 0.45176,
+              "observed": 0.44444
+            },
+            {
+              "bin": 5,
+              "n": 42,
+              "predicted": 0.55691,
+              "observed": 0.47619
+            },
+            {
+              "bin": 6,
+              "n": 80,
+              "predicted": 0.65778,
+              "observed": 0.6375
+            },
+            {
+              "bin": 7,
+              "n": 112,
+              "predicted": 0.75069,
+              "observed": 0.77679
+            },
+            {
+              "bin": 8,
+              "n": 72,
+              "predicted": 0.84642,
+              "observed": 0.86111
+            },
+            {
+              "bin": 9,
+              "n": 32,
+              "predicted": 0.92433,
+              "observed": 0.875
+            }
+          ]
+        },
+        "goals_over_2_5": {
+          "samples": 376,
+          "brier": 0.241149,
+          "log_loss": 0.674989,
+          "ece": 0.036001,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 9,
+              "predicted": 0.28305,
+              "observed": 0.44444
+            },
+            {
+              "bin": 3,
+              "n": 76,
+              "predicted": 0.36266,
+              "observed": 0.39474
+            },
+            {
+              "bin": 4,
+              "n": 118,
+              "predicted": 0.45232,
+              "observed": 0.44068
+            },
+            {
+              "bin": 5,
+              "n": 94,
+              "predicted": 0.54901,
+              "observed": 0.48936
+            },
+            {
+              "bin": 6,
+              "n": 61,
+              "predicted": 0.64329,
+              "observed": 0.65574
+            },
+            {
+              "bin": 7,
+              "n": 16,
+              "predicted": 0.72736,
+              "observed": 0.625
+            },
+            {
+              "bin": 8,
+              "n": 2,
+              "predicted": 0.8659,
+              "observed": 1.0
+            }
+          ]
+        },
+        "h2h_home": {
+          "samples": 376,
+          "brier": 0.208607,
+          "log_loss": 0.605497,
+          "ece": 0.069823,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 2,
+              "predicted": 0.063,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 24,
+              "predicted": 0.16061,
+              "observed": 0.25
+            },
+            {
+              "bin": 2,
+              "n": 50,
+              "predicted": 0.26197,
+              "observed": 0.24
+            },
+            {
+              "bin": 3,
+              "n": 85,
+              "predicted": 0.35602,
+              "observed": 0.28235
+            },
+            {
+              "bin": 4,
+              "n": 88,
+              "predicted": 0.44639,
+              "observed": 0.47727
+            },
+            {
+              "bin": 5,
+              "n": 53,
+              "predicted": 0.53876,
+              "observed": 0.45283
+            },
+            {
+              "bin": 6,
+              "n": 43,
+              "predicted": 0.65131,
+              "observed": 0.81395
+            },
+            {
+              "bin": 7,
+              "n": 23,
+              "predicted": 0.74698,
+              "observed": 0.82609
+            },
+            {
+              "bin": 8,
+              "n": 8,
+              "predicted": 0.81703,
+              "observed": 0.75
+            }
+          ]
+        },
+        "market_goals_over_2_5": {
+          "samples": 376,
+          "brier": 0.236611,
+          "log_loss": 0.66571,
+          "ece": 0.02504,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 12,
+              "predicted": 0.29188,
+              "observed": 0.25
+            },
+            {
+              "bin": 3,
+              "n": 98,
+              "predicted": 0.36535,
+              "observed": 0.38776
+            },
+            {
+              "bin": 4,
+              "n": 134,
+              "predicted": 0.44877,
+              "observed": 0.45522
+            },
+            {
+              "bin": 5,
+              "n": 73,
+              "predicted": 0.54472,
+              "observed": 0.54795
+            },
+            {
+              "bin": 6,
+              "n": 42,
+              "predicted": 0.63537,
+              "observed": 0.7381
+            },
+            {
+              "bin": 7,
+              "n": 17,
+              "predicted": 0.7237,
+              "observed": 0.64706
+            }
+          ]
+        },
+        "market_goals_over_2_5_model_paired": {
+          "samples": 376,
+          "brier": 0.241149,
+          "log_loss": 0.674989,
+          "ece": 0.036001,
+          "calibration_bins": [
+            {
+              "bin": 2,
+              "n": 9,
+              "predicted": 0.28305,
+              "observed": 0.44444
+            },
+            {
+              "bin": 3,
+              "n": 76,
+              "predicted": 0.36266,
+              "observed": 0.39474
+            },
+            {
+              "bin": 4,
+              "n": 118,
+              "predicted": 0.45232,
+              "observed": 0.44068
+            },
+            {
+              "bin": 5,
+              "n": 94,
+              "predicted": 0.54901,
+              "observed": 0.48936
+            },
+            {
+              "bin": 6,
+              "n": 61,
+              "predicted": 0.64329,
+              "observed": 0.65574
+            },
+            {
+              "bin": 7,
+              "n": 16,
+              "predicted": 0.72736,
+              "observed": 0.625
+            },
+            {
+              "bin": 8,
+              "n": 2,
+              "predicted": 0.8659,
+              "observed": 1.0
+            }
+          ]
+        },
+        "market_home": {
+          "samples": 376,
+          "brier": 0.202109,
+          "log_loss": 0.59122,
+          "ece": 0.04021,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 2,
+              "predicted": 0.07862,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 33,
+              "predicted": 0.16155,
+              "observed": 0.15152
+            },
+            {
+              "bin": 2,
+              "n": 44,
+              "predicted": 0.25263,
+              "observed": 0.15909
+            },
+            {
+              "bin": 3,
+              "n": 79,
+              "predicted": 0.34524,
+              "observed": 0.34177
+            },
+            {
+              "bin": 4,
+              "n": 79,
+              "predicted": 0.44828,
+              "observed": 0.4557
+            },
+            {
+              "bin": 5,
+              "n": 69,
+              "predicted": 0.55126,
+              "observed": 0.52174
+            },
+            {
+              "bin": 6,
+              "n": 30,
+              "predicted": 0.65797,
+              "observed": 0.7
+            },
+            {
+              "bin": 7,
+              "n": 31,
+              "predicted": 0.74353,
+              "observed": 0.93548
+            },
+            {
+              "bin": 8,
+              "n": 9,
+              "predicted": 0.82296,
+              "observed": 0.77778
+            }
+          ]
+        },
+        "market_home_model_paired": {
+          "samples": 376,
+          "brier": 0.208607,
+          "log_loss": 0.605497,
+          "ece": 0.069823,
+          "calibration_bins": [
+            {
+              "bin": 0,
+              "n": 2,
+              "predicted": 0.063,
+              "observed": 0.0
+            },
+            {
+              "bin": 1,
+              "n": 24,
+              "predicted": 0.16061,
+              "observed": 0.25
+            },
+            {
+              "bin": 2,
+              "n": 50,
+              "predicted": 0.26197,
+              "observed": 0.24
+            },
+            {
+              "bin": 3,
+              "n": 85,
+              "predicted": 0.35602,
+              "observed": 0.28235
+            },
+            {
+              "bin": 4,
+              "n": 88,
+              "predicted": 0.44639,
+              "observed": 0.47727
+            },
+            {
+              "bin": 5,
+              "n": 53,
+              "predicted": 0.53876,
+              "observed": 0.45283
+            },
+            {
+              "bin": 6,
+              "n": 43,
+              "predicted": 0.65131,
+              "observed": 0.81395
+            },
+            {
+              "bin": 7,
+              "n": 23,
+              "predicted": 0.74698,
+              "observed": 0.82609
+            },
+            {
+              "bin": 8,
+              "n": 8,
+              "predicted": 0.81703,
+              "observed": 0.75
+            }
+          ]
+        }
+      }
+    }
+  },
+  "approved_for_staking": false
+}

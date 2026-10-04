@@ -59,6 +59,10 @@
           <span>MODEL BOARD</span>
           <span class="nav-counter" id="mb-count-badge" style="display:none;"></span>
         </button>
+        <button class="nav-rail-item" id="tab-btn-micro-bets" data-view="view-micro-bets" onclick="window.switchTab('micro-bets')">
+          <span>MICRO BETS</span>
+          <span class="nav-counter" id="micro-count-badge" style="display:none;"></span>
+        </button>
         <button class="nav-rail-item" id="tab-btn-ledger" data-view="view-ledger" onclick="window.switchTab('ledger')">
           <span>LEADERBOARD</span>
         </button>
@@ -1270,7 +1274,7 @@
           </p>
         </div>
         <div class="view-head-meta">
-          <button type="button" class="btn-outline" id="mb-refresh" onclick="window.refreshModelBoard(true)">Rebuild board</button>
+          <button type="button" class="btn-outline" id="mb-refresh" onclick="window.refreshModelBoard(false)">Refresh board</button>
         </div>
       </div>
 
@@ -1278,6 +1282,23 @@
       <div id="mb-coverage"></div>
       <div id="mb-ladders"></div>
       <div id="mb-accumulators"></div>
+    </section>
+
+    <section class="view-panel" id="view-micro-bets">
+      <div class="view-head">
+        <div class="view-head-main">
+          <div class="view-head-kicker">MATCH MARKETS</div>
+          <h2 class="view-head-title">Micro Bets</h2>
+          <p class="view-head-sub">Explore both teams to score, goal totals, and correct scores.
+            Probabilities and fair odds come from the model. An observed bookmaker price
+            is required to calculate an edge; unpriced selections are forecasts.</p>
+        </div>
+        <div class="view-head-meta">
+          <button type="button" class="btn-outline" onclick="window.refreshModelBoard(false)">Refresh markets</button>
+        </div>
+      </div>
+      <div id="micro-status" aria-live="polite"></div>
+      <div id="micro-markets"></div>
     </section>
 
     <!-- VIEW 2: Predictions Slate (Today's Picks) -->
@@ -1920,18 +1941,19 @@
       <div class="view-head">
         <div class="view-head-main">
           <div class="view-head-kicker">DAILY BOARD</div>
-          <h2 class="view-head-title">Today's Matches</h2>
+          <h2 class="view-head-title">Match Calendar</h2>
           <p class="view-head-sub">
-            All matches for today, organized by league and time.
-            Picks are curated per tier and revealed at tier-specific times.
+            Fixtures and scores collected by the background workers, organized by date.
+            Coverage and refresh frequency depend on the available data sources.
           </p>
         </div>
       </div>
 
       <div class="daily-board-tabs">
-        <button class="pill-filter active" onclick="window.switchBoardTab('today')">Today</button>
-        <button class="pill-filter" onclick="window.switchBoardTab('tomorrow')">Tomorrow</button>
-        <button class="pill-filter" onclick="window.switchBoardTab('week')">This Week</button>
+        <button class="pill-filter active" data-board-tab="upcoming" onclick="window.switchBoardTab('upcoming')">Next Matches</button>
+        <button class="pill-filter" data-board-tab="today" onclick="window.switchBoardTab('today')">Today</button>
+        <button class="pill-filter" data-board-tab="tomorrow" onclick="window.switchBoardTab('tomorrow')">Tomorrow</button>
+        <button class="pill-filter" data-board-tab="week" onclick="window.switchBoardTab('week')">This Week</button>
       </div>
 
       <div id="daily-board-content" class="daily-board-content">

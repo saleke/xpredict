@@ -4,6 +4,8 @@ All times are timezone-aware UTC datetimes.
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -66,11 +68,14 @@ class Score:
     status: str  # final | live | postponed | cancelled | scheduled ...
     home_team: str = ""
     away_team: str = ""
+    home_corners: Optional[int] = None
+    away_corners: Optional[int] = None
 
     def winner(self) -> Optional[str]:
         """Outcome name of the winner, or None when not decidable yet."""
         if not self.completed or self.home_score is None or self.away_score is None:
             return None
+
         if self.home_score > self.away_score:
             return self.home_team
         if self.away_score > self.home_score:
@@ -86,11 +91,63 @@ class Score:
         if not self.completed or self.home_score is None or self.away_score is None:
             return None
 
+        if market in ('totals', 'home_team_totals', 'away_team_totals', 'draw_no_bet', 'asian_handicap', 'corners'):
+            from .contracts import MarketContract
+            selection = outcome_name.strip()
+            if market in ('draw_no_bet', 'asian_handicap'):
+                if selection == self.home_team:
+                    selection = 'Home'
+                elif selection == self.away_team:
+                    selection = 'Away'
+            else:
+                parts = selection.split()
+                if parts:
+                    selection = parts[0]
+                if line is None and len(parts) == 2:
+                    try:
+                        line = float(parts[1])
+                    except ValueError:
+                        return None
+            try:
+                return MarketContract(market, selection, line).grade(self.home_score, self.away_score,
+                    home_corners=self.home_corners, away_corners=self.away_corners)
+            except (ValueError, TypeError):
+                return None
+
         if market == H2H:
             w = self.winner()
             if w is None:
                 return None
-            return "WIN" if w == outcome_name else "LOSS"
+            selection = {"home": self.home_team, "away": self.away_team, "draw": "Draw"}.get(
+                outcome_name.strip().lower(), outcome_name)
+            return "WIN" if w == selection else "LOSS"
+
+        if market == "double_chance":
+            selection = outcome_name.strip().upper()
+            result = "1" if self.home_score > self.away_score else "2" if self.away_score > self.home_score else "X"
+            if selection not in ("1X", "X2", "12"):
+                return None
+            return "WIN" if result in selection else "LOSS"
+
+        if market in ("home_team_totals", "away_team_totals"):
+            if line is None or not math.isfinite(float(line)) or (float(line) * 2) % 1 != 0:
+                return None  # split quarter-line payouts require their own ledger semantics
+            goals = self.home_score if market == "home_team_totals" else self.away_score
+            if goals == line:
+                return "VOID"
+            selection = outcome_name.strip().lower()
+            if selection == "over":
+                return "WIN" if goals > line else "LOSS"
+            if selection == "under":
+                return "WIN" if goals < line else "LOSS"
+            return None
+
+        if market == "correct_score":
+            import re
+            parsed = re.fullmatch(r"\s*(\d+)\s*[-:]\s*(\d+)\s*", outcome_name)
+            if not parsed:
+                return None
+            return "WIN" if (self.home_score, self.away_score) == tuple(map(int, parsed.groups())) else "LOSS"
 
         if market == "totals":
             if line is None:

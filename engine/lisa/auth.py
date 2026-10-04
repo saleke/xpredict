@@ -12,6 +12,7 @@ Features:
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import hmac
 import logging
 import re
@@ -21,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from .storage import SqliteStorage
+from .storage import SqliteStorage, RelationalStorage
 
 logger = logging.getLogger(__name__)
 
@@ -81,17 +82,14 @@ def sanitize_user(user_row: dict[str, Any]) -> dict[str, Any]:
 class AuthManager:
     """Authentication and session management engine backed by SQLite."""
 
-    def __init__(self, storage: Optional[SqliteStorage] = None, db_path: str = "data/lisa.db"):
+    def __init__(self, storage: Optional[RelationalStorage] = None, db_path: str = "data/lisa.db"):
         self.storage = storage or SqliteStorage(db_path)
-        self.db_path = self.storage.db_path
+        self.db_path = getattr(self.storage, "db_path", None)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        return conn
+    @contextmanager
+    def _connect(self):
+        with self.storage._tx() as conn:
+            yield conn
 
     # -- User Registration & Authentication ----------------------------------
 
@@ -135,7 +133,7 @@ class AuthManager:
             try:
                 conn.execute(sql, params)
                 conn.commit()
-            except sqlite3.IntegrityError:
+            except self.storage.integrity_errors:
                 raise ValueError("An account with this email address already exists.")
 
         return self.get_user_by_id(user_id) or {}

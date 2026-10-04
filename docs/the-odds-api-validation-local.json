@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-03T17:38:10.167044+00:00",
+  "detail": "One-league sample; no model approval or guaranteed executable coverage.",
+  "league": "soccer_epl",
+  "markets": [],
+  "pages": 0,
+  "quota": {},
+  "quotes": 0,
+  "quotes_with_update_time": 0,
+  "state": "sample_failed",
+  "truncated": false
+}

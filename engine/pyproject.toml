@@ -7,11 +7,14 @@ name = "lisa-engine"
 version = "0.1.0"
 description = "LISA data-refinery engine: Shin de-vig, multi-book consensus, quality gate, settlement."
 requires-python = ">=3.10"
+dependencies = ["tzdata>=2025.2"]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = ["pytest>=7", "cryptography>=44,<47"]
 redis = ["redis>=4"]
-postgres = ["psycopg[binary]>=3"]
+postgres = ["psycopg[binary,pool]>=3.2,<4"]
+cloud = ["cryptography>=44,<47"]
+validation = ["requests>=2.32,<3"]
 
 [tool.setuptools.packages.find]
 where = ["."]

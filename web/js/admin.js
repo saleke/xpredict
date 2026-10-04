@@ -325,6 +325,7 @@
     { id: 'picks', label: 'Pick ledger' },
     { id: 'forecast', label: 'Forecast board' },
     { group: 'Operations' },
+    { id: 'operations', label: 'Production testing' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'cache', label: 'Live cache' },
     { id: 'database', label: 'Database' },
@@ -506,11 +507,17 @@
   }
 
   var clockTimer = null;
+  var operationsRefreshedAt = 0;
   function startClock() {
     if (clockTimer) clearInterval(clockTimer);
     var tick = function () {
       if (el.railUptime.dataset.started) {
         el.railUptime.textContent = 'up ' + duration(Date.now() / 1000 - Number(el.railUptime.dataset.started));
+      }
+      if (state.role && state.view === 'operations' && state.busy === 0 &&
+          document.visibilityState !== 'hidden' && Date.now() - operationsRefreshedAt >= 20000) {
+        operationsRefreshedAt = Date.now();
+        go('operations', true);
       }
     };
     clockTimer = setInterval(tick, 1000);
@@ -1116,8 +1123,58 @@
   };
 
   // ---- Settings ------------------------------------------------------
+  RENDER.operations = function () {
+    operationsRefreshedAt = Date.now();
+    return api.get('/operations').then(function (r) {
+      var evidence = r.pilot || {};
+      var fixtureRows = [].concat((r.generation_fixtures || {}).rows || [],
+        (r.settlement_fixtures || {}).rows || []).map(function (match) {
+        return {
+          source: esc(match.source), league: esc(match.league),
+          match: esc(match.home) + ' — ' + esc(match.away),
+          score: match.score ? esc(match.score.join('–')) : '—',
+          status: esc(match.status), kickoff: esc(when(match.kickoff))
+        };
+      });
+      var buttons = r.scheduler === 'serverless' && isOwner()
+        ? '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          ['history', 'generation', 'settlement'].map(function (job) {
+            return '<button class="btn" data-paper-job="' + job + '">Run ' + job + '</button>';
+          }).join('') + '</div><p id="paper-job-result"></p>' : '';
+      el.view.innerHTML = card('Production testing',
+        '<p>Saved provider observations and recorded paper runs. Source caches and quotas determine score freshness.</p>' +
+        '<p>State: ' + esc(evidence.operational_state || 'unknown') + ' · scheduler: ' + esc(r.scheduler) + '</p>' +
+        '<p>' + esc((evidence.blockers || []).join(' · ')) + '</p>' + buttons +
+        '<p>Worker observation: ' + esc(when((r.generation_fixtures || {}).worker_observed_at)) +
+        ' · settlement observation: ' + esc(when((r.settlement_fixtures || {}).worker_observed_at)) + '</p>' +
+        '<p>Provider retrieval, model fitting, pricing and board duration (milliseconds)</p>' +
+        '<pre>' + esc(JSON.stringify((r.performance || {}).timings_ms || {}, null, 2)) + '</pre>') +
+        tableCard('Recent fixture observations', [
+          { key: 'source', label: 'Source' }, { key: 'league', label: 'League' },
+          { key: 'match', label: 'Match' }, { key: 'score', label: 'Score' },
+          { key: 'status', label: 'Status' }, { key: 'kickoff', label: 'Kickoff' }
+        ], fixtureRows, { emptyTitle: 'No fixture observations recorded yet' }) +
+        card('Daily publications, jobs and settlements',
+          '<pre>' + esc(JSON.stringify(evidence, null, 2)) + '</pre>');
+      el.view.querySelectorAll('[data-paper-job]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var job = button.getAttribute('data-paper-job');
+          button.disabled = true;
+          var output = el.view.querySelector('#paper-job-result');
+          output.textContent = 'Running ' + job + '; this may take several minutes.';
+          api.post('/jobs/' + job, {}).then(function (result) {
+            output.textContent = JSON.stringify(result);
+          }).catch(function (error) {
+            output.textContent = error.message;
+          }).finally(function () { button.disabled = false; });
+        });
+      });
+    });
+  };
+
   RENDER.settings = function () {
-    return api.get('/settings').then(function (r) {
+    return Promise.all([api.get('/settings'), api.get('/providers')]).then(function (responses) {
+      var r = responses[0], providers = responses[1];
       var fields = r.fields || [];
       var drafts = {};
 
@@ -1159,7 +1216,26 @@
       el.view.innerHTML =
         '<div class="note note--brand" style="margin-bottom:14px">' +
         'Changes apply to the running process on the next cycle — no restart. ' +
-        'Credentials and secrets are not editable here; they stay in the environment.</div>' +
+        'Provider credentials use the separate controls below and are never displayed.</div>' +
+        '<div class="card"><div class="card__body"><h3>Data providers</h3>' +
+        '<p>Replace a key, disable a provider, or restore its environment credential. Account quotas remain in force.</p>' +
+        '<p id="provider-status">' + (providers.providers || []).map(function (p) {
+          return esc(p.provider) + ': ' + (p.configured ? 'configured' : 'missing') + ' (' + esc(p.configuration_source) + ')';
+        }).join(' · ') + '</p>' +
+        (providers.credential_updates_allowed ?
+          '<select class="select" id="provider-name">' + (providers.providers || []).map(function (p) {
+            return '<option value="' + attr(p.provider) + '">' + esc(p.provider) + '</option>';
+          }).join('') + '</select>' +
+          '<input class="input" id="provider-credential" type="password" autocomplete="new-password" placeholder="New API key">' +
+          '<button class="btn" data-provider-operation="replace">Save replacement</button>' +
+          '<button class="btn" data-provider-operation="disable">Disable provider</button>' +
+          '<button class="btn" data-provider-operation="inherit">Use environment key</button>' : '') +
+        '<p>OddsPapi quota status: ' + esc(JSON.stringify(providers.oddspapi_status || {})) + '</p>' +
+        '<p>The Odds API credits: ' + esc(JSON.stringify(providers.the_odds_api_status || {})) + '</p>' +
+        '<details><summary>Coverage and request budget</summary><pre>' +
+          esc(JSON.stringify(providers.coverage_plan || {}, null, 2)) + '</pre>' +
+          '<p>Settlement budget</p><pre>' + esc(JSON.stringify(providers.settlement_coverage || {}, null, 2)) +
+          '</pre></details></div></div>' +
         '<div class="toolbar">' +
           '<button class="btn btn--primary" id="sapply">Apply edited settings</button>' +
           '<button class="btn btn--ghost" id="sreset">Reset all overrides</button>' +
@@ -1167,6 +1243,29 @@
           '<span class="stat__foot">' + Object.keys(r.overrides || {}).length + ' override(s) · revision ' + esc(r.revision) + '</span>' +
         '</div>' +
         '<div class="grid grid--3" id="sgrid">' + fields.map(fieldHtml).join('') + '</div>';
+
+      el.view.querySelectorAll('[data-provider-operation]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var name = el.view.querySelector('#provider-name').value;
+          var input = el.view.querySelector('#provider-credential');
+          var operation = button.getAttribute('data-provider-operation');
+          var body = { operation: operation };
+          if (operation === 'replace') {
+            if (!input.value.trim()) { toast('err', 'Missing credential', 'Enter a replacement credential.'); return; }
+            body.credential = input.value;
+          }
+          input.value = '';
+          button.disabled = true;
+          api.put('/providers/' + encodeURIComponent(name), body).then(function () {
+            body.credential = '';
+            toast('ok', 'Provider saved', 'Applies on the next worker cycle.');
+            go('settings', true);
+          }).catch(function () {
+            body.credential = '';
+            toast('err', 'Provider update failed', 'Provider configuration could not be saved.');
+          }).finally(function () { button.disabled = false; });
+        });
+      });
 
       // Keep the switch label honest as it is toggled.
       el.view.querySelectorAll('.switch input').forEach(function (input) {

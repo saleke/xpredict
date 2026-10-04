@@ -8,7 +8,7 @@ production deployment without code changes.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -104,16 +104,44 @@ class Settings:
     # manufacture a probability.
     #
     #   OpenLigaDB          no key, no published limit -- German football
+    #   Openfootball        CC0 bulk goals; unknown kickoffs, never settlement
     #   football-data.org   free token, 12 tier-one comps, 10 req/min
     #   TheSportsDB         public key "3", clipped to a handful of rows
     #   SharpAPI            free key, DraftKings + FanDuel, 12 req/min, 60s delay
     football_data_token: str = ""
     sportsdb_key: str = "3"
-    #: The only price source. Without it the model still ranks fixtures, but
-    #: every pick is unpriced and the earning ladder is structurally empty.
+    #: Optional supporting price source alongside the quota-limited adapters.
     sharpapi_key: str = ""
+    provider_credentials_path: str = 'data/provider-credentials.json'
+    provider_credentials_backend: str = 'file'
+    credential_encryption_key: str = ''
+    oddspapi_key: str = ''
+    the_odds_enabled: bool = False
+    the_odds_monthly_limit: int = 500
+    the_odds_reserve: int = 50
+    the_odds_daily_limit: int = 14
+    the_odds_regions: tuple[str, ...] = ('eu',)
+    the_odds_markets: tuple[str, ...] = ('h2h', 'totals')
+    the_odds_cache_sec: int = 86400
+    oddspapi_rapidapi_key: str = ''
+    oddspapi_enabled: bool = True
+    oddspapi_monthly_limit: int = 250
+    oddspapi_reserve: int = 25
+    oddspapi_poll_interval_sec: int = 21600
+    oddspapi_bookmakers: tuple[str, ...] = ()
+    api_football_key: str = ""
+    api_football_daily_limit: int = 100
+    api_football_bookmakers: tuple[str, ...] = ()
+    model_validation_path: str = ""
+    allsports_api_key: str = ""
+    allsports_hourly_limit: int = 260
+    allsports_odds_enabled: bool = False
+    allsports_corner_stat_type: str = ""
+    allsports_bookmakers: tuple[str, ...] = ()
     enable_openligadb: bool = True
-    enable_sportsdb: bool = True
+    enable_openfootball: bool = True
+    openfootball_cache_sec: int = 86400
+    enable_sportsdb: bool = False
     enable_sharpapi: bool = True
     provider_timeout_sec: float = 15.0
     #: How far ahead of a fixture's kickoff a book event may start and still be
@@ -122,9 +150,10 @@ class Settings:
     #: Page cap per cycle. The free tier allows twelve requests a minute, so
     #: this bounds a cycle to at most a quarter of the budget.
     sharpapi_max_pages: int = 6
-    #: Canonical league keys, comma-separated in the env. Empty means "use
-    #: whatever works with no credentials" (German football via OpenLigaDB).
+    #: Canonical league keys, comma-separated in the env. Empty selects enabled
+    #: bulk inputs and configured live feeds; verification is separate.
     board_leagues: tuple[str, ...] = ()
+    paper_mode: bool = False
     #: The product window. 24h is the priority; 48h is the outer bound.
     board_window_hours: float = 24.0
     #: Matches to deliver per cycle. A shortfall is reported, never hidden.
@@ -147,6 +176,8 @@ class Settings:
     board_max_total_line: float = 5.5
     # A full free-stack cycle costs a few seconds of network time, so the API
     # caches the board rather than re-running the feed on every dashboard poll.
+    daily_interval_sec: float = 300.0
+    product_timezone: str = "Africa/Lagos"
     board_cache_ttl_sec: float = 300.0
 
     # -- Legacy: The Odds API -------------------------------------------------
@@ -351,13 +382,42 @@ def load_settings() -> Settings:
         football_data_token=os.getenv("FOOTBALL_DATA_TOKEN", "").strip(),
         sportsdb_key=os.getenv("LISA_SPORTSDB_KEY", "3").strip() or "3",
         sharpapi_key=os.getenv("SHARPAPI_KEY", "").strip(),
+        provider_credentials_path=os.getenv('LISA_PROVIDER_CREDENTIALS_PATH', 'data/provider-credentials.json'),
+        provider_credentials_backend=os.getenv('LISA_PROVIDER_CREDENTIALS_BACKEND', 'file'),
+        credential_encryption_key=os.getenv('LISA_CREDENTIAL_ENCRYPTION_KEY', ''),
+        oddspapi_key=os.getenv('ODDSPAPI_KEY', '').strip(),
+        the_odds_enabled=_bool('LISA_THE_ODDS_ENABLED', False),
+        the_odds_monthly_limit=_int('LISA_THE_ODDS_MONTHLY_LIMIT', 500),
+        the_odds_reserve=_int('LISA_THE_ODDS_RESERVE', 50),
+        the_odds_daily_limit=_int('LISA_THE_ODDS_DAILY_LIMIT', 14),
+        the_odds_regions=_tuple('LISA_THE_ODDS_REGIONS', ('eu',)),
+        the_odds_markets=_tuple('LISA_THE_ODDS_MARKETS', ('h2h','totals')),
+        the_odds_cache_sec=_int('LISA_THE_ODDS_CACHE_SEC', 86400),
+        oddspapi_rapidapi_key=os.getenv('ODDSPAPI_RAPIDAPI_KEY', '').strip(),
+        oddspapi_enabled=_bool('LISA_ODDSPAPI_ENABLED', True),
+        oddspapi_monthly_limit=_int('LISA_ODDSPAPI_MONTHLY_LIMIT', 250),
+        oddspapi_reserve=_int('LISA_ODDSPAPI_RESERVE', 25),
+        oddspapi_poll_interval_sec=_int('LISA_ODDSPAPI_POLL_INTERVAL_SEC', 21600),
+        oddspapi_bookmakers=_tuple('LISA_ODDSPAPI_BOOKMAKERS', ()),
+        api_football_key=os.getenv("API_FOOTBALL_KEY", "").strip(),
+        api_football_daily_limit=_int("LISA_API_FOOTBALL_DAILY_LIMIT", 100),
+        api_football_bookmakers=_tuple("LISA_API_FOOTBALL_BOOKMAKERS", ()),
+        model_validation_path=os.getenv('LISA_MODEL_VALIDATION_PATH', '').strip(),
+        allsports_api_key=os.getenv('ALLSPORTS_API_KEY', '').strip(),
+        allsports_hourly_limit=_int('LISA_ALLSPORTS_HOURLY_LIMIT', 260),
+        allsports_odds_enabled=_bool('LISA_ALLSPORTS_ODDS_ENABLED', False),
+        allsports_corner_stat_type=os.getenv('LISA_ALLSPORTS_CORNER_STAT_TYPE', '').strip(),
+        allsports_bookmakers=_tuple('LISA_ALLSPORTS_BOOKMAKERS', ()),
         enable_openligadb=_bool("LISA_ENABLE_OPENLIGADB", True),
-        enable_sportsdb=_bool("LISA_ENABLE_SPORTSDB", True),
+        enable_openfootball=_bool('LISA_ENABLE_OPENFOOTBALL', True),
+        openfootball_cache_sec=_int('LISA_OPENFOOTBALL_CACHE_SEC', 86400),
+        enable_sportsdb=_bool("LISA_ENABLE_SPORTSDB", False),
         enable_sharpapi=_bool("LISA_ENABLE_SHARPAPI", True),
         provider_timeout_sec=_float("LISA_PROVIDER_TIMEOUT_SEC", 15.0),
         sharpapi_max_kickoff_gap_h=_float("LISA_SHARPAPI_MAX_KICKOFF_GAP_H", 6.0),
         sharpapi_max_pages=_int("LISA_SHARPAPI_MAX_PAGES", 6),
         board_leagues=_csv("LISA_BOARD_LEAGUES", ()),
+        paper_mode=_bool('LISA_PAPER_MODE', False),
         board_window_hours=_float("LISA_BOARD_WINDOW_HOURS", 24.0),
         board_volume_target=_int("LISA_BOARD_VOLUME_TARGET", 12),
         # -- independent model
@@ -373,6 +433,8 @@ def load_settings() -> Settings:
         board_kelly_fraction=_float("LISA_BOARD_KELLY_FRACTION", 0.25),
         board_max_stake=_float("LISA_BOARD_MAX_STAKE", 0.02),
         board_max_total_line=_float("LISA_BOARD_MAX_TOTAL_LINE", 5.5),
+        daily_interval_sec=_float("LISA_DAILY_INTERVAL_SEC", 300.0),
+        product_timezone=os.getenv("LISA_PRODUCT_TIMEZONE", "Africa/Lagos"),
         board_cache_ttl_sec=_float("LISA_BOARD_CACHE_TTL_SEC", 300.0),
         # -- legacy
         odds_api_enabled=_bool("LISA_ENABLE_ODDS_API", False),
@@ -453,3 +515,9 @@ def load_settings() -> Settings:
         sol_address=os.environ.get("LISA_SOL_ADDRESS", Settings.sol_address),
         ton_address=os.environ.get("LISA_TON_ADDRESS", Settings.ton_address),
     )
+
+
+def paper_settings(settings):
+    """Paper runs cannot acquire stake approval through ordinary overrides."""
+    return replace(settings, model_validation_path='', board_max_stake=0.0,
+                   odds_api_enabled=False) if getattr(settings, 'paper_mode', False) else settings

@@ -126,6 +126,7 @@ class SharpQuote:
     home: str = ""
     away: str = ""
     updated_at: Optional[datetime] = None
+    sport_key: str = ""
 
     @property
     def identity(self) -> tuple[str, str, Optional[float]]:

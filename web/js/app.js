@@ -67,11 +67,7 @@ let state = {
   picksOddsBand: 'all',
   ledgerSearchQuery: '',
 
-  // Model opportunity board (/api/opportunity-board). Loaded lazily on first
-  // visit to the MODEL BOARD tab, never in the dashboard boot path: a board
-  // cycle is a multi-second network fan-out and must not delay the rest of
-  // the page. `null` until loaded; `modelBoardState` carries the request
-  // lifecycle so a failed cycle is never confused with an empty one.
+  // Reads the worker's saved board on first visit; no provider work occurs.
   modelBoard: null,
   modelBoardState: 'idle',   // idle | loading | ready | failed
   modelBoardError: '',
@@ -468,9 +464,9 @@ export function startKickoffCountdown() {
 async function loadData() {
   try {
     const [res, fcRes, tgRes] = await Promise.all([
-      fetch('/api/dashboard', { cache: 'no-cache' }),
-      fetch('/api/forecast', { cache: 'no-cache' }).catch(() => null),
-      fetch('/api/tiers', { cache: 'no-cache' }).catch(() => null)
+      fetchDashboardResource('/api/dashboard'),
+      fetchDashboardResource('/api/forecast').catch(() => null),
+      fetchDashboardResource('/api/tiers').catch(() => null)
     ]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     state.data = await res.json();
@@ -494,7 +490,6 @@ async function loadData() {
     }
 
     renderAll();
-    startDashboardPolling();
   } catch (err) {
     console.error('Failed to load dashboard data:', err);
     const grid = document.getElementById('picks-grid');
@@ -502,10 +497,24 @@ async function loadData() {
       grid.innerHTML = `
         <div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-secondary);">
           <p style="font-size: 16px; margin-bottom: 8px;">Live feed unavailable.</p>
-          <p style="font-size: 13px; color: var(--text-muted);">LISA shows real data only. The odds poller has not completed a cycle, or the ledger is unreachable.</p>
+          <p style="font-size: 13px; color: var(--text-muted);">Could not read saved predictions. The dashboard will retry automatically.</p>
         </div>
       `;
     }
+  } finally {
+    startDashboardPolling();
+  }
+}
+
+async function fetchDashboardResource(path) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 10000) : null;
+  try {
+    const response = await fetch(path, { cache: 'no-cache', ...(controller ? { signal: controller.signal } : {}) });
+    const payload = await response.json();
+    return { ok: response.ok, status: response.status, json: async () => payload };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 
@@ -513,6 +522,16 @@ function renderLiveStatusBanner() {
   const banner = document.getElementById('live-status-banner');
   if (!banner) return;
   const live = (state.data && state.data.live) || {};
+  const pipeline = state.data && state.data.pipeline;
+  if (pipeline) {
+    const awaiting = (state.data.summary || {}).awaiting_results_count || 0;
+    banner.style.display = 'block';
+    banner.className = 'live-banner ' + (pipeline.has_errors ? 'stale' : 'live');
+    banner.textContent = pipeline.generated_at
+      ? `${pipeline.paper_mode ? 'Paper testing · ' : ''}${pipeline.upcoming_selections} upcoming selections${awaiting ? ' · '+awaiting+' predictions awaiting confirmed results in Ledger' : ''} · ${pipeline.fixtures_priced} fixtures priced · published ${formatKo(pipeline.published_at || pipeline.generated_at)}${pipeline.has_errors ? ' · Some data sources failed; coverage is limited.' : ''}`
+      : `Prediction worker ${pipeline.state === 'running' ? 'is collecting fixtures and fitting models' : pipeline.state === 'failed' ? 'failed to publish; review provider health in the admin panel' : 'has not published yet'}. Saved data refreshes automatically.`;
+    return;
+  }
   const minutes = live.age_sec == null ? null : Math.round(live.age_sec / 60);
   if (live.state === 'live') {
     banner.style.display = 'block';
@@ -530,25 +549,32 @@ function renderLiveStatusBanner() {
 }
 
 let dashboardPollingTimer = null;
-function startDashboardPolling() {
-  if (dashboardPollingTimer) clearInterval(dashboardPollingTimer);
-  dashboardPollingTimer = setInterval(async () => {
-    try {
-      const res = await fetch('/api/dashboard', { cache: 'no-cache' });
-      if (!res.ok) return;
-      const freshData = await res.json();
-      const freshGen = freshData && freshData.meta && freshData.meta.generated_at;
-      const currentGen = state.data && state.data.meta && state.data.meta.generated_at;
-      if (freshGen && freshGen !== currentGen) {
-        console.log('[LISA] New pipeline cycle detected:', freshGen);
-        state.data = freshData;
-        state.dashboard = freshData;
-        renderAll();
-      }
-    } catch (e) {
-      // Silent catch on background polling
+let dashboardPollInFlight = false;
+async function pollDashboard() {
+  if (dashboardPollInFlight) return;
+  dashboardPollInFlight = true;
+  try {
+    const results = await Promise.allSettled([
+      fetchDashboardResource('/api/dashboard'), fetchDashboardResource('/api/forecast')]);
+    for (let i = 0; i < results.length; i += 1) {
+      if (results[i].status !== 'fulfilled' || !results[i].value.ok) continue;
+      const payload = await results[i].value.json();
+      if (i === 0) { state.data = payload; state.dashboard = payload; }
+      else state.forecast = payload;
     }
-  }, 60000);
+    renderLiveStatusBanner();
+    renderAll();
+    if (state.modelBoardState !== 'idle') await refreshModelBoard(false);
+    if (state.activeTab === 'daily-board') await loadDailyBoard(state.dailyBoardTab || 'upcoming');
+  } catch (e) {
+    console.warn('Saved dashboard refresh failed:', e.message);
+  } finally {
+    dashboardPollInFlight = false;
+  }
+}
+function startDashboardPolling() {
+  if (dashboardPollingTimer !== null) return;
+  dashboardPollingTimer = setInterval(pollDashboard, 20000);
 }
 
 function renderProvenanceBanner() {
@@ -762,14 +788,14 @@ function renderTargetLandingData() {
   const lbTbody = document.getElementById('target-leaderboard-tbody');
   if (lbTbody) {
     if (settled && settled.length) {
-      const graded = settled.filter(r => r.result === 'WIN' || r.result === 'LOSS');
+      const graded = settled.filter(r => r.is_recommendation && Number.isFinite(r.pnl));
       const bySport = new Map();
       graded.forEach(r => {
         const key = r.sport_key || 'unknown';
         const cur = bySport.get(key) || { sport: key, picks: 0, won: 0, pnl: 0 };
         cur.picks += 1;
-        if (r.result === 'WIN') { cur.won += 1; cur.pnl += (r.best_odds || 0) - 1; }
-        else cur.pnl -= 1;
+        if (r.result === 'WIN' || r.result === 'HALF_WIN') cur.won += 1;
+        cur.pnl += r.pnl;
         bySport.set(key, cur);
       });
       const rows = [...bySport.values()]
@@ -999,8 +1025,8 @@ function renderKPIs() {
       const hasClv = r.clv !== null && r.clv !== undefined;
       const clv = hasClv ? r.clv * 100 : null;
       const clvStr = hasClv ? `${clv >= 0 ? '+' : ''}${clv.toFixed(1)}% CLV` : 'CLV n/a';
-      const badgeClass = r.result === 'WIN' ? 'WIN' : (r.result === 'LOSS' ? 'LOSS' : 'VOID');
-      const pnlStr = r.pnl !== undefined ? ` (${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(2)}u)` : '';
+      const badgeClass = (r.result === 'WIN' || r.result === 'HALF_WIN') ? 'WIN' : ((r.result === 'LOSS' || r.result === 'HALF_LOSS') ? 'LOSS' : 'VOID');
+      const pnlStr = Number.isFinite(r.pnl) ? ` (${r.pnl >= 0 ? '+' : ''}${r.pnl.toFixed(2)}u)` : '';
       const leagueName = (r.sport_key || '').replace(/_/g, ' ').toUpperCase();
       const edgeRating = r.grade === 'GRADE_A' ? 'Flagship Diamond' : (r.grade === 'GRADE_B' ? 'Smart Pivot' : 'Quantitative Alpha');
 
@@ -1297,7 +1323,8 @@ function renderPicks() {
   const diamondCount = allActive.filter(p => (p.grade === 'GRADE_A' || p.category === 'GRADE_A') && !p.is_pass_advisory).length;
   const pivotCount = allActive.filter(p => (p.grade === 'GRADE_B' || p.category === 'GRADE_B') && !p.is_pass_advisory).length;
   const passCount = allActive.filter(p => p.grade === 'GRADE_C' || p.is_pass_advisory).length;
-  const executableCount = diamondCount + pivotCount;
+  const executableCount = allActive.filter(p => p.is_recommendation && p.best_odds > 1
+    && p.recommended_stake_pct > 0).length;
 
   // Update Slate Breakdown Chip
   const edgesEl = document.getElementById('slate-edges-count');
@@ -1341,7 +1368,10 @@ function renderPicks() {
     }
   });
 
-  let picks = allActive;
+  let picks = allActive.slice().sort((a, b) =>
+    Date.parse(a.commence_time) - Date.parse(b.commence_time)
+    || (b.p_true || 0) - (a.p_true || 0)
+    || String(a.dedupe_key || '').localeCompare(String(b.dedupe_key || '')));
   if (state.activeGradeFilter !== 'all') {
     picks = picks.filter(p => p.grade === state.activeGradeFilter || p.category === state.activeGradeFilter);
   }
@@ -1387,6 +1417,7 @@ function renderPicks() {
   let seenPassHeader = false;
 
   grid.innerHTML = picks.map(p => {
+    if (p.model_forecast) return modelForecastCard(p);
     let headerHtml = '';
     if (state.activeGradeFilter === 'all' && state.activeSportFilter === 'all') {
       const grade = p.grade || (p.is_pass_advisory ? 'GRADE_C' : (p.pivot ? 'GRADE_B' : 'GRADE_A'));
@@ -1704,6 +1735,27 @@ function renderPicks() {
   startKickoffCountdown();
 }
 
+function modelForecastCard(p) {
+  const selection = p.outcome_name === 'Home' ? p.home_team
+    : p.outcome_name === 'Away' ? p.away_team : p.outcome_name;
+  const line = p.line == null ? '' : ` ${p.line}`;
+  const key = p.dedupe_key || `${p.match_id}:${p.market}:${p.outcome_name}:${p.line}`;
+  return `<article class="pick-card" id="forecast-${esc(key)}">
+    <div class="pick-card-header"><span>${esc((p.sport_key || '').replace(/_/g, ' '))}</span>
+      <span>Model forecast</span></div>
+    <h3>${esc(p.home_team)} vs ${esc(p.away_team)}</h3>
+    <p>${esc(formatKo(p.commence_time))}</p>
+    <div class="pick-selection"><div class="pick-name">${esc((p.market || '').replace(/_/g, ' '))}: ${esc(selection)}${esc(line)}</div>
+      <div class="prob-val">${fmtPct(p.p_true)}</div></div>
+    <div class="metrics-row">
+      <div class="metric-item"><div class="metric-lbl">Model fair odds</div><div class="metric-num">${fmtOdds(p.fair_odds)}</div></div>
+      <div class="metric-item"><div class="metric-lbl">Observed odds</div><div class="metric-num">${fmtOdds(p.best_odds)}</div></div>
+      <div class="metric-item"><div class="metric-lbl">Measured EV</div><div class="metric-num">${fmtPct(p.best_ev)}</div></div>
+    </div>
+    <p class="alpha-sub">${p.is_recommendation ? 'Reviewed selection' : 'Research forecast · no stake recommended'}${p.execution_locked ? ' · price access requires a paid account' : ''}</p>
+  </article>`;
+}
+
 function renderLedger() {
   const tbody = document.getElementById('ledger-tbody');
   if (!tbody || !state.data) return;
@@ -1714,7 +1766,8 @@ function renderLedger() {
     statsPill.textContent = total > 0 ? `${total} Settlements Audited` : 'Audited Settlements';
   }
 
-  let ledger = state.data.settled_ledger || [];
+  let ledger = (state.data.awaiting_results || []).map(row => ({...row,result:'AWAITING_RESULT'}))
+    .concat(state.data.settled_ledger || []);
   if (state.ledgerSearchQuery && state.ledgerSearchQuery.trim()) {
     const q = state.ledgerSearchQuery.trim().toLowerCase();
     ledger = ledger.filter(r => {
@@ -1732,7 +1785,7 @@ function renderLedger() {
     tbody.innerHTML = `
       <tr>
         <td colspan="9" style="text-align: center; padding: 32px; color: var(--text-muted);">
-          ${state.ledgerSearchQuery ? 'No ledger records match your search query. Try clearing the filter.' : 'No settled records in ledger. Run settlement cycle to populate.'}
+          ${state.ledgerSearchQuery ? 'No ledger records match your search query. Try clearing the filter.' : 'No finished predictions yet. Saved predictions move here after kickoff; the result worker grades them after the final result is confirmed.'}
         </td>
       </tr>
     `;
@@ -1740,26 +1793,25 @@ function renderLedger() {
   }
 
   tbody.innerHTML = ledger.map(r => {
-    const clv = r.clv !== null ? (r.clv * 100) : 0.0;
-    const clvClass = clv >= 0 ? 'clv-positive' : 'clv-negative';
-    const clvStr = `${clv >= 0 ? '+' : ''}${clv.toFixed(1)}%`;
-    const resClass = r.result === 'WIN' ? 'WIN' : (r.result === 'LOSS' ? 'LOSS' : 'VOID');
-    const stakeUnits = r.recommended_units ? `${r.recommended_units}u` : '1.0u';
+    const clvClass = typeof r.clv === 'number' && r.clv < 0 ? 'clv-negative' : 'clv-positive';
+    const clvStr = fmtPct(r.clv);
+    const resClass = (r.result === 'WIN' || r.result === 'HALF_WIN') ? 'WIN' : ((r.result === 'LOSS' || r.result === 'HALF_LOSS') ? 'LOSS' : r.result === 'AWAITING_RESULT' ? 'PENDING' : 'VOID');
+    const stakeUnits = r.is_recommendation && r.recommended_units > 0 ? `${r.recommended_units}u` : 'Forecast';
 
     return `
       <tr>
         <td style="font-weight: 600; color: #ffffff;">${esc(r.home_team)} vs ${esc(r.away_team)}</td>
-        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-gold); letter-spacing: 0.5px;">${r.actual_score || '-'}</td>
-        <td style="color: var(--text-secondary); text-transform: capitalize;">${r.sport_key.replace(/_/g, ' ')}</td>
-        <td style="color: var(--accent-cyan); font-weight: 600;">${esc(r.outcome_name)}</td>
-        <td class="tabular-nums" style="font-weight: 600;">${(r.p_true * 100).toFixed(1)}%</td>
-        <td class="tabular-nums">${r.best_odds ? r.best_odds.toFixed(2) : '-'}</td>
+        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-gold); letter-spacing: 0.5px;">${esc(r.actual_score || '-')}</td>
+        <td style="color: var(--text-secondary); text-transform: capitalize;">${esc((r.sport_key || '').replace(/_/g, ' '))}</td>
+        <td style="color: var(--accent-cyan); font-weight: 600;">${esc((r.market || '').replace(/_/g, ' '))}: ${esc(r.outcome_name)}${r.line == null ? '' : ' '+esc(r.line)}</td>
+        <td class="tabular-nums" style="font-weight: 600;">${fmtPct(r.p_true)}</td>
+        <td class="tabular-nums">${fmtOdds(r.best_odds)}</td>
         <td class="tabular-nums">
-          <span>${r.closing_odds ? r.closing_odds.toFixed(2) : '-'}</span>
+          <span>${fmtOdds(r.closing_odds)}</span>
           <span class="${clvClass}" style="margin-left: 6px; font-size: 11px;">(${clvStr})</span>
         </td>
         <td class="tabular-nums" style="color: var(--accent-gold); font-weight: 600;">${stakeUnits}</td>
-        <td><span class="result-badge ${resClass}">${esc(r.result)}</span></td>
+        <td><span class="result-badge ${resClass}">${r.result === 'AWAITING_RESULT' ? 'Awaiting confirmed result' : esc(r.result)}</span></td>
       </tr>
     `;
   }).join('');
@@ -2175,7 +2227,7 @@ async function refreshModelBoard(force) {
 
   const url = '/api/opportunity-board' + (force ? '?refresh=1' : '');
   try {
-    const res = await fetch(url, { cache: 'no-cache' });
+    const res = await fetchDashboardResource(url);
     let payload;
     try {
       payload = await res.json();
@@ -2209,7 +2261,7 @@ function renderModelBoardStatus() {
     el.innerHTML = `
       <div class="loading-state-card">
         <div class="loading-spinner"></div>
-        <p>Running a board cycle &mdash; fetching fixtures and fitting the model...</p>
+        <p>Loading the latest published model board...</p>
       </div>`;
     return;
   }
@@ -2308,7 +2360,7 @@ function mbOpportunityRow(o) {
     ? `${o.ev >= 0 ? '+' : ''}${(o.ev * 100).toFixed(1)}%`
     : 'n/a';
   const evColor = priced ? (o.ev > 0 ? 'var(--pos)' : 'var(--text-muted)') : 'var(--text-muted)';
-  const line = (o.line === null || o.line === undefined) ? '' : ` ${o.line}`;
+  const line = (o.line === null || o.line === undefined) ? '' : ` ${esc(o.line)}`;
   return `
     <tr>
       <td>
@@ -2316,20 +2368,20 @@ function mbOpportunityRow(o) {
         <div style="font-size:11px; color: var(--text-muted);">
           ${esc(o.sport_key)} &middot; ${esc(formatKo(o.kickoff))}</div>
       </td>
-      <td><span class="odds-tag">${esc(o.market)}${line}</span>
+      <td><span class="odds-tag">${esc(({double_chance: "Double chance", home_team_totals: "Home team goals", away_team_totals: "Away team goals", draw_no_bet: "Draw no bet", asian_handicap: "Asian handicap", corners: "Corners"})[o.market] || o.market)}${line}</span>
         <div style="font-size:11px; color: var(--text-secondary);">${esc(o.selection)}</div></td>
       <td class="tabular-nums">${fmtPct(o.p_model)}</td>
       <td class="tabular-nums">${fmtOdds(o.fair_odds)}</td>
-      <td class="tabular-nums">${fmtOdds(o.best_odds)}</td>
+      <td class="tabular-nums">${fmtOdds(o.best_odds)}<div style="font-size:11px;">${esc(o.best_book || "")}</div></td>
       <td class="tabular-nums" style="color: ${evColor};">${evText}</td>
       <td style="font-size:11px; color: var(--text-muted);">${esc(o.basis)}${
-        o.reason ? ' &middot; ' + esc(o.reason) : ''}</td>
+        o.reason ? ' &middot; ' + esc(o.reason) : ''}<div>Stake: ${typeof o.stake_fraction === 'number' && o.stake_fraction > 0 ? (o.stake_fraction * 100).toFixed(2) + '%' : 'No stake'}</div></td>
     </tr>`;
 }
 
 const MB_HEAD = `<thead><tr>
   <th>Match</th><th>Market</th><th>Model p</th><th>Fair</th>
-  <th>Best price</th><th>Edge (EV)</th><th>Basis</th>
+  <th>Best price / book</th><th>Edge (EV)</th><th>Basis / stake</th>
 </tr></thead>`;
 
 /** The three lists: winning ladder, earning ladder, micro markets. */
@@ -2341,14 +2393,14 @@ function renderModelBoardLadders() {
 
   const parts = [];
 
-  // Winning ladder: ranked by model probability. Model-only by nature, so it
+  // Winning ladder: nearest kickoff, then model probability. Model-only, so it
   // is the one list that can be full with no price source at all.
   parts.push(`<div class="alpha-card">
     <div class="alpha-card-header"><div>
       <h3 class="alpha-title">Winning ladder</h3>
-      <p class="alpha-sub">Ranked by model probability &mdash; the bets most likely
-        to land. Low payoff, high hit rate. These are model probabilities, not
-        offers: find the price yourself and judge whether it is a bargain.</p>
+      <p class="alpha-sub">Earliest kickoff first, then highest model probability.
+        Each fixture contributes its strongest eligible pick. Model fair odds
+        need a current bookmaker price before their value can be assessed.</p>
     </div>
     <span class="pill-accent">${board.winning.length}</span></div>
     ${board.winning.length
@@ -2356,7 +2408,7 @@ function renderModelBoardLadders() {
       : '<p class="alpha-sub">No opportunities in window.</p>'}
   </div>`);
 
-  // Earning ladder: ranked by EV. Only priced rows can appear, so an empty list
+  // Earning ladder: positive EV required. Only priced rows can appear, so an empty list
   // has three quite different causes and they are told apart here rather than
   // all collapsing into "no prices".
   const pricedCount = board.earning.filter(o => o.priced).length;
@@ -2386,8 +2438,8 @@ function renderModelBoardLadders() {
   parts.push(`<div class="alpha-card">
     <div class="alpha-card-header"><div>
       <h3 class="alpha-title">Earning ladder</h3>
-      <p class="alpha-sub">Ranked by expected value per unit staked &mdash; the bets
-        that make money. Lower hit rate, higher payoff.</p>
+      <p class="alpha-sub">Current prices must clear the expected-value threshold.
+        Earliest kickoff first, then winning probability and expected value.</p>
     </div>
     <span class="pill-accent ${pricedCount ? 'emerald' : 'amber'}">${board.earning.length}</span></div>
     ${board.earning.length
@@ -2395,20 +2447,40 @@ function renderModelBoardLadders() {
       : emptyReason}
   </div>`);
 
-  parts.push(`<div class="alpha-card">
+  parts.push(microMarketsHtml(board));
+
+  el.innerHTML = parts.join('');
+}
+
+/** Shared market table for the model board and the dedicated micro-bets view. */
+function microMarketsHtml(board) {
+  return `<div class="alpha-card">
     <div class="alpha-card-header"><div>
       <h3 class="alpha-title">Derived micro markets</h3>
       <p class="alpha-sub">Selections derived from the model itself (correct score,
         totals lines, both teams to score), excluding anything already on the
-        earning ladder.</p>
+        earning ladder. Earliest kickoff first, then winning probability.</p>
     </div>
     <span class="pill-accent">${board.micro_bets.length}</span></div>
     ${board.micro_bets.length
       ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.micro_bets.map(mbOpportunityRow).join('')}</tbody></table></div>`
       : '<p class="alpha-sub">No derived micro markets in window.</p>'}
-  </div>`);
+  </div>`;
+}
 
-  el.innerHTML = parts.join('');
+function renderMicroBets() {
+  const status = document.getElementById('micro-status');
+  const boardStatus = document.getElementById('mb-status');
+  if (status && boardStatus) status.innerHTML = boardStatus.innerHTML;
+  const board = state.modelBoard && state.modelBoard.board;
+  const markets = document.getElementById('micro-markets');
+  if (markets) markets.innerHTML = board ? microMarketsHtml(board) : '';
+  const badge = document.getElementById('micro-count-badge');
+  if (badge) {
+    const count = board ? board.micro_bets.length : 0;
+    badge.textContent = count ? ` (${count})` : '';
+    badge.style.display = count ? '' : 'none';
+  }
 }
 
 /** Accumulators, with the correlation penalty shown next to the naive figure. */
@@ -2478,6 +2550,7 @@ function renderModelBoardAccumulators() {
 
 function renderModelBoard() {
   renderModelBoardStatus();
+  renderMicroBets();
   renderModelBoardLadders();
   renderModelBoardAccumulators();
 }
@@ -2491,78 +2564,32 @@ function renderForecastBoard() {
   if (!state.forecast || !state.forecast.matches || !state.forecast.matches.length) {
     board.innerHTML = `
       <div style="grid-column: 1 / -1; text-align:center; padding:48px; color: var(--text-secondary);">
-        No forecast board yet.
+        No upcoming forecasts published yet.
         <div style="font-size:12px; color: var(--text-muted); margin-top:8px;">
-          Run <code>python -m lisa export-forecast</code> to generate
-          <code>web/data/forecast.json</code> and <code>web/data/tiers.json</code>.
+          The prediction worker collects fixtures and results before publishing.
+          This view refreshes automatically as forecasts become available.
+          ${state.data && state.data.pipeline && Number(state.data.pipeline.window_hours) > 0 ? 'The published forecast window covers the next ' + esc(state.data.pipeline.window_hours) + ' hours. Check Daily Board → Next Matches for verified fixtures awaiting enough training history.' : ''}
+          ${(state.data && state.data.awaiting_results || []).length ? 'Previously published predictions are awaiting confirmed results in Ledger.' : ''}
         </div>
       </div>`;
     return;
   }
 
-  const all = state.forecast.matches.slice();
-  const topPick = all.find((m) => m.is_top_pick || m.match_id === state.forecast.top_pick) || null;
-  const rows = all.filter((m) => m !== topPick);
+  const rows = state.forecast.matches.slice();
   rows.sort((a, b) => {
-    if (a.marquee !== b.marquee) return a.marquee ? -1 : 1;
-    return (a.commence_at || '').localeCompare(b.commence_at || '');
+    const time = Date.parse(a.commence_at) - Date.parse(b.commence_at);
+    const probability = m => Math.max(m.model.p_home, m.model.p_draw, m.model.p_away);
+    return time || probability(b) - probability(a) || String(a.match_id).localeCompare(String(b.match_id));
   });
 
   const koLabel = (m) => `KO ${formatKo(m.commence_at)}`;
-
-  const heroHtml = topPick ? (() => {
-    const opts = [
-      { label: topPick.home, p: topPick.model.p_home },
-      { label: 'Draw', p: topPick.model.p_draw },
-      { label: topPick.away, p: topPick.model.p_away },
-    ].sort((a, b) => b.p - a.p);
-    const topLeanPct = (opts[0].p * 100).toFixed(0);
-    const marketTopPct = topPick.market ? (topPick.market.p_top * 100).toFixed(0) : null;
-
-    return `
-      <div class="fc-hero">
-        <div class="fc-hero-topline">
-          <div class="fc-hero-badges">
-            <span class="hero-tag-marquee">★ MARQUEE MATCH OF THE DAY</span>
-            <span class="hero-tag-league">${String(topPick.league || '').replace(/_/g, ' ').toUpperCase()}</span>
-          </div>
-          <span class="hero-ko-pill">${koLabel(topPick)}</span>
-        </div>
-
-        <div class="fc-hero-body">
-          <div class="fc-hero-matchup">
-            <div class="fc-hero-team home">
-              <span class="team-name">${esc(cleanText(topPick.home))}</span>
-              <span class="team-sub">Home</span>
-            </div>
-            <div class="fc-hero-vs-badge">VS</div>
-            <div class="fc-hero-team away">
-              <span class="team-name">${esc(cleanText(topPick.away))}</span>
-              <span class="team-sub">Away</span>
-            </div>
-          </div>
-
-          <div class="fc-hero-lean-card">
-            <div class="lean-header">
-              <span class="lean-title">LISA QUANT LEAN</span>
-              <span class="lean-pct text-pos">${topLeanPct}% Poisson Certainty</span>
-            </div>
-            <div class="lean-selection">${opts[0].label}</div>
-            <div class="lean-footer">
-              <span>Market Consensus: <strong>${marketTopPct ? marketTopPct + '%' : 'Model Pure'}</strong></span>
-              <span>Consensus Edge: <strong>+${Math.max(2.1, (topLeanPct - (marketTopPct || topLeanPct))).toFixed(1)}%</strong></span>
-            </div>
-          </div>
-        </div>
-      </div>`;
-  })() : '';
 
   const unlockStrip = `
     <div class="fc-unlock-strip">
       <div class="unlock-text">
         <div>
-          <strong>${state.forecast.count} Fixtures Forecast Today</strong>: Free public probability models displayed below.
-          <div class="unlock-sub">Full micro Poisson totals, certainty-gated diamonds, and sharp steam alerts unlock on Pro tiers.</div>
+          <strong>${state.forecast.count} Upcoming Match Forecasts</strong>: Free public probability models displayed below.
+          <div class="unlock-sub">Earliest kickoff first, then strongest outright probability. The worker automatically reaches the nearest forecastable fixtures.</div>
         </div>
       </div>
       <div class="unlock-actions">
@@ -2590,11 +2617,13 @@ function renderForecastBoard() {
 
     const u = m.uncertainty || { level: 'low', reasons: [] };
     const uLabel = u.level === 'high' ? 'High Uncertainty' : u.level === 'medium' ? 'Medium Uncertainty' : 'High Conviction';
-    const uReason = u.reasons.length ? u.reasons.map((r) => r.label).join(' · ') : 'Bookmaker consensus aligned with model.';
+    const uReason = Array.isArray(u.reasons) && u.reasons.length
+      ? u.reasons.map((r) => typeof r === 'string' ? r : r.label).join(' · ')
+      : 'No uncertainty assessment supplied.';
 
     const micro = m.micro || {};
     const scoreTxt = (micro.most_likely_scores || []).slice(0, 3)
-      .map((s) => `${s.home_goals}-${s.away_goals} (${(s.p * 100).toFixed(0)}%)`).join('  ·  ') || '-';
+      .map((s) => `${s.score || `${s.home_goals}-${s.away_goals}`} (${fmtPct(s.p, 0)})`).join('  ·  ') || '-';
 
     return `
       <article class="fc-card ${m.marquee ? 'is-marquee-card' : ''}">
@@ -2645,7 +2674,7 @@ function renderForecastBoard() {
 
         <div class="fc-uncertainty-pill ${u.level}">
           <span class="u-badge">${uLabel}</span>
-          <span class="u-reasons">${uReason}</span>
+          <span class="u-reasons">${esc(uReason)}</span>
         </div>
 
         <details class="fc-details">
@@ -2668,59 +2697,14 @@ function renderForecastBoard() {
             </div>
             <div class="fc-micro-tile scoreline">
               <span class="tile-lbl">MOST LIKELY</span>
-              <span class="tile-val font-mono text-brand">${scoreTxt}</span>
+              <span class="tile-val font-mono text-brand">${esc(scoreTxt)}</span>
             </div>
           </div>
         </details>
       </article>`;
   }).join('');
 
-  // Dual ranking strip: the safest WIN and the best positive-EV EARN are
-  // deliberately different rankings of the same board — the safest favourite
-  // normally doesn't pay, and the best value price normally isn't the
-  // favourite. Show both answers side by side so neither is buried.
-  const f = state.forecast;
-  const dualCards = [];
-  if (f && f.best_win) {
-    const b = f.best_win;
-    dualCards.push(`
-      <div class="fc-dual-card win">
-        <div class="fc-dual-head">
-          <span class="fc-dual-tag win">BEST WIN</span>
-          <span class="fc-dual-ko">${koLabel({ commence_at: b.commence_at })}</span>
-        </div>
-        <div class="fc-dual-title">${esc(cleanText(b.home))} <span class="fc-dual-vs">vs</span> ${esc(cleanText(b.away))}</div>
-        <div class="fc-dual-line">Safest outright: <strong>${esc(b.outcome_name)}</strong> — consensus ${(b.p_top * 100).toFixed(0)}%</div>
-        <div class="fc-dual-foot">
-          <span>${(b.win_score * 100).toFixed(1)}% risk-adjusted score</span>
-          <span>${b.n_books} books</span>
-        </div>
-      </div>`);
-  }
-  if (f && f.best_earning) {
-    const e = f.best_earning;
-    dualCards.push(`
-      <div class="fc-dual-card earn">
-        <div class="fc-dual-head">
-          <span class="fc-dual-tag earn">BEST EARN</span>
-          <span class="fc-dual-ko">${koLabel({ commence_at: e.commence_at })}</span>
-        </div>
-        <div class="fc-dual-title">${esc(cleanText(e.home))} <span class="fc-dual-vs">vs</span> ${esc(cleanText(e.away))}</div>
-        <div class="fc-dual-line">Value play: <strong>${esc(e.outcome_name)}</strong> @ ${e.best_odds} (${String(e.market || 'h2h').toUpperCase()})</div>
-        <div class="fc-dual-foot">
-          <span class="text-pos">+${(e.ev * 100).toFixed(1)}% EV</span>
-          <span>est. ${(e.p * 100).toFixed(0)}% real prob</span>
-          <span>sharp: ${esc(e.best_book || '')}</span>
-        </div>
-      </div>`);
-  }
-  const dualStrip = (f && (f.best_win || f.best_earning)) ? `
-    <div class="fc-dual-strip">
-      <div class="fc-dual-note">The board is ranked two ways on purpose — the safest winner is almost never the best value price. Here are today's best of each.</div>
-      <div class="fc-dual-grid">${dualCards.join('')}</div>
-    </div>` : '';
-
-  board.innerHTML = heroHtml + dualStrip + unlockStrip + cards;
+  board.innerHTML = unlockStrip + cards;
 }
 
 function renderTierMatrix() {
@@ -2869,6 +2853,7 @@ function renderTierMatrix() {
 
     const cells = order.map(t => {
       const on = TIER_RANKS[t] >= grantRank;
+      if (f.available === false) return `<td class="matrix-cell"><span class="matrix-denied">Unavailable</span></td>`;
       const isFeaturedCol = t === 'tier2';
       const cellClass = `matrix-cell col-${t}${isFeaturedCol ? ' col-featured-td' : ''}`;
 
@@ -2901,7 +2886,7 @@ function renderTierMatrix() {
       }
     }
 
-    const microDesc = FEATURE_MICRO_BLURBS[f.key] || cleanText(f.blurb);
+    const microDesc = esc(cleanText(f.blurb));
     const targetTier = f.grant || 'tier1';
 
     return `
@@ -2914,7 +2899,7 @@ function renderTierMatrix() {
           <div class="matrix-feature-blurb">${microDesc}</div>
         </td>
         ${cells}
-        <td class="matrix-cell col-latency">${revealHtml}</td>
+        <td class="matrix-cell col-latency">${f.available === false ? "Unavailable" : "Published board"}</td>
       </tr>`;
   }
 
@@ -2986,7 +2971,7 @@ function settleScrollRestore() {
 // tab silently does nothing. 'daily-board' and 'tiers' were missing while their
 // buttons and panels both existed in the DOM, so two shipped tabs were dead.
 const VALID_VIEWS = new Set([
-  'overview', 'picks', 'forecast', 'model-board', 'ledger', 'daily-board',
+  'overview', 'picks', 'forecast', 'model-board', 'micro-bets', 'ledger', 'daily-board',
   'calibration', 'calculator', 'alpha', 'tiers', 'backtest',
 ]);
 
@@ -3022,12 +3007,11 @@ function switchTab(viewName) {
 
   state.activeTab = viewName;
 
-  // The model board runs a real network cycle. Load it on first visit rather
-  // than in the boot path, so opening the dashboard never waits on three
-  // public sources.
-  if (viewName === 'model-board' && state.modelBoardState === 'idle') {
+  // All views read persisted data. Opening a view never calls providers.
+  if (['model-board', 'micro-bets'].includes(viewName) && state.modelBoardState === 'idle') {
     refreshModelBoard(false);
   }
+  if (viewName === 'daily-board') loadDailyBoard(state.dailyBoardTab || 'upcoming');
 
   if (window.history && history.replaceState) {
     history.replaceState(null, '', `#${viewName}`);
@@ -3056,65 +3040,47 @@ window.switchTab = switchTab;
 // ============================================================
 
 window.switchBoardTab = function(tab) {
-  // Update active tab
+  if (!['upcoming', 'today', 'tomorrow', 'week'].includes(tab)) return;
+  state.dailyBoardTab = tab;
   document.querySelectorAll('.daily-board-tabs .pill-filter').forEach(btn => {
-    btn.classList.remove('active');
+    btn.classList.toggle('active', btn.getAttribute('data-board-tab') === tab);
   });
-  event.target.classList.add('active');
-
-  // Load board data
   loadDailyBoard(tab);
 };
 
-window.loadDailyBoard = async function(tab) {
+let calendarRequestVersion = 0;
+window.loadDailyBoard = async function(tab = 'upcoming') {
   const contentDiv = document.getElementById('daily-board-content');
   if (!contentDiv) return;
-
+  const version = ++calendarRequestVersion;
+  state.dailyBoardTab = tab;
   contentDiv.innerHTML = '<div class="board-loading">Loading matches...</div>';
-
   try {
-    // In production, this would fetch from the API
-    // const response = await fetch(`/api/daily-board?tab=${tab}`);
-    // const data = await response.json();
-
-    // For now, show placeholder
-    const mockData = {
-      today: [
-        { time: '15:00', league: 'Premier League', home: 'Arsenal', away: 'Chelsea', odds: '1.85' },
-        { time: '17:30', league: 'La Liga', home: 'Real Madrid', away: 'Barcelona', odds: '2.10' },
-        { time: '20:00', league: 'Serie A', home: 'Juventus', away: 'AC Milan', odds: '1.95' },
-      ],
-      tomorrow: [
-        { time: '14:00', league: 'Bundesliga', home: 'Bayern', away: 'Dortmund', odds: '1.75' },
-      ],
-      week: [
-        { time: 'Sat 15:00', league: 'Premier League', home: 'Liverpool', away: 'Man City', odds: '2.50' },
-      ],
-    };
-
-    const matches = mockData[tab] || [];
-
+    const response = await fetchDashboardResource('/api/daily-board');
+    const data = await response.json();
+    if (version !== calendarRequestVersion) return;
+    if (!response.ok || !data.success) throw new Error(data.error || 'Saved calendar unavailable');
+    const matches = (data.board || {})[tab === 'week' ? 'this_week' : tab === 'upcoming' ? 'all_upcoming' : tab] || [];
+    const status = `<p class="alpha-sub">${data.worker_observed_at ? 'Worker observation: ' + esc(formatKo(data.worker_observed_at)) : 'Waiting for the first worker observation'} · dates in ${esc(data.timezone || 'UTC')}. Source caches determine score freshness.</p>`;
     if (matches.length === 0) {
-      contentDiv.innerHTML = '<div class="board-empty">No matches found for this period.</div>';
+      const upcoming = Array.isArray((data.board || {}).all_upcoming) ? data.board.all_upcoming : [];
+      const next = upcoming[0];
+      const otherDates = next && tab !== 'upcoming'
+        ? `<p>${upcoming.length} verified upcoming ${upcoming.length === 1 ? 'fixture is' : 'fixtures are'} recorded for later dates. Next kickoff: ${esc(formatKo(next.commence_time))}.</p><button type="button" class="pill-filter" onclick="window.switchBoardTab('upcoming')">View Next Matches</button>`
+        : '<p>This view refreshes automatically as workers collect eligible fixtures.</p>';
+      contentDiv.innerHTML = status + '<div class="board-empty">No fixtures recorded for this period.' + otherDates + '</div>';
       return;
     }
-
-    let html = '<div class="board-matches">';
-    matches.forEach(m => {
-      html += `
+    contentDiv.innerHTML = status + '<div class="board-matches">' + matches.map(m => `
         <div class="board-match">
-          <div class="board-match-time">${esc(m.time)}</div>
-          <div class="board-match-league">${esc(m.league)}</div>
-          <div class="board-match-teams">${esc(m.home)} vs ${esc(m.away)}</div>
-          <div class="board-match-odds">${esc(m.odds)}</div>
+          <div class="board-match-time">${esc(formatKo(m.commence_time))}</div>
+          <div class="board-match-league">${esc((m.sport_key || '').replace(/_/g, ' '))}</div>
+          <div class="board-match-teams">${esc(m.home_team)} vs ${esc(m.away_team)}</div>
+          <div class="board-match-odds">${Array.isArray(m.score) ? esc(m.score.join('–')) : '—'} · ${esc(m.status)}<br><small>${esc(m.source)}</small></div>
         </div>
-      `;
-    });
-    html += '</div>';
-
-    contentDiv.innerHTML = html;
+      `).join('') + '</div>';
   } catch (err) {
-    contentDiv.innerHTML = '<div class="board-error">Failed to load matches.</div>';
+    if (version === calendarRequestVersion) contentDiv.innerHTML = '<div class="board-error">'+esc(err.message)+'. Retrying automatically.</div>';
   }
 };
 
@@ -3940,8 +3906,7 @@ function initApp() {
   }
 
   // Background session rehydration and telemetry loading
-  auth.init().then(() => {
-    loadData().then(async () => {
+  Promise.allSettled([auth.init(), loadData()]).then(async () => {
       const uid = getOrCreateWebUserId();
 
       // Production Server Verification Check (Backend is the Single Source of Truth)
@@ -3966,7 +3931,6 @@ function initApp() {
 
       renderTierControls();
       renderPicks();
-    });
   });
 }
 
@@ -4131,6 +4095,9 @@ window.handlePricingSelect = function (tierKey) {
 };
 
 window.openCheckoutModal = function (tierKey = 'tier1') {
+  showToast('Paid checkout is unavailable until verified billing is configured.', 'info');
+  return;
+
   checkoutPendingTier = tierKey;
   const info = TIER_PRICING[tierKey] || TIER_PRICING.tier1;
   const modal = document.getElementById('checkout-modal');
@@ -4254,5 +4221,3 @@ if (document.readyState === 'loading') {
 } else {
   initApp();
 }
-
-

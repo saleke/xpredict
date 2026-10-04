@@ -6,23 +6,20 @@ fetches everything the calendar holds, so widening the window costs no requests
 the next day's fixtures sit unread in the same response is a coverage problem
 that does not exist.
 
-What must not happen is the opposite failure: widening and then claiming a
-window the operator never asked for, or widening when there is nothing extra to
-find, which would replace an accurate coverage note with a misleading one.
+The effective horizon must describe the fixtures actually published. Choose it
+before pricing and board construction, without a fixed 48-hour ceiling.
 """
 from __future__ import annotations
 
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lisa.feed import FALLBACK_WINDOW_HOURS, run_feed  # noqa: E402
+from lisa.feed import run_feed  # noqa: E402
+from lisa.config import Settings
 
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -103,6 +100,8 @@ class _StubModel:
         return {
             "p_home": 0.5, "p_draw": 0.3, "p_away": 0.2, "p_btts": 0.5,
             "over": {"2.5": 0.5},
+            "double_chance": {}, "home_team_over": {}, "away_team_over": {},
+            "expected_goals": {"home": 1.5, "away": 1.0},
             "most_likely_scores": [{"home_goals": 1, "away_goals": 0, "p": 0.2}],
         }
 
@@ -122,7 +121,7 @@ def _settings(**over):
         "sharpapi_max_pages": 1,
     }
     base.update(over)
-    return SimpleNamespace(**base)
+    return Settings(**base)
 
 
 def _run(monkeypatch, rows, window, target=12):
@@ -162,7 +161,7 @@ def test_an_empty_window_widens_and_finds_the_next_days_fixtures(monkeypatch) ->
 
     report, _ = _run(monkeypatch, rows, 24.0)
 
-    assert report.window_hours == FALLBACK_WINDOW_HOURS
+    assert report.window_hours == 40.0
     assert report.board.coverage.fixtures_modelled == 3
     assert report.board.winning, "widening found fixtures but published none"
 
@@ -183,22 +182,20 @@ def test_the_widening_is_reported_rather_than_done_silently(monkeypatch) -> None
 
     note = " ".join(report.notes)
     assert "Widened the look-ahead" in note
-    assert "24h to 48h" in note
+    assert "24h to 30h" in note
     # The note must carry the counts that justified it, so an operator can tell
     # whether the widening helped.
     assert "0 fixture(s) against a target of 12" in note
     assert "holds 1" in note
 
 
-def test_a_window_already_at_the_ceiling_is_not_widened_again(monkeypatch) -> None:
-    rows = [_row(_at(70), home="H", away="A")]  # beyond even the fallback
+def test_a_48_hour_window_reaches_the_nearest_later_fixture(monkeypatch) -> None:
+    rows = [_row(_at(70), home="H", away="A")]
 
-    report, _ = _run(monkeypatch, rows, FALLBACK_WINDOW_HOURS)
+    report, _ = _run(monkeypatch, rows, 48.0)
 
-    assert report.window_hours == FALLBACK_WINDOW_HOURS
-    assert report.board.coverage.fixtures_modelled == 0
-    assert not any("Widened" in n for n in report.notes), (
-        "it widened past its own ceiling")
+    assert report.window_hours == 70.0
+    assert report.board.coverage.fixtures_modelled == 1
 
 
 def test_widening_is_not_adopted_when_it_finds_nothing_extra(monkeypatch) -> None:

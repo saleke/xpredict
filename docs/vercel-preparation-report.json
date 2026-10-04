@@ -1,0 +1,31 @@
+{
+  "checked_at": "2026-10-03T20:45:19.708793+00:00",
+  "state": "prepared_not_deployed",
+  "target": "vercel_production_testing",
+  "paper_mode_enforced": true,
+  "local_launcher": "scripts/local_paper.py",
+  "local_execution": "blocked_by_socket_policy_in_this_workspace",
+  "python_requests_probe": {
+    "state": "blocked",
+    "error_type": "ConnectionError",
+    "provider_http_response_received": false
+  },
+  "verification": {
+    "unittest_tests_run": 160,
+    "unittest_passed": 151,
+    "postgres_tests_skipped": 9,
+    "frontend_tests_passed": 28,
+    "compile_check": "passed",
+    "public_packaging": "passed",
+    "json_yaml_parse": "passed",
+    "diff_whitespace": "passed",
+    "full_pytest": "requires_ci"
+  },
+  "not_yet_verified": [
+    "Real managed PostgreSQL and transaction-pooler connectivity",
+    "Vercel build, deployment routing and staged smoke checks",
+    "Live provider authentication, price entitlements and quota balances",
+    "Multi-day generation, score refresh, settlement and browser behavior"
+  ],
+  "profitability_approved": false
+}

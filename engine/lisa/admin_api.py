@@ -44,7 +44,7 @@ from typing import Any, Callable, Optional
 from . import __version__
 from . import config as cfg
 from .runtime import READONLY_FIELDS, OverrideError, RuntimeConfig
-from .storage import AdminReadModelUnavailable
+from .storage import AdminReadModelUnavailable, RelationalStorage
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,21 @@ class AdminAPI:
             return self._csrf_secret
         secret: Any = None
         storage = self.storage
+        if isinstance(storage, RelationalStorage):
+            # Concurrent cold starts must select the same persisted secret.
+            # Read-then-upsert allowed two instances to cache different secrets.
+            candidate = secrets.token_urlsafe(48)
+            with storage._tx() as conn:
+                conn.execute('INSERT INTO system_telemetry VALUES (?, ?, ?) '
+                    'ON CONFLICT(key) DO NOTHING',
+                    (CSRF_SECRET_KEY, json.dumps(candidate), datetime.now(timezone.utc).isoformat()))
+                row = conn.execute('SELECT val_json FROM system_telemetry WHERE key=?',
+                                   (CSRF_SECRET_KEY,)).fetchone()
+                secret = json.loads(row['val_json'])
+            if not isinstance(secret, str) or len(secret) < 32:
+                raise AdminError(503, 'Admin session protection is misconfigured')
+            self._csrf_secret = secret.encode('utf-8')
+            return self._csrf_secret
         if storage is not None and hasattr(storage, "admin_get_telemetry"):
             try:
                 for row in storage.admin_get_telemetry():
@@ -546,7 +561,9 @@ class AdminAPI:
                 counts = {"error": type(exc).__name__}
         scheduler = control.scheduler
         sched: dict[str, Any] = {"present": scheduler is not None}
-        if scheduler is not None:
+        if scheduler is not None and hasattr(scheduler, "status"):
+            sched.update(scheduler.status())
+        elif scheduler is not None:
             stats = scheduler.stats
             sched.update({
                 "ticks": stats.ticks, "cycles_run": stats.cycles_run,
@@ -670,6 +687,9 @@ class AdminAPI:
         def scheduler_check() -> tuple[bool, Any]:
             present = control.scheduler is not None
             detail: dict[str, Any] = {"present": present}
+            if present and hasattr(control.scheduler, "status"):
+                detail.update(control.scheduler.status())
+                return detail["ready"], detail
             if present:
                 detail["ticks"] = control.scheduler.stats.ticks
                 detail["last_error_count"] = control.scheduler.stats.total_errors
@@ -781,6 +801,63 @@ class AdminAPI:
         return {"success": True, "label": label, "cooldown_until": _iso_ts(until)}
 
     # -- settings ----------------------------------------------------------
+
+    def get_providers(self, handler, query, body, user, role, params):
+        from .provider_credentials import credential_store, FIELDS
+        settings = self.settings()
+        overrides = credential_store(settings, self.storage).read()
+        rows = []
+        for provider, field in FIELDS.items():
+            rows.append({'provider': provider, 'configured': bool(getattr(settings, field)),
+                         'configuration_source': 'admin' if field in overrides else 'environment'})
+        return {'providers': rows, 'coverage_plan': self.storage.get_telemetry('coverage:plan') or {},
+                'settlement_coverage': self.storage.get_telemetry('coverage:settlement') or {},
+                'oddspapi_status': self.storage.get_telemetry('provider:oddspapi:status') or {},
+                'the_odds_api_status': self.storage.get_telemetry('provider:the_odds_api:status') or {},
+                'credential_updates_allowed': role == 'owner'}
+
+    def put_provider(self, handler, query, body, user, role, params):
+        from .provider_credentials import credential_store
+        if role != 'owner':
+            raise AdminError(403, 'Credential changes require the owner role')
+        provider = params.get('provider', '')
+        operation = body.get('operation', 'replace')
+        if operation not in ('replace', 'disable', 'inherit'):
+            raise AdminError(400, 'operation must be replace, disable or inherit')
+        credential = body.get('credential', '') if operation == 'replace' else ''
+        if operation == 'replace' and (not isinstance(credential, str) or not credential.strip()):
+            raise AdminError(400, 'A nonempty credential is required')
+        try:
+            credential_store(self.settings(), self.storage).update(
+                provider, credential, inherit=operation == 'inherit')
+        except ValueError as exc:
+            raise AdminError(400, str(exc)) from None
+        if self.runtime is not None:
+            self.runtime.invalidate_credentials()
+        self.audit((user or {}).get('id'), 'admin.provider.credential', provider,
+                   {'operation': operation})
+        return {'success': True, 'provider': provider, 'operation': operation,
+                'detail': 'Applies on the next job cycle; in-flight requests finish with their previous settings.'}
+
+    def operations(self, handler, query, body, user, role, params):
+        from .pilot import pilot_report
+        from .observability import FIXTURES_KEY, PERFORMANCE_KEY
+        return {'pilot':pilot_report(self.storage,self.settings()),
+                'performance':self.storage.get_telemetry(PERFORMANCE_KEY) or {},
+                'generation_fixtures':self.storage.get_telemetry(FIXTURES_KEY) or {},
+                'settlement_fixtures':self.storage.get_telemetry('settlement:'+FIXTURES_KEY) or {},
+                'scheduler':'serverless' if getattr(self.control.server,'jobs',None) else 'worker'}
+
+    def run_paper_job(self, handler, query, body, user, role, params):
+        if role != 'owner':
+            raise AdminError(403,'Job execution requires the owner role')
+        context = self.control.server
+        name = params.get('job')
+        if not getattr(context,'jobs',None) or name not in context.jobs:
+            raise AdminError(400,'Select generation, settlement or history on the serverless deployment')
+        from .serverless import run_job
+        self.audit(user.get('id'),'admin.paper_job',name)
+        return run_job(context,name)
 
     def get_settings(self, handler, query, body, user, role, params):
         rt = self.runtime
@@ -1171,6 +1248,12 @@ class AdminAPI:
         if mode not in ("due", "sync"):
             raise AdminError(400, "mode must be 'due' or 'sync'")
 
+        if hasattr(scheduler, "request_refresh"):
+            scheduler.request_refresh()
+            self.audit((user or {}).get("id"), "admin.system.refresh_requested")
+            return {"success": True, "queued": True,
+                    "note": "The worker will refresh fixtures and retry overdue settlement."}
+
         if mode == "due":
             # Mark the work due and let the loop's own thread run it. Calling
             # tick() here would hold the request open for the length of a slow
@@ -1304,12 +1387,16 @@ def send_telegram(token: str, chat_id: str, text: str) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 _ROUTES: dict[tuple[str, str], tuple[Callable, str, bool]] = {
+    ('GET', '/operations'): (AdminAPI.operations, READ, False),
+    ('POST', '/jobs/{job}'): (AdminAPI.run_paper_job, WRITE, False),
     ("GET", "/session"): (AdminAPI.session, READ, True),
     ("POST", "/login"): (AdminAPI.login, READ, True),
     ("POST", "/logout"): (AdminAPI.logout, WRITE, False),
     ("GET", "/overview"): (AdminAPI.overview, READ, False),
     ("GET", "/health"): (AdminAPI.health, READ, False),
     ("GET", "/keys"): (AdminAPI.keys, READ, False),
+    ('GET', '/providers'): (AdminAPI.get_providers, READ, False),
+    ('PUT', '/providers/{provider}'): (AdminAPI.put_provider, WRITE, False),
     ("POST", "/keys/cooldown"): (AdminAPI.key_cooldown, WRITE, False),
     ("GET", "/settings"): (AdminAPI.get_settings, READ, False),
     ("PATCH", "/settings"): (AdminAPI.patch_settings, WRITE, False),
@@ -1355,6 +1442,7 @@ _ROUTES: dict[tuple[str, str], tuple[Callable, str, bool]] = {
 # `role_for` is re-evaluated on every request, so demoting an account in the
 # database takes effect on its next request rather than at next sign-in.
 _OWNER_ONLY = {
+    'put_provider',
     "patch_user", "key_cooldown", "patch_settings", "reset_settings",
     "put_sports", "settle_pick", "settle_match", "retry_notifications",
     "purge_cache", "trigger", "pause",

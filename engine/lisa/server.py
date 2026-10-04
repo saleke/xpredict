@@ -19,6 +19,8 @@ import secrets
 import sys
 import threading
 import time
+from .model_policy import FORECAST_SOURCES
+from datetime import datetime, timezone
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,7 +32,7 @@ from .admin_api import AdminAPI, operator_role
 from .auth import AuthManager
 from .dashboard import LIVE_ODDS_PREFIX
 from .gate import Pick
-from .storage import InMemoryStorage, SqliteStorage, Storage
+from .storage import InMemoryStorage, SqliteStorage, RelationalStorage, Storage
 from .telegram_bot import TelegramBot, generate_unlock_token, registry, verify_unlock_token
 
 logger = logging.getLogger(__name__)
@@ -149,6 +151,9 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
     @property
     def settings(self) -> cfg.Settings:
+        control = getattr(self.server, 'control', None)
+        if control is not None and control.runtime is not None:
+            return control.runtime.settings()
         return getattr(self.server, "settings", None)
 
     @property
@@ -323,6 +328,12 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         if self._is_denied_static_path(path):
             self._send_json({"error": "Not found"}, status=404)
+            return
+
+        if path == "/api/ready":
+            service = getattr(self.server, "daily_service", None)
+            status = service.status() if service else {"ready": False, "state": "disabled"}
+            self._send_json(status, status=200 if status["ready"] else 503)
             return
 
         if path in ("/api/status", "/api/health", "/api/telemetry"):
@@ -597,7 +608,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             # account could link the operator's id (linking is allowed before
             # proof so the web terminal can unlock the social preview) and then
             # self-serve a paid tier through this endpoint.
-            user_tg = str(user.get("telegram_id", "")).strip()
+            user_tg = str(user.get("telegram_id") or "").strip()
             linked_proven = bool(user.get("telegram_verified")) and bool(user_tg)
             if user.get("tier") == "admin" or (linked_proven and self.bot and self.bot.is_admin(user_tg)):
                 is_authorized = True
@@ -679,7 +690,7 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return
 
         # Verify the Telegram ID matches the purchaser
-        user_tg = str(user.get("telegram_id", "")).strip()
+        user_tg = str(user.get("telegram_id") or "").strip()
         if user_tg and user_tg != payment_key.telegram_id:
             self._send_json({
                 "success": False,
@@ -714,117 +725,50 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": str(exc)}, status=500)
 
     def _handle_daily_board(self, parsed: Optional[urllib.parse.ParseResult] = None):
-        """Return the daily board with matches grouped by date.
-
-        Does not fabricate matches: an empty board is reported as empty, with
-        provenance of which sources were consulted.
-        """
-        from .daily_board import daily_board_builder
-
+        """Read saved fixture observations; visitors spend no provider quota."""
+        from .calendar_snapshot import saved_daily_board
         try:
-            # Get matches from all leagues the free stack actually covers
-            from .match_router import match_router
-            from .providers.calendar import LEAGUES
-
-            sport_keys = list(LEAGUES.keys())[:20]
-            board = daily_board_builder.build_from_leagues(sport_keys, days_ahead=7)
-            self._send_json({
-                "success": True,
-                "board": board.to_dict(),
-                "provenance": {
-                    "covered_leagues": len(match_router.get_all_leagues()),
-                    "sources": {
-                        "openligadb": True,
-                        "football_data": True,
-                        "sportsdb": True,
-                    },
-                },
-            })
+            self._send_json(saved_daily_board(self.storage, self.settings))
         except Exception as exc:
-            self._send_json({"success": False, "error": str(exc)}, status=500)
+            self._send_json({'success': False, 'error': 'Saved calendar unavailable',
+                             'error_type': type(exc).__name__}, status=503)
 
     def _handle_opportunity_board(self, parsed: urllib.parse.ParseResult):
-        """Return the free-stack opportunity board (winning/earning/micro/accas).
-
-        This is the live path: OpenLigaDB + football-data.org fixtures, rated by
-        the independent Dixon-Coles model, priced only where a real market
-        price exists. It never contacts the retired The Odds API.
-
-        A cycle costs a few seconds of network time, so the result is cached
-        briefly. Without that, every dashboard poll would re-run the whole feed
-        and hammer three public endpoints for no benefit. ``?refresh=1``
-        forces one rebuild, which is what an operator wants after changing
-        settings -- not something every visitor should be able to trigger.
-        """
-        from .feed import run_feed
-
-        qs = urllib.parse.parse_qs(parsed.query)
-        force = qs.get("refresh", ["0"])[0].strip().lower() in {"1", "true", "yes"}
-        ttl = float(getattr(self.settings or cfg.load_settings(),
-                            "board_cache_ttl_sec", 300) or 300)
-
-        # The cache lives on the *server*, not on the handler. A
-        # BaseHTTPRequestHandler instance is created per request, so an
-        # instance attribute is gone before the next poll arrives and the cache
-        # silently never hits. (The forecast cache below had this same bug.)
-        cached = getattr(self.server, "_board_cache", None)
-        if not force and cached and time.time() - cached[0] <= ttl:
-            self._send_json(dict(cached[1], cached=True))
+        """Read a committed board. Visitors never run provider/model work."""
+        service = getattr(self.server, "daily_service", None)
+        force = urllib.parse.parse_qs(parsed.query).get("refresh", ["0"])[0].lower() in {"1", "true", "yes"}
+        if force:
+            user, _ = self._get_current_user_and_session()
+            if not user or user.get("tier") != "admin":
+                self._send_json({"success": False, "error": "Only operators can request a new feed cycle"}, status=403)
+                return
+            if service is not None:
+                service.request_refresh()
+        payload = service.read() if service else None
+        if payload is None:
+            self._send_json({"success": False, "state": "starting", "board": None,
+                "error": "No prediction cycle has been published yet. The background worker reports provider failures in health."}, status=503)
             return
-
-        # One cycle at a time: the server is threaded, and without this a burst
-        # of dashboard polls would each start their own multi-second fetch
-        # against three public endpoints.
-        lock = getattr(self.server, "_board_lock", None)
-        if lock is None:
-            lock = self.server._board_lock = threading.Lock()
-
-        with lock:
-            # Re-check under the lock: another thread may have just built it.
-            cached = getattr(self.server, "_board_cache", None)
-            if not force and cached and time.time() - cached[0] <= ttl:
-                self._send_json(dict(cached[1], cached=True))
-                return
-
-            settings = self.settings or cfg.load_settings()
-            try:
-                report = run_feed(settings)
-            except Exception as exc:
-                # Never invent a board. If the cycle cannot run, say so, and
-                # fall back to the last good board only if we have one.
-                logger.warning("opportunity board cycle failed: %r", exc)
-                if cached:
-                    self._send_json(dict(cached[1], cached=True,
-                                         stale_reason=str(exc)))
-                else:
-                    self._send_json({
-                        "success": False,
-                        "error": f"board cycle failed: {exc}",
-                        "board": None,
-                    }, status=503)
-                return
-
-            payload = {
-                "success": report.board is not None,
-                "health": report.health(),
-                "generated_at": report.began.isoformat(),
-                "window_hours": report.window_hours,
-                "summary": report.summary(),
-                "model": dict(report.model),
-                "providers": [p.to_dict() for p in report.providers],
-                # What the price source delivered, and what it could not use.
-                # Without this, an empty earning ladder is ambiguous: it looks
-                # identical whether the books offered nothing or the adapter
-                # failed to read a full feed. The drop counters and the match
-                # tally are the only way to tell those apart from outside.
-                "prices": dict(report.prices),
-                "price_match": dict(report.price_match),
-                "notes": list(report.notes),
-                "errors": list(report.errors),
-                "board": report.board.to_dict() if report.board else None,
-            }
-            self.server._board_cache = (time.time(), payload)
-
+        payload.pop("forecast", None)
+        payload["cached"] = True
+        status = service.status()
+        payload["service"] = status
+        if not status["ready"]:
+            payload["stale_reason"] = status.get("error") or status["state"]
+        # Model forecasts are public; observed execution data belongs to the paid view.
+        user, _ = self._get_current_user_and_session()
+        paid = user and user.get("tier") in ("tier1", "tier2", "tier3", "admin")
+        if not paid:
+            board = payload.get("board") or {}
+            for rows in (board.get("winning", []), board.get("micro_bets", [])):
+                for row in rows:
+                    for field in ("best_odds", "best_book", "best_source", "ev"):
+                        row[field] = None
+                    row.update(priced=False, stake_fraction=0, basis="model_only",
+                               reason="Model forecast; observed execution prices require a paid account")
+            board["earning"] = []
+            board["accumulators"] = []
+            board["execution_locked"] = True
         self._send_json(payload)
 
     def _handle_curated_picks(self):
@@ -1139,9 +1083,16 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         settings = self.settings or cfg.load_settings()
         try:
             payload = build_dashboard(self.storage, settings)
+            user, _ = self._get_current_user_and_session()
+            if not user or user.get("tier") not in ("tier1", "tier2", "tier3", "admin"):
+                for row in payload.get("active_picks", []) + payload.get('awaiting_results', []):
+                    if row.get("source") in FORECAST_SOURCES:
+                        for key in ("best_odds", "best_book", "best_ev", "quotes"):
+                            row[key] = None
+                        row.update(recommended_stake_pct=0, recommended_units=0, execution_locked=True)
         except Exception as exc:
-            logger.warning("dashboard build failed: %r", exc)
-            self._send_json({"error": "dashboard unavailable", "detail": str(exc)}, status=503)
+            logger.warning("dashboard build failed: %s", type(exc).__name__)
+            self._send_json({"error": "dashboard unavailable", "error_type": type(exc).__name__}, status=503)
             return
         self._send_json(payload)
 
@@ -1158,11 +1109,16 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             counts = self.storage.count_picks()
 
         settings = self.settings or cfg.load_settings()
+        service = getattr(self.server, "daily_service", None)
+        readiness = service.status() if service else {"ready": False, "state": "disabled"}
         payload = {
-            "status": "healthy",
+            "status": "healthy" if readiness["ready"] else "degraded",
+            "daily_service": readiness,
+            "settlement_service": self.storage.get_telemetry("daily:settlement_status") if hasattr(self.storage, "get_telemetry") else None,
             "version": __version__,
             "uptime_seconds": uptime,
             "storage_driver": getattr(settings, "storage_driver", "sqlite"),
+            "paper_mode": getattr(settings, "paper_mode", False),
             "ledger_counts": counts,
             "telegram_bot": {
                 "configured": bool(settings.telegram_token),
@@ -1196,6 +1152,15 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         Never falls back to the packaged archive: if there is no live snapshot
         the response is an explicit "no live data" board.
         """
+        service = getattr(self.server, "daily_service", None)
+        if service:
+            published = service.read()
+            if published and published.get("forecast"):
+                forecast = published["forecast"]
+                forecast["service"] = service.status()
+                self._send_json(forecast)
+                return
+
         from .bulletin import NO_LIVE_DATA, build_live_bulletin_from_payloads
 
         # Server-scoped, not handler-scoped: a handler instance is created per
@@ -1379,6 +1344,16 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         processed_picks = []
         for idx, pick in enumerate(raw_picks):
             p = dict(pick)
+            if p.get("source") in FORECAST_SOURCES:
+                if str(p.get("commence_time", "")) <= datetime.now(timezone.utc).isoformat():
+                    continue
+                p["is_locked"] = False
+                if tier not in ("tier1", "tier2", "tier3", "admin"):
+                    for key in ("best_odds", "best_book", "best_ev"):
+                        p[key] = None
+                    p.update(recommended_stake_pct=0, recommended_units=0, execution_locked=True)
+                processed_picks.append(p)
+                continue
             tier_level = p.get("tier_level")
 
             if idx == 0:
@@ -1490,13 +1465,24 @@ def make_production_server(
     disconnected instance of them.
     """
     server = ReusableThreadingHTTPServer((host, port), LISAProductionHandler)
+    return configure_production_context(server, web_dir=web_dir, storage=storage,
+        settings=settings, bot=bot, auth=auth, control=control)
+
+
+def configure_production_context(server, *, web_dir='web', storage=None,
+                                 settings=None, bot=None, auth=None, control=None):
+    """Attach request collaborators without binding a socket or starting jobs."""
     server.web_dir = Path(web_dir).resolve()
     server.storage = storage or SqliteStorage()
-    server.auth = auth or AuthManager(storage=server.storage if isinstance(server.storage, SqliteStorage) else None)
+    server.auth = auth or AuthManager(storage=server.storage if isinstance(server.storage, RelationalStorage) else None)
     server.settings = settings or cfg.load_settings()
     server.bot = bot
     server.start_time = time.time()
     server.control = control
+    from .daily_service import DailyService
+    server.daily_service = DailyService(server.storage,
+        control.runtime.settings if control is not None and control.runtime else server.settings
+    ) if isinstance(server.storage, RelationalStorage) else None
     if control is not None:
         # The control object is the authority for settings once it exists, so
         # the handler must read through it or it would see a stale snapshot.

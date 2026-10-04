@@ -167,6 +167,9 @@ function evaluate({ truncateBefore = null } = {}) {
   return { sandbox, getEl };
 }
 
+module.exports = { evaluate, assert };
+
+if (require.main === module) {
 check('renderAll is a hoisted function declaration, so it survives truncation', () => {
   // renderAll is called from the module bootstrap and from the 60s poller. If
   // it were a const arrow it would be in the temporal dead zone at the point
@@ -223,3 +226,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log('renderAll robustness: OK');
+}

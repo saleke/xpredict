@@ -124,7 +124,9 @@ class OpenLigaDbProvider:
         return [today.year, today.year - 1]
 
     def _season(self, shortcut: str, year: int) -> list[dict[str, Any]]:
-        return self._get(f"/getmatchdata/{shortcut}/{year}", ttl=SEASON_TTL_SEC)
+        from datetime import date
+        ttl = 300 if year == date.today().year else SEASON_TTL_SEC
+        return self._get(f"/getmatchdata/{shortcut}/{year}", ttl=ttl)
 
     def _to_fixture(self, row: dict[str, Any], sport_key: str) -> Optional[dict[str, Any]]:
         try:

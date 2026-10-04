@@ -210,7 +210,10 @@ def evaluate_calibration(records: Iterable[dict],
     n_lost = 0
     n_void = 0
 
+    from .contracts import is_binary_contract
     for rec in records:
+        if not is_binary_contract(rec.get("market"), rec.get("line")):
+            continue
         res = rec.get("result")
         if res == "VOID" or rec.get("state") == "VOID":
             n_void += 1
