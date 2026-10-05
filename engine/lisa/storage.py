@@ -1340,6 +1340,7 @@ class SqliteStorage(RelationalStorage):
         from .pilot_schema import PILOT_DDL
         from .provider_credentials import CREDENTIAL_DDL
         with self._tx() as conn:
+            self._apply_migrations(conn)
             conn.executescript(SQLITE_DDL)
             conn.executescript(HISTORY_DDL)
             conn.executescript(BUDGET_DDL)
@@ -1479,9 +1480,8 @@ class RedisStorage(Storage):
                 raise RuntimeError(
                     "LISA_STORAGE=redis requires the 'redis' package") from exc
             client = redis.Redis.from_url(
-                url or "redis://localhost:6379", decode_responses=True)
+                url or "redis://localhost:6379", dLecode_responses=True)
         self.r = client
-
     # -- hot layer -----------------------------------------------------------
 
     def upsert_live(self, key: str, data: Any, ttl_seconds: int) -> None:
