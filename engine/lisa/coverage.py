@@ -37,6 +37,16 @@ def apply_coverage(providers, settings, storage, now):
     plans = []
     routes = feed.calendar_routes(providers.calendar, leagues)
     bulk = providers.named('openfootball')
+    scalper = providers.named('scalper')
+    if scalper is not None:
+        from .scalper.repository import ScalperRepository
+        plans.append({'provider': 'scalper', 'mode': settings.scalper_mode,
+            'leagues': list(scalper.leagues()), 'role': 'stored fixtures, statistics and observed bookmaker quotes',
+            'fixture_max_age_sec': scalper.fixture_max_age, 'quote_max_age_sec': scalper.quote_max_age,
+            'collector': ScalperRepository(storage).health(now=now),
+            'limitations': ['Independent collector must share this relational database.',
+                'Public endpoint availability is not guaranteed.',
+                'Executable quotes require provider updates or verified publisher confirmation.']})
     if bulk is not None:
         plans.append({'provider': bulk.name, 'leagues': [key for key in leagues if key in bulk.leagues()],
             'role': 'goal history and provisional fixture discovery', 'api_key_required': False,

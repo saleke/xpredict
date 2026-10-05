@@ -60,6 +60,8 @@ _SECRET_HINTS: tuple[str, ...] = ("token", "secret", "password", "api_key",
 #: rather than being allowed to break ingestion or the scheduler loop.
 #: (minimum, maximum). Fields absent from this map are only type-checked.
 _BOUNDS: dict[str, tuple[float, float]] = {
+    'scalper_fixture_max_age_sec': (60, 86400),
+    'scalper_quote_max_age_sec': (15, 3600),
     'openfootball_cache_sec': (21600, 604800),
     'the_odds_monthly_limit': (1, 1000000),
     'the_odds_reserve': (0, 1000000),
@@ -72,6 +74,7 @@ _BOUNDS: dict[str, tuple[float, float]] = {
     "board_min_ev": (0, 10),
     "board_min_model_prob": (0, 1),
     "board_min_fair_odds": (1.01, 1000),
+    'board_min_offer_odds': (1.01, 1000),
     "board_kelly_fraction": (0, 1),
     "board_max_stake": (0, 0.1),
     "board_min_accumulator_prob": (0, 1),
@@ -198,6 +201,8 @@ def _coerce(name: str, raw: Any) -> Any:
         except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
             raise OverrideError("product_timezone must be a valid IANA timezone") from exc
     bounds = _BOUNDS.get(name)
+    if name == 'scalper_mode' and value not in ('off', 'supporting', 'only'):
+        raise OverrideError('scalper_mode must be off, supporting or only')
     if bounds is not None:
         low, high = bounds
         # bool fields are ints in Python; comparing them is harmless but the

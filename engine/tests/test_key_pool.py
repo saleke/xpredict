@@ -50,6 +50,7 @@ class TestKeyCollection(unittest.TestCase):
         same property and makes the result identical everywhere.
         """
         import os
+        cfg.load_settings()  # Load operator defaults before isolating this test.
         saved = {k: v for k, v in os.environ.items() if "ODD" in k}
         try:
             for k in list(saved):
@@ -59,8 +60,9 @@ class TestKeyCollection(unittest.TestCase):
             self.assertEqual(settings.odds_api_keys, ("first", "second", "third"))
             self.assertEqual(settings.odds_api_key, "first")
         finally:
-            for k in list(saved):
-                os.environ.pop(k, None)
+            for k in list(os.environ):
+                if "ODD" in k:
+                    os.environ.pop(k, None)
             os.environ.update(saved)
 
 

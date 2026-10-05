@@ -71,6 +71,14 @@ services:
     healthcheck:
       disable: true
 
+  scalper:
+    <<: *app
+    profiles: ["scalper"]
+    entrypoint: ["python3", "-m", "lisa.scalper"]
+    command: ["run"]
+    healthcheck:
+      disable: true
+
 volumes:
   postgres-data:
   application-data:

@@ -7,6 +7,8 @@ from unittest.mock import Mock
 from lisa.history_service import HistoryBackfillService
 from lisa.storage import SqliteStorage
 from lisa.odds_history import OddsHistoryRepository
+from lisa.config import Settings
+from lisa.feed import ProviderSet
 
 
 class SupportingHistoryTests(unittest.TestCase):
@@ -74,6 +76,33 @@ class SupportingHistoryTests(unittest.TestCase):
         self.run_batch()
         self.provider.get_range.assert_called_once_with('soccer_epl', '2026-10-01', '2026-10-03', ttl=86400)
         self.assertEqual(self.run_batch()['state'], 'waiting')
+
+    def test_scalper_only_history_delegates_without_fetching_provider_history(self):
+        providers = ProviderSet(calendar=[], prices=[])
+        service = HistoryBackfillService(self.storage,
+            Settings(scalper_mode='only', board_leagues=('soccer_epl',)), providers=providers)
+        service._collect_seasons = Mock(side_effect=AssertionError('duplicate collection'))
+        service._supporting_history = Mock(side_effect=AssertionError('duplicate collection'))
+        self.storage.set_telemetry('scalper:status', {'state': 'ok', 'last_attempt': self.now.isoformat()})
+        status = service.tick(now=self.now)
+        self.assertEqual(status['state'], 'ok')
+        self.assertEqual(status['delegated_to'], 'scalper')
+        self.assertEqual(status['observations'], 0)
+        self.assertEqual(status['available_results'], 0)
+        self.assertEqual(status['worker']['last_attempt'], self.now.isoformat())
+        self.assertEqual(self.storage.get_telemetry('history:status'), status)
+
+    def test_scalper_only_history_keeps_collector_failures_visible(self):
+        service = HistoryBackfillService(self.storage,
+            Settings(scalper_mode='only', board_leagues=('soccer_epl',)),
+            providers=ProviderSet(calendar=[], prices=[]))
+        self.assertEqual(service.tick(now=self.now)['state'], 'partial')
+        self.storage.set_telemetry('scalper:status', {'state': 'failed', 'error': 'OperationalError'})
+        status = service.tick(now=self.now)
+        self.assertEqual(status['state'], 'failed')
+        self.assertEqual(status['error'], 'OperationalError')
+        self.storage.set_telemetry('scalper:status', {'state': 'degraded'})
+        self.assertEqual(service.tick(now=self.now)['state'], 'degraded')
 
 
 if __name__ == '__main__':

@@ -116,9 +116,11 @@ def test_reset_host_pacing_clears_one_host_only() -> None:
         transport._hosts["b.example"].bucket
 
 
-def test_the_meter_still_meters_a_single_transport() -> None:
+def test_the_meter_still_meters_a_single_transport(monkeypatch) -> None:
     """Sharing must not have broken the pacing itself."""
     clock = {"t": 0.0}
+    monkeypatch.setattr('lisa.providers.base.budget_sleep',
+                        lambda seconds: clock.update(t=clock['t'] + seconds))
     bucket = TokenBucket(rate_per_sec=1.0, burst=1.0,
                          monotonic=lambda: clock["t"])
     first = bucket.acquire()

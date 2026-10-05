@@ -113,6 +113,7 @@ def test_score_grade_pick_spreads():
 def test_settlement_multi_market_ledger_execution(storage, settings):
     from lisa.gate import Execution, Pick
     from lisa.odds import Score, utcnow
+    from lisa.storage import pick_key
 
     class MockClient:
         def get_scores(self, sport, **kwargs):
@@ -165,7 +166,7 @@ def test_settlement_multi_market_ledger_execution(storage, settings):
     assert rep.void == 1  # Under 212.0 push
 
     picks = {r["dedupe_key"]: r for r in storage._picks.values()}
-    assert picks["m-multi::totals::Over"]["result"] == "WIN"
-    assert picks["m-multi::totals::Under"]["result"] == "VOID"
-    assert picks["m-multi::totals::Under"]["state"] == "VOID"
-    assert picks["m-multi::spreads::Knicks"]["result"] == "LOSS"
+    assert picks[pick_key("m-multi", "totals", "Over", 210.5)]["result"] == "WIN"
+    assert picks[pick_key("m-multi", "totals", "Under", 212.0)]["result"] == "VOID"
+    assert picks[pick_key("m-multi", "totals", "Under", 212.0)]["state"] == "VOID"
+    assert picks[pick_key("m-multi", "spreads", "Knicks", 7.5)]["result"] == "LOSS"

@@ -66,7 +66,9 @@ def test_production_server_endpoints(tmp_path):
             assert resp.headers.get("X-Content-Type-Options") == "nosniff"
             assert resp.headers.get("X-Frame-Options") == "DENY"
             data = json.loads(resp.read().decode("utf-8"))
-            assert data["status"] == "healthy"
+            # No generation worker/publication exists in this endpoint fixture.
+            assert data["status"] == "degraded"
+            assert data["daily_service"]["ready"] is False
             assert data["ledger_counts"]["total"] == 3
 
         # 2. /api/verify-status for unknown user

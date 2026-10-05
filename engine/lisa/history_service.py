@@ -185,6 +185,20 @@ class HistoryBackfillService(DailyService):
             leagues = list(settings.board_leagues or feed._default_leagues(settings))
             if not leagues or self.storage.is_system_paused():
                 return {'state': 'paused' if leagues else 'no_leagues'}
+            if settings.scalper_mode == 'only':
+                # The isolated collector owns historical collection in this
+                # mode. Absence of API backfill providers is intentional;
+                # expose its actual state rather than report a failed job or
+                # start a second collector inside the prediction worker.
+                worker = self.storage.get_telemetry('scalper:status') or {}
+                state = worker.get('state', 'not_started')
+                status = {'state': state if state in ('ok', 'partial', 'degraded', 'failed') else 'partial',
+                    'delegated_to': 'scalper', 'observations': 0, 'statistics_requests': 0,
+                    'available_results': len(history.results(leagues, as_of=now)),
+                    'last_attempt': now.isoformat(), 'error': worker.get('error'),
+                    'worker': {'state': state, 'last_attempt': worker.get('last_attempt')}}
+                self.storage.set_telemetry('history:status', status)
+                return status
             pointer = int(self.storage.get_telemetry('history:next_league') or 0) % len(leagues)
             league = leagues[pointer]
             self.storage.set_telemetry('history:next_league', (pointer + 1) % len(leagues))

@@ -143,6 +143,11 @@ class Settings:
     openfootball_cache_sec: int = 86400
     enable_sportsdb: bool = False
     enable_sharpapi: bool = True
+    # off | supporting | only. Scalper collects independently into this
+    # installation's shared relational database; web reads never collect.
+    scalper_mode: str = 'off'
+    scalper_fixture_max_age_sec: int = 900
+    scalper_quote_max_age_sec: int = 300
     provider_timeout_sec: float = 15.0
     #: How far ahead of a fixture's kickoff a book event may start and still be
     #: the same match. See SharpApiOddsProvider.match.
@@ -168,7 +173,8 @@ class Settings:
     # -- Board selection ------------------------------------------------------
     board_min_ev: float = 0.03
     board_min_model_prob: float = 0.12
-    board_min_fair_odds: float = 1.05
+    board_min_fair_odds: float = 1.18
+    board_min_offer_odds: float = 1.18
     board_min_accumulator_prob: float = 0.02
     board_kelly_fraction: float = 0.25
     board_max_stake: float = 0.02
@@ -413,6 +419,9 @@ def load_settings() -> Settings:
         openfootball_cache_sec=_int('LISA_OPENFOOTBALL_CACHE_SEC', 86400),
         enable_sportsdb=_bool("LISA_ENABLE_SPORTSDB", False),
         enable_sharpapi=_bool("LISA_ENABLE_SHARPAPI", True),
+        scalper_mode=os.getenv('LISA_SCALPER_MODE', 'off').strip().lower(),
+        scalper_fixture_max_age_sec=_int('LISA_SCALPER_FIXTURE_MAX_AGE_SEC', 900),
+        scalper_quote_max_age_sec=_int('LISA_SCALPER_QUOTE_MAX_AGE_SEC', 300),
         provider_timeout_sec=_float("LISA_PROVIDER_TIMEOUT_SEC", 15.0),
         sharpapi_max_kickoff_gap_h=_float("LISA_SHARPAPI_MAX_KICKOFF_GAP_H", 6.0),
         sharpapi_max_pages=_int("LISA_SHARPAPI_MAX_PAGES", 6),
@@ -428,7 +437,8 @@ def load_settings() -> Settings:
         # -- board selection
         board_min_ev=_float("LISA_BOARD_MIN_EV", 0.03),
         board_min_model_prob=_float("LISA_BOARD_MIN_MODEL_PROB", 0.12),
-        board_min_fair_odds=_float("LISA_BOARD_MIN_FAIR_ODDS", 1.05),
+        board_min_fair_odds=_float("LISA_BOARD_MIN_FAIR_ODDS", 1.18),
+        board_min_offer_odds=_float('LISA_BOARD_MIN_OFFER_ODDS', 1.18),
         board_min_accumulator_prob=_float("LISA_BOARD_MIN_ACCUM_PROB", 0.02),
         board_kelly_fraction=_float("LISA_BOARD_KELLY_FRACTION", 0.25),
         board_max_stake=_float("LISA_BOARD_MAX_STAKE", 0.02),

@@ -221,3 +221,13 @@ def test_the_single_market_helper_still_answers_one_market() -> None:
 
     assert set(best) == {"Home", "Away"}
     assert best["Home"].odds == 2.05
+
+
+def test_verified_offer_confirmation_prices_an_unchanged_quote() -> None:
+    from dataclasses import replace
+    current = replace(_price('Over', 2.0, market='totals', line=2.5),
+        updated_at=NOW - timedelta(days=1), confirmed_at=NOW, freshness_basis='publisher_snapshot')
+    found = _board()._fixture_opportunities(_fixture(), [current])
+    assert next(o for o in found if o.market == 'totals' and o.line == 2.5 and o.selection == 'Over').priced
+    stale = replace(current, confirmed_at=NOW - timedelta(hours=1))
+    assert not any(o.priced for o in _board()._fixture_opportunities(_fixture(), [stale]))

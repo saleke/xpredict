@@ -128,6 +128,7 @@ class DailyService:
                   'oddspapi_poll_interval_sec', 'oddspapi_bookmakers')
         names += ('odds_api_key', 'the_odds_enabled', 'the_odds_monthly_limit', 'the_odds_reserve',
                   'the_odds_daily_limit', 'the_odds_regions', 'the_odds_markets', 'the_odds_cache_sec')
+        names += ('scalper_mode', 'scalper_fixture_max_age_sec', 'scalper_quote_max_age_sec', 'board_leagues')
         signature = hashlib.sha256(repr(tuple(getattr(settings, k) for k in names)).encode()).hexdigest()
         if self._providers is None or (self._provider_signature and signature != self._provider_signature):
             self._providers = feed.build_providers(settings)

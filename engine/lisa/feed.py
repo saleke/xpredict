@@ -223,6 +223,21 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
     statuses: list[ProviderStatus] = []
     providers: list[Any] = []
 
+    scalper_mode = getattr(settings, 'scalper_mode', 'off')
+    if scalper_mode not in ('off', 'supporting', 'only'):
+        raise ValueError('LISA_SCALPER_MODE must be off, supporting or only')
+    scalper = None
+    if scalper_mode != 'off':
+        from .providers.scalper import ScalperProvider
+        scalper = ScalperProvider(leagues=getattr(settings, 'board_leagues', ()),
+            fixture_max_age=getattr(settings, 'scalper_fixture_max_age_sec', 900),
+            quote_max_age=getattr(settings, 'scalper_quote_max_age_sec', 300))
+        providers.append(scalper)
+        statuses.append(ProviderStatus(name=scalper.name, configured=True, used=False,
+            leagues=scalper.leagues(), tier=scalper.tier.value))
+        if scalper_mode == 'only':
+            return ProviderSet(calendar=providers, statuses=statuses, transport=transport, prices=[scalper])
+
     if getattr(settings, 'enable_openfootball', True):
         from .providers.openfootball import OpenFootballProvider
         bulk = OpenFootballProvider(cache_sec=getattr(settings, 'openfootball_cache_sec', 86400))
@@ -261,6 +276,8 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
                   "supplementary cross-check only, not a model backbone"))
 
     price_sources: list[Any] = []
+    if scalper is not None:
+        price_sources.append(scalper)
     if getattr(settings, 'the_odds_enabled', False) and getattr(settings, 'odds_api_key', ''):
         from .providers.the_odds_api import TheOddsApiProvider
         odds = TheOddsApiProvider(settings.odds_api_key, monthly_limit=settings.the_odds_monthly_limit,
@@ -324,7 +341,7 @@ def _parse_iso(value: str) -> Optional[datetime]:
 def calendar_routes(providers, leagues):
     """One verified calendar per league, with existing sources as fallbacks."""
     by_name = {p.name: p for p in providers if p.name != 'openfootball'}
-    priority = ('openligadb', 'football_data', 'allsports', 'api_football', 'sportsdb')
+    priority = ('scalper', 'openligadb', 'football_data', 'allsports', 'api_football', 'sportsdb')
     ordered = [name for name in priority if name in by_name]
     ordered += sorted(set(by_name) - set(ordered))
     return {league: [name for name in ordered if league in by_name[name].leagues()]
@@ -406,7 +423,13 @@ def fetch_calendar(providers: Sequence[Any], leagues: Sequence[str],
                         if getattr(result, 'warnings', ()):
                             status.degraded = True
                             status.error = (status.error + '; ' + '; '.join(result.warnings)).strip('; ')
-                    if source != 'openfootball' and result.fixtures:
+                    usable = bool(result.fixtures)
+                    if source == 'scalper':
+                        usable = any(not r.get('discovery_only') and r.get('kickoff_time_known') is not False and
+                            ((r.get('settlement_eligible') is not False and
+                              (r.get('completed') or r.get('status') == 'CANCELED')) if purpose == 'settlement'
+                             else r.get('status') in ('SCHEDULED', 'LIVE', 'HT')) for r in result.fixtures)
+                    if source != 'openfootball' and usable:
                         unresolved.discard(league)
     return results
 
@@ -478,13 +501,24 @@ def run_feed(settings: Any, *, providers: Optional[ProviderSet] = None,
         float(getattr(settings, "board_window_hours", 48.0))
     report = FeedReport(began=now, window_hours=window)
     began_clock = time.perf_counter()
+    owned_store = None
     def finish():
         report.finished = datetime.now(timezone.utc)
         report.timings_ms['total'] = (time.perf_counter()-began_clock)*1000
+        if owned_store is not None:
+            owned_store.close()
         return report
 
     try:
         provider_set = providers or build_providers(settings)
+        if getattr(settings, 'scalper_mode', 'off') != 'off' and history is None:
+            from .cli import _make_storage
+            from .match_history import HistoryRepository
+            owned_store = _make_storage(settings)
+            history = HistoryRepository(owned_store)
+        if history is not None:
+            for source in (*provider_set.calendar, *provider_set.prices):
+                source.storage = history.storage
     except Exception as exc:
         report.errors.append(f"could not build providers: {exc}")
         return finish()
@@ -727,8 +761,10 @@ def fetch_prices(provider_set: ProviderSet, fixtures: Sequence[Fixture],
                 'observed_at': observed_at, 'odds': q.odds, 'market': q.market,
                 'selection': q.selection, 'line': q.line, 'period': 'regulation',
                 'provider_reported_update_at': q.updated_at.isoformat() if q.updated_at else None,
-                'detail': 'Snapshot seen by worker; retrieval time is not bookmaker freshness.'
-            } for q in snapshot.quotes])
+                'confirmed_at': q.confirmed_at.isoformat() if q.confirmed_at else None,
+                'freshness_basis': q.freshness_basis,
+                'detail': 'Publisher price-change and offer-confirmation clocks are separate; retrieval is not freshness.'
+            } for q in snapshot.quotes if q.freshness_basis != 'publisher_snapshot'])
 
         try:
             outcome = source.match(snapshot.quotes, fixtures,
@@ -779,7 +815,8 @@ def _collect_provider_errors(report: FeedReport) -> None:
 def build_board(model: DixonColesModel, settings: Any) -> OpportunityBoard:
     """One configuration seam, shared by narrow and fallback windows."""
     fields = {"min_ev": "board_min_ev", "min_model_prob": "board_min_model_prob",
-        "min_fair_odds": "board_min_fair_odds", "min_accumulator_prob": "board_min_accumulator_prob",
+        "min_fair_odds": "board_min_fair_odds", "min_offer_odds": "board_min_offer_odds",
+        "min_accumulator_prob": "board_min_accumulator_prob",
         "kelly_fraction": "board_kelly_fraction", "max_stake": "board_max_stake",
         "max_total_line": "board_max_total_line", "accumulator_sizes": "board_accumulator_sizes",
         "volume_target": "board_volume_target"}
@@ -798,11 +835,16 @@ def _default_leagues(settings: Any = None) -> list[str]:
     """
     from .providers.api_football import COMPETITIONS
     from .providers.openfootball import FILES
+    if getattr(settings, 'scalper_mode', 'off') == 'only':
+        from .scalper.sources import ESPN_LEAGUES
+        return list(ESPN_LEAGUES)
+    from .scalper.sources import ESPN_LEAGUES
     return [key for key, spec in LEAGUES.items()
             if (spec.oldb and getattr(settings, "enable_openligadb", True))
             or (spec.fdo and getattr(settings, "football_data_token", ""))
             or (key in FILES and getattr(settings, 'enable_openfootball', True))
-            or (key in COMPETITIONS and getattr(settings, 'api_football_key', ''))]
+            or (key in COMPETITIONS and getattr(settings, 'api_football_key', ''))
+            or (key in ESPN_LEAGUES and getattr(settings, 'scalper_mode', 'off') == 'supporting')]
 
 
 __all__ = [

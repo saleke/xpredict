@@ -80,7 +80,7 @@ MIN_MODEL_PROB: float = 0.12
 Below ~12% no staking system can be shown to work and the numbers are inside
 the fit's error bars, so a "pick" there is a coin flip dressed as analysis."""
 
-MIN_FAIR_ODDS: float = 1.05
+MIN_FAIR_ODDS: float = 1.18
 """Smallest fair price worth publishing as an opportunity.
 
 The economic criterion, not a taste one: a selection priced at 1.00 is a bet
@@ -180,6 +180,8 @@ class MarketPrice:
     market: str = "h2h"
     line: Optional[float] = None
     updated_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    freshness_basis: str = "provider_update"
 
     @property
     def stake_name(self) -> str:
@@ -228,6 +230,9 @@ class Opportunity:
     basis: str = "model_only"
     reason: str = ""
     payout_probabilities: Optional[dict[str, float]] = None
+    price_updated_at: Optional[datetime] = None
+    price_confirmed_at: Optional[datetime] = None
+    price_freshness_basis: Optional[str] = None
 
     @property
     def outcome_key(self) -> str:
@@ -249,6 +254,9 @@ class Opportunity:
             "stake_fraction": round(self.stake_fraction, 5),
             "priced": self.priced, "basis": self.basis, "reason": self.reason,
             "payout_probabilities": self.payout_probabilities,
+            "price_updated_at": self.price_updated_at.isoformat() if self.price_updated_at else None,
+            "price_confirmed_at": self.price_confirmed_at.isoformat() if self.price_confirmed_at else None,
+            "price_freshness_basis": self.price_freshness_basis,
         }
 
 
@@ -368,6 +376,7 @@ class OpportunityBoard:
     def __init__(self, model: DixonColesModel, *, min_ev: float = MIN_EV,
                  min_model_prob: float = MIN_MODEL_PROB,
                  min_fair_odds: float = MIN_FAIR_ODDS,
+                 min_offer_odds: float = 1.18,
                  min_accumulator_prob: float = MIN_ACCUMULATOR_PROB,
                  kelly_fraction: float = KELLY_FRACTION,
                  max_stake: float = MAX_STAKE_FRACTION,
@@ -379,6 +388,7 @@ class OpportunityBoard:
         self.min_ev = min_ev
         self.min_model_prob = min_model_prob
         self.min_fair_odds = min_fair_odds
+        self.min_offer_odds = min_offer_odds
         self.min_accumulator_prob = min_accumulator_prob
         self.kelly_fraction = kelly_fraction
         self.max_stake = max_stake
@@ -480,8 +490,9 @@ class OpportunityBoard:
         # left every totals, BTTS and correct-score row unpriced no matter what
         # the books were actually offering.
         now = self._as_of or datetime.now(timezone.utc)
-        usable = [q for q in quotes if q.updated_at is not None and q.updated_at.tzinfo is not None
-                  and -60 <= (now - q.updated_at).total_seconds() <= self.max_quote_age_sec]
+        usable = [q for q in quotes if (seen := q.confirmed_at or q.updated_at) is not None
+                  and seen.tzinfo is not None
+                  and -60 <= (now - seen).total_seconds() <= self.max_quote_age_sec]
         best = self._quote_index(usable)
 
         def quote_for(market: str, side: str,
@@ -640,7 +651,8 @@ class OpportunityBoard:
         conservative_ev = conservative_payout.ev(odds) if payout else conservative_p * odds - 1
         stake = (conservative_payout.kelly(odds, fraction=self.kelly_fraction, cap=self.max_stake)
                  if payout else self._kelly(conservative_p, odds)) if (
-                     margin is not None and conservative_ev >= self.min_ev and enough_history) else 0.0
+                     margin is not None and conservative_ev >= self.min_ev and enough_history
+                     and odds >= self.min_offer_odds and fair >= self.min_fair_odds) else 0.0
         return Opportunity(
             match_id=fixture.match_id, sport_key=fixture.sport_key,
             kickoff=fixture.kickoff, home=fixture.home, away=fixture.away,
@@ -650,6 +662,8 @@ class OpportunityBoard:
             best_source=quote.source, ev=ev, stake_fraction=stake, priced=True,
             basis="model_vs_market",
             payout_probabilities=payout_probabilities,
+            price_updated_at=quote.updated_at, price_confirmed_at=quote.confirmed_at,
+            price_freshness_basis=quote.freshness_basis,
             reason="Awaiting market/league validation" if margin is None else "" if conservative_ev > self.min_ev else
                    f"edge {ev:+.1%} below the {self.min_ev:.0%} threshold")
 
@@ -676,7 +690,8 @@ class OpportunityBoard:
         """
         by_fixture: dict[str, list[Opportunity]] = {}
         for o in candidates:
-            if o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds:
+            if (o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds
+                    or (o.priced and (o.best_odds is None or o.best_odds < self.min_offer_odds))):
                 continue
             by_fixture.setdefault(o.match_id, []).append(o)
 
@@ -699,7 +714,8 @@ class OpportunityBoard:
         eligible = [o for o in candidates
                     if o.priced and o.ev is not None and o.ev >= self.min_ev
                     and o.p_model >= self.min_model_prob
-                    and o.fair_odds >= self.min_fair_odds]
+                    and o.fair_odds >= self.min_fair_odds and o.best_odds is not None
+                    and o.best_odds >= self.min_offer_odds]
         eligible.sort(key=lambda o: (o.kickoff, -o.p_model, -(o.ev or 0.0),
                                     _opportunity_order(o)))
         return tuple(eligible[:MAX_EARNING_LADDER])
@@ -722,7 +738,8 @@ class OpportunityBoard:
         for o in candidates:
             if o.market not in ("totals", "btts", "correct_score", "double_chance", "home_team_totals", "away_team_totals", "draw_no_bet", "asian_handicap", "corners"):
                 continue
-            if o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds:
+            if (o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds
+                    or (o.priced and (o.best_odds is None or o.best_odds < self.min_offer_odds))):
                 continue
             if (o.match_id, o.market, o.line, o.selection) in excluded:
                 continue

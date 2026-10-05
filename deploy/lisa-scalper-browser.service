@@ -1,0 +1,27 @@
+[Unit]
+Description=LISA Scalper public bookmaker browser worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=walter
+WorkingDirectory=/home/walter/xpredict
+EnvironmentFile=-/home/walter/xpredict/.env
+Environment=PYTHONPATH=/home/walter/xpredict/engine
+Environment=LISA_STORAGE=postgres
+ExecStart=/home/walter/xpredict/.venv/bin/python -m lisa.scalper browser-run
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=75
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/walter/xpredict/data
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lisa-scalper-browser
+
+[Install]
+WantedBy=multi-user.target

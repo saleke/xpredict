@@ -224,7 +224,10 @@ class FreeFileTests(unittest.TestCase):
         service = DailyService(self.store, settings, providers=providers)
         generated = service.tick(now=NOW)
         self.assertGreater(generated['predictions_added'], 0)
-        snapshot = service.read()
+        with patch('lisa.daily_service.datetime') as clock:
+            clock.now.return_value = NOW
+            clock.fromisoformat.side_effect = datetime.fromisoformat
+            snapshot = service.read()
         self.assertEqual(snapshot['forecast']['count'], 1)
         self.assertTrue(snapshot['board']['micro_bets'])
         self.assertTrue(all(r['match_id'] == upcoming['match_id'] and r['stake_fraction'] == 0

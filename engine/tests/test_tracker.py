@@ -47,8 +47,8 @@ def test_settlement_recording(tmp_path) -> None:
          "market": "h2h", "outcome_name": "A", "p_true": 0.80, "result": "WIN", "state": "SETTLED"},
         {"dedupe_key": "m2::h2h::B", "match_id": "m2", "sport_key": "basketball_nba",
          "market": "h2h", "outcome_name": "B", "p_true": 0.75, "result": "LOSS", "state": "SETTLED"},
-        {"dedupe_key": "m3::totals::Over", "match_id": "m3", "sport_key": "basketball_nba",
-         "market": "totals", "outcome_name": "Over", "p_true": 0.82, "line": 220.0, "result": "VOID", "state": "VOID"},
+        {"dedupe_key": "m3::totals::Over::line=220.5", "match_id": "m3", "sport_key": "basketball_nba",
+         "market": "totals", "outcome_name": "Over", "p_true": 0.82, "line": 220.5, "result": "VOID", "state": "VOID"},
     ]
     track.record_settlement(
         SettlementReport(won=1, lost=1, void=1, settled=2, pending=1, settled_picks=settled_items))

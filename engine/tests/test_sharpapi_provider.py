@@ -430,7 +430,8 @@ def test_a_fetch_failure_is_reported_rather_than_raised() -> None:
 
     snapshot = provider.fetch(sport_keys=["soccer_epl"], window_hours=48, now=NOW)
 
-    assert snapshot.error and "connection reset" in snapshot.error
+    assert snapshot.error and "RuntimeError" in snapshot.error
+    assert "connection reset" not in snapshot.error  # raw exceptions may contain credentials
 
 
 def test_no_key_is_an_explicit_state_not_a_crash() -> None:

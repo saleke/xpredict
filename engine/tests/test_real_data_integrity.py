@@ -133,8 +133,12 @@ class TestNoFabricatedCodesInCode(unittest.TestCase):
         # cleanText() strips formatting but does not encode markup, so it must
         # not be interpolated into innerHTML on its own.
         self.assertNotRegex(app, r"\$\{cleanText\(")
+        # Building an in-memory identity is safe; its eventual HTML sink must
+        # still escape the complete key. Do not mistake that string for HTML.
+        self.assertIn('id="forecast-${esc(key)}"', app)
+        html_source = re.sub(r'\s*const key = p\.dedupe_key \|\| `[^\n]+`;\n', '\n', app)
         for field in ("home_team", "away_team", "outcome_name", "best_book", "match_id"):
-            self.assertNotRegex(app, r"\$\{[a-zA-Z_$][\w$]*\.%s\}" % field)
+            self.assertNotRegex(html_source, r"\$\{[a-zA-Z_$][\w$]*\.%s\}" % field)
 
     def test_teaser_has_no_placeholder_numbers(self):
         app = (WEB / "js" / "app.js").read_text()

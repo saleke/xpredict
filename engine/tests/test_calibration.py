@@ -160,8 +160,8 @@ def test_evaluate_by_market() -> None:
     records = [
         {"market": "h2h", "p_true": 0.80, "result": "WIN"},
         {"market": "h2h", "p_true": 0.80, "result": "WIN"},
-        {"market": "totals", "p_true": 0.75, "result": "LOSS"},
-        {"market": "spreads", "p_true": 0.85, "result": "VOID"},
+        {"market": "totals", "line": 2.5, "p_true": 0.75, "result": "LOSS"},
+        {"market": "spreads", "line": -0.5, "p_true": 0.85, "result": "VOID"},
     ]
     by_market = evaluate_by_market(records)
 

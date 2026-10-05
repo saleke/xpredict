@@ -184,12 +184,15 @@ def pick(index, *, hours=2, probability=.6, market='h2h', **changes):
         market=market, selection='Home' if market == 'h2h' else 'Yes',
         p_model=probability, fair_odds=1/probability)
     values.update(changes)
+    if values.get('priced'):
+        values.setdefault('best_odds', 1.3)
     return Opportunity(**values)
 
 
 class ChronologicalPickTests(unittest.TestCase):
     def setUp(self):
-        self.board = OpportunityBoard(Mock())
+        # These checks isolate ordering from the configurable odds floor.
+        self.board = OpportunityBoard(Mock(), min_fair_odds=1.05)
 
     def test_winning_probability_is_secondary_to_kickoff_and_strongest_side_is_kept(self):
         candidates = [pick('later', hours=100, probability=.9),

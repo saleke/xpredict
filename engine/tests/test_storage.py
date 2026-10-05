@@ -108,7 +108,7 @@ def test_pick_storage_preserves_line():
         state="TRIGGER_ALERT", created_at=utcnow(), line=220.5,
     )
     assert s.insert_pick(p) is True
-    key = pick_key("m-tot", "totals", "Over")
+    key = pick_key("m-tot", "totals", "Over", 220.5)
     saved = s._picks[key]
     assert saved["line"] == 220.5
 

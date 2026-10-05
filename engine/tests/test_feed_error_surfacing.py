@@ -36,6 +36,9 @@ class _FailingProvider:
     def available_leagues(self):
         return []
 
+    def leagues(self):
+        return ('soccer_germany_bundesliga',)
+
     def get_fixtures(self, sport_key):
         raise OSError(101, "Network is unreachable")
 

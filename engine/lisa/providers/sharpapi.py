@@ -127,6 +127,10 @@ class SharpQuote:
     away: str = ""
     updated_at: Optional[datetime] = None
     sport_key: str = ""
+    # A verified current offer may be unchanged for hours. Keep confirmation
+    # separate from the publisher's last price-change clock.
+    confirmed_at: Optional[datetime] = None
+    freshness_basis: str = "provider_update"
 
     @property
     def identity(self) -> tuple[str, str, Optional[float]]:

@@ -4,6 +4,14 @@
 
 > Free-source integration (2026-10-04): Openfootball CC0 files now supply bounded, cached goal history for eight leagues through the existing jobs and database. Verified calendars use one primary source with fallbacks; discovery files cannot publish unconfirmed kickoffs or settle predictions. See [data-source architecture and validation](docs/LEAN_DATA_STACK.md).
 
+> Scalper (2026-10-05): an independent persistent collector and native provider
+> bridge now support sole-source or supporting operation. See
+> [setup, contracts and actual coverage](scalper/README.md) and
+> [research/design decisions](scalper/DESIGN.md). The optional
+> [browser-feed worker and blueprint evaluation](scalper/BLUEPRINT_REVIEW.md)
+> now have a verified SportyBet/Pinnacle prematch price path. Public-source access and
+> executable bookmaker prices remain distinct. Default selection odds floor: 1.18.
+
 # LISA — Quantitative Sports Prediction Refinery & Autonomous Engine
 
 > **Daily football forecasts, model value rankings, recorded results, a web dashboard, and optional Telegram access.**

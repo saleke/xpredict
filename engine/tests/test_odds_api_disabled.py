@@ -49,6 +49,9 @@ def _disabling_env(monkeypatch):
     credentials from every later test in the run.
     """
     cfg.load_settings()
+    for name in ('THE_ODDS_API_KEYS', 'LISA_ODDS_API_KEY', 'THE_ODD_API_KEY',
+                 *(f'THE_ODDS_API_KEY_{i}' for i in range(2, 12))):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("THE_ODDS_API_KEY", "stale-key-1")
     monkeypatch.setenv("THE_ODDS_API_KEY_2", "stale-key-2")
     monkeypatch.delenv("LISA_ENABLE_ODDS_API", raising=False)
