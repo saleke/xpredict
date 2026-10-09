@@ -292,12 +292,38 @@ function render(payload, stateExtra = {}) {
     status: getEl('mb-status').innerHTML,
     ladders: getEl('mb-ladders').innerHTML,
     accas: getEl('mb-accumulators').innerHTML,
+    micro: getEl('micro-markets').innerHTML,
+    alpha: getEl('alpha-poisson-tbody').innerHTML,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+check('curated, micro and premium research tables show the nearest dates first', () => {
+  const early=unpricedOpportunity({home:'Earliest Fixture',kickoff:'2026-10-09T18:00:00Z',p_model:.6});
+  const later=unpricedOpportunity({home:'Later Fixture',kickoff:'2026-10-10T12:00:00Z',p_model:.9});
+  const rows=[later,early];
+  const html=render(boardPayload({winning:rows,earning:rows,micro_bets:rows,research:rows,
+    research_access:{available:true,candidate_count:2,evaluated_candidates:2}}));
+  for (const name of ['ladders','micro','alpha']) {
+    assert(html[name].includes('Earliest Fixture'), `${name} did not render the match`);
+    assert(html[name].indexOf('Earliest Fixture')<html[name].indexOf('Later Fixture'), `${name} hid the earliest match`);
+  }
+});
+
+check('accumulators and their legs follow kickoff before joint probability', () => {
+  const leg=(home,kickoff)=>unpricedOpportunity({home,kickoff});
+  const early=accumulator({description:'Earlier Combination',p_adjusted:.6,legs:[
+    leg('Second Leg','2026-10-10T12:00:00Z'),leg('First Leg','2026-10-09T18:00:00Z')]});
+  const later=accumulator({description:'Later Combination',p_adjusted:.8,legs:[
+    leg('Last Leg','2026-10-11T12:00:00Z'),leg('Third Leg','2026-10-10T18:00:00Z')]});
+  const {accas}=render(boardPayload({accumulators:[later,early]}));
+  assert(accas.indexOf('Earlier Combination')<accas.indexOf('Later Combination'), 'stronger later combination hid an earlier one');
+  assert(accas.indexOf('First Leg')<accas.indexOf('Second Leg'), 'earlier combination legs were out of order');
+  assert(accas.indexOf('Third Leg')<accas.indexOf('Last Leg'), 'later combination legs were out of order');
+});
 
 check('an unpriced opportunity never renders an edge of zero', () => {
   const { ladders } = render(boardPayload());
@@ -345,8 +371,8 @@ check('the empty earning ladder explains why it is empty', () => {
     'an empty earning ladder must state that it is empty by design');
   // And must NOT be backfilled with the unpriced winning row.
   const earningBlock = ladders.split('Earning ladder')[1] || '';
-  const microBlock = ladders.split('Derived micro markets')[1] || '';
-  assert(!/Dortmund/.test(earningBlock.split('micro markets')[0] || ''),
+  const microBlock = ladders.split('Qualifying market alternatives')[1] || '';
+  assert(!/Dortmund/.test(earningBlock.split('Qualifying market alternatives')[0] || ''),
     'an unpriced row leaked into the earning ladder');
   assert(/Dortmund/.test(microBlock), 'micro markets should still list the row');
 });
@@ -364,6 +390,29 @@ check('prices read but unmatched is reported as a matching failure, not as no pr
     'an unmatched price feed must be reported as a matching failure');
   assert(!/Empty by design/.test(ladders),
     '"no price observed" is false when 36 prices were read');
+});
+
+check('expired published prices are not reported as failed event matching', () => {
+  const { status, ladders } = render(boardPayload({
+    prices: { quotes: 36, rows: 36 },
+    price_match: { matched_fixtures: 2, matched_events: 2 },
+    price_readiness: { state: 'expired', scope: 'published_selections', fixtures_priced: 0,
+      fresh_earning_selections: 0, collection_state: 'ok' },
+  }));
+  assert(/Published prices have expired/.test(status));
+  assert(/Published prices have expired/.test(ladders));
+  assert(!/none could be attached/.test(ladders));
+});
+
+check('collection failure is distinguished from an expired publication', () => {
+  const { status, ladders } = render(boardPayload({
+    prices: { quotes: 36, rows: 36 },
+    price_readiness: { state: 'unavailable', scope: 'published_selections', fixtures_priced: 0,
+      fresh_earning_selections: 0, collection_state: 'unavailable' },
+  }));
+  assert(/Price collection needs attention/.test(status));
+  assert(/Current offers could not be verified/.test(ladders));
+  assert(!/none could be attached/.test(ladders));
 });
 
 check('prices read and priced but no edge is reported as no edge, not as no price', () => {

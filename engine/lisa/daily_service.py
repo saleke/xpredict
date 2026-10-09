@@ -7,6 +7,7 @@ lease prevents two processes sharing a ledger from spending provider quota twice
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import logging
 import time
@@ -67,13 +68,14 @@ class DailyService:
         from .config import paper_settings
         return paper_settings(self._settings() if callable(self._settings) else self._settings)
 
-    def read(self) -> dict | None:
+    def read(self, *, now: datetime | None = None) -> dict | None:
         value = self.storage.get_telemetry(BOARD_KEY)
         if not isinstance(value, dict):
             return None
+        value = copy.deepcopy(value)
         # A provider outage must not advertise yesterday's selections as upcoming.
-        now = datetime.now(timezone.utc)
-        for key in ("winning", "earning", "micro_bets"):
+        now = now or datetime.now(timezone.utc)
+        for key in ("winning", "earning", "micro_bets", "research"):
             value["board"][key] = [r for r in value["board"].get(key, [])
                                    if datetime.fromisoformat(r["kickoff"]) > now]
         value["board"]["accumulators"] = [a for a in value["board"].get("accumulators", [])
@@ -82,12 +84,16 @@ class DailyService:
         forecast["matches"] = [r for r in forecast.get("matches", [])
                                if datetime.fromisoformat(r["commence_at"]) > now]
         forecast["count"] = len(forecast["matches"])
+        from .price_readiness import project_prices
+        value['price_readiness'] = project_prices(value, self.storage, self.settings, now)
+        from .pick_feed import publication_feed
+        _, value['pick_feed'] = publication_feed(value, self.settings, now=now)
         return value
 
     def status(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(timezone.utc)
         status = self.storage.get_telemetry(STATUS_KEY) or {}
-        board = self.read()
+        board = self.read(now=now)
         age = None
         if board:
             age = max(0.0, (now - datetime.fromisoformat(board["generated_at"])).total_seconds())
@@ -103,7 +109,9 @@ class DailyService:
             healthy = healthy and settlement_ready
         return dict(status, settlement_ready=settlement_ready, state="paused" if paused else (
             "ready" if healthy else "stale" if age is not None else "starting"),
-            age_sec=age, stale_after_sec=stale_after, ready=healthy)
+            age_sec=age, stale_after_sec=stale_after, ready=healthy,
+            price_ready=bool(board and board['price_readiness']['ready']),
+            price_readiness=board['price_readiness'] if board else None)
 
     def _claim(self, now: datetime) -> bool:
         with self.storage._tx() as conn:
@@ -224,7 +232,7 @@ class DailyService:
         payload['paper_mode'] = settings.paper_mode
         if settings.paper_mode:
             payload['board']['unproven'] = True
-            for collection in ('winning', 'earning', 'micro_bets'):
+            for collection in ('winning', 'earning', 'micro_bets', 'research'):
                 for row in payload['board'].get(collection, []):
                     row['stake_fraction'] = 0.0
             for acca in payload['board'].get('accumulators', []):
@@ -232,7 +240,7 @@ class DailyService:
                 for row in acca.get('legs', []):
                     row['stake_fraction'] = 0.0
         # The API carries only upcoming fixtures. A long fetch may have crossed kickoff.
-        for name in ("winning", "earning", "micro_bets"):
+        for name in ("winning", "earning", "micro_bets", "research"):
             payload["board"][name] = [r for r in payload["board"][name]
                 if datetime.fromisoformat(r["kickoff"]) > now]
         payload["board"]["accumulators"] = [a for a in payload["board"]["accumulators"]
@@ -240,11 +248,26 @@ class DailyService:
         payload["forecast"]["matches"] = [r for r in payload.get("forecast", {}).get("matches", [])
             if datetime.fromisoformat(r["commence_at"]) > now]
         payload["forecast"]["count"] = len(payload["forecast"]["matches"])
+        from .price_readiness import project_prices
+        payload['price_readiness'] = project_prices(payload, self.storage, settings, now)
+        from .pick_feed import publication_feed
+        headlines, payload['pick_feed'] = publication_feed(payload, settings, now=now)
+        headline_keys = {row['dedupe_key'] for row in headlines}
+        published_prices = {}
+        for name in ('winning', 'micro_bets', 'earning', 'research'):
+            for row in payload['board'].get(name, []):
+                published_prices[pick_key(row['match_id'], row['market'], row['selection'], row.get('line'))] = row
         opportunities = {}
         for name in ("winning", "micro_bets", "earning"):
             for o in getattr(report.board, name):
                 if o.kickoff > now:
                     opportunities[pick_key(o.match_id, o.market, o.selection, o.line)] = o
+        # A headline can come from beyond a ladder's cap. Journal that selection
+        # as well, without turning every background outcome into a public pick.
+        for o in report.board.research:
+            key = pick_key(o.match_id, o.market, o.selection, o.line)
+            if o.kickoff > now and key in headline_keys:
+                opportunities[key] = o
         columns = ("dedupe_key", "match_id", "sport_key", "market", "outcome_name", "line",
             "home_team", "away_team", "commence_time", "p_true", "fair_odds", "n_books",
             "stdev", "cv", "state", "best_book", "best_odds", "best_ev", "clv",
@@ -257,14 +280,16 @@ class DailyService:
             if not lease or lease["owner"] != self.owner or lease["expires"] <= now.timestamp():
                 raise RuntimeError("publication lease expired; discarding uncommitted cycle")
             for key, o in opportunities.items():
-                recommended = bool(not settings.paper_mode and not report.board.unproven and o.priced
-                                   and o.ev is not None and o.ev >= settings.board_min_ev
-                                   and o.stake_fraction > 0)
+                row = published_prices.get(key) or {}
+                priced = bool(row.get('priced'))
+                recommended = bool(not settings.paper_mode and not report.board.unproven and priced
+                                   and row.get('ev') is not None and row['ev'] >= settings.board_min_ev
+                                   and row.get('stake_fraction', 0) > 0)
                 values = (key, o.match_id, o.sport_key, o.market, o.selection, o.line,
                     o.home, o.away, o.kickoff.isoformat(), o.p_model, o.fair_odds,
-                    1 if o.priced else 0, None, None, "PENDING_SETTLEMENT", o.best_book,
-                    o.best_odds, o.ev, None, o.stake_fraction * 100 if recommended else 0,
-                    1 if recommended else 0, now.isoformat(), MODEL_VERSION, o.basis,
+                    1 if priced else 0, None, None, "PENDING_SETTLEMENT", row.get('best_book'),
+                    row.get('best_odds'), row.get('ev'), None, row.get('stake_fraction', 0) * 100 if recommended else 0,
+                    1 if recommended else 0, now.isoformat(), MODEL_VERSION, row.get('basis', 'model_only'),
                     int(recommended), MODEL_VERSION)
                 inserted += conn.execute(
                     f"INSERT INTO picks ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) ON CONFLICT(dedupe_key) DO NOTHING",

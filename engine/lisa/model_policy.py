@@ -63,4 +63,11 @@ class EvidenceGate:
 def configuration_hash(settings):
     import hashlib
     values = {k: getattr(settings, k) for k in ('model_base_mu', 'model_home_adv', 'model_shrinkage', 'model_xi')}
+    # Approval of the previous fair-odds filter does not validate newly eligible
+    # high-probability selections or changed price/staking policies.
+    values['selection_policy_version'] = 'diverse-pick-feed-v1'
+    for key in ('board_min_offer_odds', 'board_min_model_prob', 'board_min_ev',
+                'board_kelly_fraction', 'board_max_stake', 'pick_feed_min_probability', 'pick_feed_limit',
+                'board_max_total_line', 'board_max_team_total_line', 'pick_feed_min_accumulator_probability'):
+        values[key] = getattr(settings, key, None)
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()

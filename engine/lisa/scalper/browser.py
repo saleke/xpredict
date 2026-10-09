@@ -12,6 +12,7 @@ import random
 import shutil
 from urllib.parse import urlsplit
 import uuid
+from time import perf_counter
 
 from ..odds_history import OddsHistoryRepository
 from ..providers.base import ParseError
@@ -213,7 +214,9 @@ class BrowserService:
                        if r['sport_key'] in self.leagues and r['source_event_id'] not in fixture_ids]
             batch = replace(batch, fixtures=batch.fixtures + tuple(missing), replace_books=batch.replace_books +
                             tuple((r['source_event_id'], source.book) for r in missing))
+        merge_started = perf_counter()
         self.repository.accept(batch, resource=resource, payload=capture, now=now, ttl=0)
+        merge_ms = round((perf_counter() - merge_started) * 1000, 2)
         fresh = [q for q in batch.quotes if q['active'] and bridge_contract(q) and q.get('confirmed_at')
                  and -60 <= (now - timestamp(q['confirmed_at'])).total_seconds() <= self.quote_max_age]
         old_quotes = {(q['event_id'], q['market'], q['selection'], q['line'], q['period']): q for q in old.quotes} if old else {}
@@ -239,7 +242,8 @@ class BrowserService:
             conn.execute('DELETE FROM odds_observations WHERE source=? AND observed_at<?',
                          (source.name, datetime.fromtimestamp(now.timestamp() - 30 * 86400, timezone.utc).isoformat()))
         return dict(source=source.name, state='updated', fixtures=len(fixture_ids), quotes=len(batch.quotes),
-                    fresh_supported_quotes=len(fresh), history_added=history, warnings=list(batch.warnings))
+                    fresh_supported_quotes=len(fresh), history_added=history, merge_ms=merge_ms,
+                    warnings=list(batch.warnings))
 
     async def _collect(self, source):
         now = self.clock()

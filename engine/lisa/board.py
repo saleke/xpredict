@@ -56,10 +56,11 @@ import itertools
 import logging
 import math
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from .dixon_coles import DixonColesModel, SUFFICIENT_GAMES
+from .market_policy import prominent_goal_line
 
 logger = logging.getLogger("lisa.board")
 
@@ -81,14 +82,10 @@ Below ~12% no staking system can be shown to work and the numbers are inside
 the fit's error bars, so a "pick" there is a coin flip dressed as analysis."""
 
 MIN_FAIR_ODDS: float = 1.18
-"""Smallest fair price worth publishing as an opportunity.
+"""Legacy configuration default, retained for compatibility.
 
-The economic criterion, not a taste one: a selection priced at 1.00 is a bet
-that cannot clear any bookmaker's margin, and one at 1.02 needs a model accurate
-to within a percentage point to profit. Filtering on *fair* price rather than on
-a probability threshold is what removes the degenerate rows -- "Under 6.5" at
-p=0.999 is mathematically real and practically unplayable, and it would
-otherwise fill the entire winning ladder with certainty that pays nothing.
+Opportunity eligibility uses actual offered odds. Fair odds describe the model
+and must not exclude high-probability selections at an acceptable offered price.
 """
 
 MAX_TOTAL_LINE: float = 5.5
@@ -182,6 +179,9 @@ class MarketPrice:
     updated_at: Optional[datetime] = None
     confirmed_at: Optional[datetime] = None
     freshness_basis: str = "provider_update"
+    valid_until: Optional[datetime] = None
+    source_event_id: Optional[str] = None
+    source_quote_identity: Optional[str] = None
 
     @property
     def stake_name(self) -> str:
@@ -233,6 +233,10 @@ class Opportunity:
     price_updated_at: Optional[datetime] = None
     price_confirmed_at: Optional[datetime] = None
     price_freshness_basis: Optional[str] = None
+    price_valid_until: Optional[datetime] = None
+    price_book_key: Optional[str] = None
+    price_source_event_id: Optional[str] = None
+    price_quote_identity: Optional[str] = None
 
     @property
     def outcome_key(self) -> str:
@@ -257,6 +261,10 @@ class Opportunity:
             "price_updated_at": self.price_updated_at.isoformat() if self.price_updated_at else None,
             "price_confirmed_at": self.price_confirmed_at.isoformat() if self.price_confirmed_at else None,
             "price_freshness_basis": self.price_freshness_basis,
+            "price_valid_until": self.price_valid_until.isoformat() if self.price_valid_until else None,
+            "price_book_key": self.price_book_key,
+            "price_source_event_id": self.price_source_event_id,
+            "price_quote_identity": self.price_quote_identity,
         }
 
 
@@ -349,6 +357,8 @@ class Board:
     accumulators: tuple[Accumulator, ...] = ()
     coverage: Optional[BoardCoverage] = None
     notes: list[str] = field(default_factory=list)
+    # Retain research before display caps; it is not a recommendation feed.
+    research: tuple[Opportunity, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -359,6 +369,7 @@ class Board:
             "winning": [o.to_dict() for o in self.winning],
             "earning": [o.to_dict() for o in self.earning],
             "micro_bets": [o.to_dict() for o in self.micro_bets],
+            "research": [o.to_dict() for o in self.research],
             "accumulators": [a.to_dict() for a in self.accumulators],
             "coverage": self.coverage.to_dict() if self.coverage else None,
             "notes": list(self.notes),
@@ -381,6 +392,7 @@ class OpportunityBoard:
                  kelly_fraction: float = KELLY_FRACTION,
                  max_stake: float = MAX_STAKE_FRACTION,
                  max_total_line: float = MAX_TOTAL_LINE,
+                 max_team_total_line: float = 3.5,
                  accumulator_sizes: Sequence[int] = ACCUMULATOR_SIZES,
                  volume_target: int = 12, evidence_gate=None, configuration_hash=None,
                  max_quote_age_sec: float = 1800.) -> None:
@@ -393,6 +405,7 @@ class OpportunityBoard:
         self.kelly_fraction = kelly_fraction
         self.max_stake = max_stake
         self.max_total_line = max_total_line
+        self.max_team_total_line = max_team_total_line
         self.accumulator_sizes = tuple(sorted(accumulator_sizes))
         self.volume_target = volume_target
         self.evidence_gate = evidence_gate
@@ -469,17 +482,17 @@ class OpportunityBoard:
         return Board(generated_at=now, window_hours=window_hours, unproven=unproven,
                      model_report=report.to_dict(), winning=winning, earning=earning,
                      micro_bets=micro, accumulators=accumulators,
-                     coverage=coverage, notes=notes)
+                     coverage=coverage, notes=notes, research=tuple(candidates))
 
     # -- per-fixture markets ------------------------------------------------
 
     def _fixture_opportunities(self, fixture: Fixture,
                                quotes: Sequence[MarketPrice]) -> list[Opportunity]:
-        """Every market the model can price for one fixture, consistently.
+        """Evaluate observed offers using a consistent score distribution.
 
-        All of these come from a single score matrix, so they cannot contradict
-        each other: it is impossible to publish an over/under 2.5 price that
-        disagrees with the same fixture's 1X2 view.
+        Keep basic 1X2 forecasts for match analysis even without prices. Derived
+        market candidates require an observed offer; the model's probability
+        grid alone is not a bookmaker's market catalog.
         """
         pred = self._fixture_model(fixture).predict(fixture.home, fixture.away)
         out: list[Opportunity] = []
@@ -492,12 +505,19 @@ class OpportunityBoard:
         now = self._as_of or datetime.now(timezone.utc)
         usable = [q for q in quotes if (seen := q.confirmed_at or q.updated_at) is not None
                   and seen.tzinfo is not None
-                  and -60 <= (now - seen).total_seconds() <= self.max_quote_age_sec]
+                  and -60 <= (now - seen).total_seconds() <= self.max_quote_age_sec
+                  and (q.valid_until is None or
+                       (q.valid_until.tzinfo is not None and now < q.valid_until))]
         best = self._quote_index(usable)
 
         def quote_for(market: str, side: str,
                       line: Optional[float]) -> Optional[MarketPrice]:
             return best.get((market, _line_key(line), side))
+
+        def add_offered(market, selection, line, probability):
+            quote = quote_for(market, selection, line)
+            if quote is not None:
+                out.append(self._opportunity(fixture, market, selection, line, probability, quote))
 
         for selection, p in (("Home", pred["p_home"]),
                              ("Draw", pred["p_draw"]),
@@ -507,37 +527,24 @@ class OpportunityBoard:
                 quote_for("h2h", selection, None)))
 
         for selection, probability in pred.get("double_chance", {}).items():
-            out.append(self._opportunity(fixture, "double_chance", selection, None,
-                probability, quote_for("double_chance", selection, None)))
+            add_offered("double_chance", selection, None, probability)
         for market, distribution in (("home_team_totals", pred.get("home_team_over", {})),
                                      ("away_team_totals", pred.get("away_team_over", {}))):
             for label, probability in distribution.items():
                 line = float(label)
                 for selection, p in (("Over", probability), ("Under", 1 - probability)):
-                    out.append(self._opportunity(fixture, market, selection, line, p,
-                        quote_for(market, selection, line)))
+                    add_offered(market, selection, line, p)
 
         for line, p_over in sorted(pred["over"].items(), key=lambda kv: float(kv[0])):
-            # The 0.5 line is near-certain in one direction and the "Under 0.5"
-            # side is a long shot; both are still priced, so nothing is dropped
-            # for looking uninteresting.
-            out.append(self._opportunity(
-                fixture, "totals", "Over", float(line), p_over,
-                quote_for("totals", "Over", float(line))))
-            out.append(self._opportunity(
-                fixture, "totals", "Under", float(line), 1.0 - p_over,
-                quote_for("totals", "Under", float(line))))
+            add_offered("totals", "Over", float(line), p_over)
+            add_offered("totals", "Under", float(line), 1.0 - p_over)
 
-        out.append(self._opportunity(fixture, "btts", "Yes", None, pred["p_btts"],
-                                     quote_for("btts", "Yes", None)))
-        out.append(self._opportunity(fixture, "btts", "No", None, 1.0 - pred["p_btts"],
-                                     quote_for("btts", "No", None)))
+        add_offered("btts", "Yes", None, pred["p_btts"])
+        add_offered("btts", "No", None, 1.0 - pred["p_btts"])
 
         for score in pred["most_likely_scores"][:5]:
             label = f"{score['home_goals']}-{score['away_goals']}"
-            out.append(self._opportunity(
-                fixture, "correct_score", label, None, score["p"],
-                quote_for("correct_score", label, None)))
+            add_offered("correct_score", label, None, score["p"])
 
         # Refund/split contracts need their full payout distribution. Evaluate
         # offered lines only; do not manufacture hundreds of nonexistent prices.
@@ -545,9 +552,9 @@ class OpportunityBoard:
         local_model = self._fixture_model(fixture)
         if hasattr(local_model, 'score_matrix'):
             matrix = local_model.score_matrix(fixture.home, fixture.away)
-            contracts = {("draw_no_bet", side, None) for side in ("Home", "Away")}
+            contracts = set()
             for (market, line, side), quote in best.items():
-                if market == 'asian_handicap' or (market in ('totals', 'home_team_totals', 'away_team_totals')
+                if market in ('draw_no_bet', 'asian_handicap') or (market in ('totals', 'home_team_totals', 'away_team_totals')
                                                   and line is not None and line % 1 != .5):
                     contracts.add((market, side, line))
             for market, side, line in sorted(contracts, key=lambda c: (c[0], c[1], c[2] or 0)):
@@ -565,8 +572,7 @@ class OpportunityBoard:
             for label, p_over in corners['over'].items():
                 line = float(label)
                 for side, probability in (('Over', p_over), ('Under', 1 - p_over)):
-                    out.append(self._opportunity(fixture, 'corners', side, line, probability,
-                        quote_for('corners', side, line)))
+                    add_offered('corners', side, line, probability)
 
         return out
 
@@ -652,7 +658,7 @@ class OpportunityBoard:
         stake = (conservative_payout.kelly(odds, fraction=self.kelly_fraction, cap=self.max_stake)
                  if payout else self._kelly(conservative_p, odds)) if (
                      margin is not None and conservative_ev >= self.min_ev and enough_history
-                     and odds >= self.min_offer_odds and fair >= self.min_fair_odds) else 0.0
+                     and odds >= self.min_offer_odds) else 0.0
         return Opportunity(
             match_id=fixture.match_id, sport_key=fixture.sport_key,
             kickoff=fixture.kickoff, home=fixture.home, away=fixture.away,
@@ -664,6 +670,11 @@ class OpportunityBoard:
             payout_probabilities=payout_probabilities,
             price_updated_at=quote.updated_at, price_confirmed_at=quote.confirmed_at,
             price_freshness_basis=quote.freshness_basis,
+            price_valid_until=min(quote.valid_until or fixture.kickoff, fixture.kickoff,
+                                  (quote.confirmed_at or quote.updated_at) + timedelta(seconds=self.max_quote_age_sec))
+                if quote.confirmed_at or quote.updated_at else None,
+            price_book_key=quote.book_key, price_source_event_id=quote.source_event_id,
+            price_quote_identity=quote.source_quote_identity,
             reason="Awaiting market/league validation" if margin is None else "" if conservative_ev > self.min_ev else
                    f"edge {ev:+.1%} below the {self.min_ev:.0%} threshold")
 
@@ -685,24 +696,38 @@ class OpportunityBoard:
     def _winning_ladder(self, candidates: Sequence[Opportunity]) -> tuple[Opportunity, ...]:
         """Highest eligible probability per fixture across supported markets.
 
-        Minimum fair odds excludes near-certain, negligible-return selections.
-        Market priority is only a tie-breaker, never a preference for 1X2.
+        Minimum offered odds excludes prices below the configured payout floor.
+        Current offers take precedence. With none, basic 1X2 match analysis
+        remains internal; public picks still require the shared quality gates.
         """
         by_fixture: dict[str, list[Opportunity]] = {}
         for o in candidates:
-            if (o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds
+            if not self._prominent_line(o):
+                continue
+            if (o.p_model < self.min_model_prob
                     or (o.priced and (o.best_odds is None or o.best_odds < self.min_offer_odds))):
                 continue
             by_fixture.setdefault(o.match_id, []).append(o)
 
         picks: list[Opportunity] = []
         for match_id, rows in by_fixture.items():
+            quoted = [o for o in rows if o.priced]
+            # With no offer, show a match-outcome forecast rather than a nearly
+            # certain derivative line with no evidence of a usable payout.
+            rows = ([o for o in quoted if o.ev is not None and o.ev >= self.min_ev]
+                    if quoted else [o for o in rows if o.market == 'h2h'])
+            if not rows:
+                continue
             rows.sort(key=lambda o: (-o.p_model, MARKET_PRIORITY.get(o.market, 9),
                                      not o.priced, o.outcome_key))
             picks.append(rows[0])
 
         picks.sort(key=_opportunity_order)
         return tuple(picks[:MAX_WINNING_LADDER])
+
+    def _prominent_line(self, opportunity):
+        return prominent_goal_line(opportunity.market, opportunity.line,
+            match_max=self.max_total_line, team_max=self.max_team_total_line)
 
     def _earning_ladder(self, candidates: Sequence[Opportunity]) -> tuple[Opportunity, ...]:
         """Best money per unit staked. Only priced rows can appear.
@@ -712,9 +737,9 @@ class OpportunityBoard:
         a board starts implying it can find value where it never saw a price.
         """
         eligible = [o for o in candidates
-                    if o.priced and o.ev is not None and o.ev >= self.min_ev
+                    if self._prominent_line(o) and o.priced and o.ev is not None and o.ev >= self.min_ev
                     and o.p_model >= self.min_model_prob
-                    and o.fair_odds >= self.min_fair_odds and o.best_odds is not None
+                    and o.best_odds is not None
                     and o.best_odds >= self.min_offer_odds]
         eligible.sort(key=lambda o: (o.kickoff, -o.p_model, -(o.ev or 0.0),
                                     _opportunity_order(o)))
@@ -722,53 +747,37 @@ class OpportunityBoard:
 
     def _micro_bets(self, candidates: Sequence[Opportunity],
                     excluded: set[tuple[str, str, Optional[float], str]]) -> tuple[Opportunity, ...]:
-        """Small, diverse markets: a balanced totals line, BTTS, correct score.
+        """At most two priced, positive-edge alternatives per fixture.
 
-        A micro bet is small in *stake* and small in *conviction*, which means
-        the most interesting line rather than the most likely one. For totals
-        that is the line whose probability sits nearest 0.5 -- ``Over 1.5`` at
-        95% is a certainty that pays nothing, and ``Over 5.5`` at 8% is a
-        punt, and neither is a micro bet.
-
-        Excludes the moneyline (that is the main pick, not a micro) and anything
-        already on the earning ladder, so the list adds breadth rather than
-        repeating the headline.
+        A market family earns inclusion by its probability and value; there is
+        no mandatory BTTS, balanced total or exact-score entry to fill a list.
+        Public views apply the shared feed acceptance gates again on read.
         """
         by_fixture: dict[str, list[Opportunity]] = {}
         for o in candidates:
             if o.market not in ("totals", "btts", "correct_score", "double_chance", "home_team_totals", "away_team_totals", "draw_no_bet", "asian_handicap", "corners"):
                 continue
-            if (o.p_model < self.min_model_prob or o.fair_odds < self.min_fair_odds
-                    or (o.priced and (o.best_odds is None or o.best_odds < self.min_offer_odds))):
+            if (not o.priced or o.ev is None or o.ev < self.min_ev
+                    or o.p_model < self.min_model_prob
+                    or o.best_odds is None or o.best_odds < self.min_offer_odds):
                 continue
             if (o.match_id, o.market, o.line, o.selection) in excluded:
                 continue
-            if o.market == "totals" and o.line is not None and o.line > self.max_total_line:
+            if not self._prominent_line(o):
                 continue
             by_fixture.setdefault(o.match_id, []).append(o)
 
         picks: list[Opportunity] = []
         for match_id, rows in by_fixture.items():
-            # One balanced totals line, the nearer BTTS side, and the single
-            # most likely correct score: three genuinely different bets on the
-            # same fixture rather than six versions of the same one.
-            totals = [o for o in rows if o.market == "totals"]
-            for market in ("double_chance", "home_team_totals", "away_team_totals", "draw_no_bet", "asian_handicap", "corners"):
-                extra = [o for o in rows if o.market == market]
-                if extra:
-                    extra.sort(key=lambda o: (-o.p_model, o.line or 0, o.selection))
-                    picks.append(extra[0])
-            if totals:
-                totals.sort(key=lambda o: (abs(o.p_model - 0.5), o.line or 0.0))
-                picks.append(totals[0])
-            btts = [o for o in rows if o.market == "btts"]
-            if btts:
-                btts.sort(key=lambda o: (abs(o.p_model - 0.5), o.selection))
-                picks.append(btts[0])
-            scores = [o for o in rows if o.market == "correct_score"]
-            if scores:
-                scores.sort(key=lambda o: (-o.p_model, o.selection))
-                picks.append(scores[0])
+            markets = set()
+            rows.sort(key=lambda o: (-o.p_model * (o.ev or 0), -o.p_model, o.outcome_key))
+            for o in rows:
+                if o.market in markets:
+                    continue
+                markets.add(o.market)
+                picks.append(o)
+                if len(markets) == 2:
+                    break
 
         picks.sort(key=_opportunity_order)
         return tuple(picks[:MAX_MICRO_BETS])

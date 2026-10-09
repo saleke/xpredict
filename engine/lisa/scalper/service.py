@@ -5,6 +5,7 @@ import json
 import random
 import threading
 import uuid
+from time import perf_counter
 
 from ..job_budget import JobDeadlineExceeded, execution_budget, check_budget
 from ..match_history import HistoryRepository
@@ -133,14 +134,17 @@ class ScalperService:
         except Exception as exc:
             return self._request_failure(source, resource, cached, now, exc)
         try:
+            merge_started = perf_counter()
             accepted = self.repository.accept(batch, resource=resource, payload=payload, now=now,
                 ttl=ttl(batch) if callable(ttl) else ttl, etag=etag, last_modified=modified)
+            merge_ms = round((perf_counter() - merge_started) * 1000, 2)
         except ParseError as exc:
             return self._request_failure(source, resource, cached, now, exc)
         # Database failures belong to the worker, not a publisher's circuit.
         HistoryRepository(self.storage).ingest(accepted, observed_at=now)
         return dict(source=source, resource=resource, state='updated', fixtures=len(batch.fixtures),
-                    quotes=len(batch.quotes), warnings=list(batch.warnings))
+                    quotes=len(batch.quotes), merge_ms=merge_ms,
+                    warnings=list(batch.warnings))
 
     def _request_failure(self, source, resource, cached, now, exc):
         status = getattr(exc, 'http_status', None)

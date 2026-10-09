@@ -8,6 +8,10 @@ See [verified results and remaining gaps](VALIDATION.md) for the actual probes
 and regression checks.
 The [blueprint evaluation](BLUEPRINT_REVIEW.md) explains the optional bookmaker
 browser worker and which proposed improvements were adopted.
+The [improvement review](IMPROVEMENT_REVIEW.md) evaluates the newer performance
+and coverage suggestions against measured captures and an isolated batching prototype.
+The [first implementation and release checks](RELEASE_VALIDATION.md) document
+the production batching, offered-price floor and publication price-expiry behavior.
 
 ## Start locally
 
@@ -34,7 +38,6 @@ LISA_DATABASE_URL=data/lisa.db
 LISA_SCALPER_MODE=supporting
 LISA_SCALPER_FIXTURE_MAX_AGE_SEC=900
 LISA_SCALPER_QUOTE_MAX_AGE_SEC=300
-LISA_BOARD_MIN_FAIR_ODDS=1.18
 LISA_BOARD_MIN_OFFER_ODDS=1.18
 ```
 
@@ -145,6 +148,14 @@ browser history retention. Published priced rows expose `price_updated_at`,
 `price_confirmed_at` and `price_freshness_basis`. They distinguish a newly changed
 price from a freshly confirmed unchanged offer. Half-time, in-play and other
 unsupported contracts remain outside the current regulation prediction bridge.
+
+Published prices carry explicit expiry deadlines and local quote identities.
+Publication reads remove expired earning prices and downgrade affected forecasts
+and accumulator legs to model-only records. Local suspension, withdrawal or
+price changes also invalidate an old offer before its deadline. The response's
+`price_readiness` distinguishes usable prices from worker readiness and collection
+failures. The 1.18 minimum applies to offered prices; fair odds are model output.
+Successful collection records expose `merge_ms` for the batched staging merge.
 
 `--sportybet` enables a bounded experimental Nigeria upcoming-events request.
 This environment returned HTTP 403. That legacy direct adapter does not attest

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 LIVE_ODDS_PREFIX = "live:odds:"
 LIVE_SNAPSHOT_KEY = "live:odds_snapshot"
 TRAPS_KEY = "live:traps"
-PENDING_LIMIT = 50
+PENDING_LIMIT = 0  # No count cap; acceptance and tier rules bound the visible feed.
 SETTLED_LIMIT = 200
 #: Books quoted per match in the pipeline explainer.
 QUOTE_LIMIT = 4
@@ -203,6 +203,7 @@ def _pick_row_to_card(p: dict) -> dict:
         "home_team": p.get("home_team"),
         "away_team": p.get("away_team"),
         "commence_time": commence,
+        "rank": p.get("rank"),
         "market": p.get("market"),
         "outcome_name": p.get("outcome_name"),
         "line": p.get("line"),
@@ -227,8 +228,9 @@ def build_dashboard(
     storage: Any,
     settings: Any = None,
     *,
-    pending_limit: int = PENDING_LIMIT,
+    pending_limit: int | None = None,
     settled_limit: int = SETTLED_LIMIT,
+    publication: dict | None = None,
 ) -> dict:
     """Build the dashboard payload from the ledger and live cache.
 
@@ -240,6 +242,9 @@ def build_dashboard(
     from .odds import utcnow
 
     settings = settings or cfg.load_settings()
+    limits = [value for value in (pending_limit, getattr(settings, 'pick_feed_limit', PENDING_LIMIT))
+              if value is not None and value > 0]
+    feed_limit = min(limits, default=0)
 
     pending: list[dict] = []
     awaiting: list[dict] = []
@@ -250,11 +255,18 @@ def build_dashboard(
             awaiting = [_pick_row_to_card(p) for p in reversed(raw_pending)
                         if p.get('source') in FORECAST_SOURCES
                         and str(p.get('commence_time', '')) <= utcnow().isoformat()][:settled_limit]
-            pending = sorted((p for p in raw_pending
-                       if p.get('source') not in FORECAST_SOURCES
-                       or str(p.get('commence_time', '')) > utcnow().isoformat()),
-                       key=lambda p: (str(p.get('commence_time') or ''),
-                           -float(p.get('p_true') or 0), str(p.get('dedupe_key') or '')))[:pending_limit]
+            # Model selections come from the latest checked publication below.
+            # The legacy feed still gets fixture diversity before truncation.
+            seen_matches = set()
+            for row in sorted((p for p in raw_pending if p.get('source') not in FORECAST_SOURCES),
+                              key=lambda p: (-float(p.get('p_true') or 0), str(p.get('commence_time') or ''))):
+                if row.get('match_id') not in seen_matches:
+                    pending.append(dict(row, rank=len(pending) + 1))
+                    seen_matches.add(row.get('match_id'))
+            if feed_limit:
+                pending = pending[:feed_limit]
+            from .pick_feed import kickoff_order
+            pending.sort(key=kickoff_order)
         except Exception:
             logger.warning('dashboard: pending ledger could not be read')
             raise
@@ -326,7 +338,21 @@ def build_dashboard(
         card["quotes"] = quotes.get(str(row.get("match_id")))
         cards.append(card)
 
-    publication = storage.get_telemetry('daily:board') if storage and hasattr(storage, 'get_telemetry') else None
+    if publication is None and storage and hasattr(storage, 'get_telemetry'):
+        saved = storage.get_telemetry('daily:board')
+        if isinstance(saved, dict) and isinstance(saved.get('board'), dict):
+            # Keep direct dashboard callers as safe as HTTP readers, without
+            # constructing a provider or executing any collector work.
+            import copy
+            from .price_readiness import project_prices
+            publication = copy.deepcopy(saved)
+            publication['price_readiness'] = project_prices(publication, storage, settings, utcnow())
+    feed_info = {'state': 'legacy_ledger' if cards else 'not_published',
+                 'selected_count': len(cards), 'selected_matches': len(cards), 'max_per_match': 1,
+                 'display_order': 'kickoff_asc'}
+    if publication is not None:
+        from .pick_feed import publication_feed
+        cards, feed_info = publication_feed(publication, settings, limit=feed_limit)
     job = (storage.get_telemetry('daily:status') or {}) if storage and hasattr(storage, 'get_telemetry') else {}
     board = (publication or {}).get('board') or {}
     pipeline = {'state': job.get('state', 'starting'), 'has_errors': bool(job.get('error')),
@@ -336,6 +362,8 @@ def build_dashboard(
         'fixtures_modelled': (board.get('coverage') or {}).get('fixtures_modelled', 0),
         'fixtures_priced': (board.get('coverage') or {}).get('fixtures_priced', 0),
         'upcoming_selections': len(cards),
+        'selected_matches': len({row.get('match_id') for row in cards}),
+        'background_candidates': feed_info.get('candidate_count', len(cards)),
         'paper_mode': bool(getattr(settings, 'paper_mode', False))}
 
     return {
@@ -354,7 +382,8 @@ def build_dashboard(
             },
         },
         "summary": {
-            "active_picks_count": counts.get("pending", len(pending)),
+            "active_picks_count": len(cards),
+            "pending_journal_count": counts.get("pending", len(pending)),
             "awaiting_results_count": len(awaiting),
             "settled_picks_count": counts.get("settled", len(settled)),
             "total_picks_count": counts.get("total", len(pending) + len(settled)),
@@ -378,6 +407,7 @@ def build_dashboard(
             "last_error": (snapshot or {}).get("last_error"),
         },
         "active_picks": cards,
+        "pick_feed": feed_info,
         "awaiting_results": awaiting,
         "pipeline": pipeline,
         "traps": traps,

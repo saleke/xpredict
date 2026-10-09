@@ -1,5 +1,5 @@
 """Read-only bridge. Prediction requests never launch network collectors."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from ..scalper.contracts import bridge_contract, timestamp
 from ..scalper.repository import ScalperRepository
@@ -134,6 +134,7 @@ class ScalperProvider:
             fixture_counts = Counter(fid for eid, fid in candidates)
             ambiguous_events, contested_fixtures, accepted = set(), set(), set()
             from ..board import MarketPrice
+            from ..scalper.repository import quote_identity
             for eid, fid in candidates:
                 if event_counts[eid] != 1 or fixture_counts[fid] != 1:
                     ambiguous_events.add(eid)
@@ -144,7 +145,14 @@ class ScalperProvider:
                     match_id=fid, selection=q.selection, odds=q.odds, book_key=q.book_key,
                     book_title=q.book_title, source=q.source, market=q.market, line=q.line,
                     updated_at=q.updated_at, confirmed_at=q.confirmed_at,
-                    freshness_basis=q.freshness_basis) for q in events[eid])
+                    freshness_basis=q.freshness_basis,
+                    valid_until=min(q.kickoff, (q.confirmed_at or q.updated_at)
+                                    + timedelta(seconds=self.quote_max_age))
+                        if q.confirmed_at or q.updated_at else None,
+                    source_event_id=q.event_id.removeprefix(q.source + ':'),
+                    source_quote_identity=quote_identity(dict(market=q.market, selection=q.selection,
+                        line=q.line, period='regulation', settlement_contract='regulation')))
+                    for q in events[eid])
             matched += len(accepted)
             unmatched += len(set(events) - accepted - ambiguous_events)
             ambiguous += len(ambiguous_events)

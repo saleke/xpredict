@@ -29,6 +29,20 @@ def test_live_ttl_expiry():
     assert "match:m1" not in list(s.scan_live_keys())
 
 
+def test_redis_connection_decodes_text_responses(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from lisa.storage import RedisStorage
+
+    client = object()
+    def from_url(url, *, decode_responses=False):
+        assert url == 'redis://localhost:6379'
+        assert decode_responses is True
+        return client
+    monkeypatch.setitem(sys.modules, 'redis', SimpleNamespace(Redis=SimpleNamespace(from_url=from_url)))
+    assert RedisStorage().r is client
+
+
 def test_pick_dedupe_and_settlement():
     s = InMemoryStorage()
     assert s.insert_pick(_pick()) is True

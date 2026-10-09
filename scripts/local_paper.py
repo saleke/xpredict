@@ -140,6 +140,7 @@ def main(argv=None):
     parser.add_argument('--port',type=int,default=8080)
     parser.add_argument('--database',default=str(ROOT/'data/localhost-paper.db'))
     parser.add_argument('--postgres',action='store_true',help='use the managed/native PostgreSQL URL in .env')
+    parser.add_argument('--unlock-tiers',action='store_true',help='temporarily expose every tier on this paper verification server')
     parser.add_argument('--check',action='store_true',help='check prerequisites without starting jobs')
     parser.add_argument('--diagnose',action='store_true',help='print a credential-safe read-only SQLite pipeline report')
     args = parser.parse_args(argv)
@@ -159,6 +160,7 @@ def main(argv=None):
             return 0
         check_port(args.port)
         child_environment = environment(args.database,args.postgres)
+        child_environment['LISA_PAPER_TIERS_UNLOCKED'] = '1' if args.unlock_tiers else '0'
         if args.check:
             print('Local port and storage prerequisites passed. Provider authentication still needs a live run.')
             return 0
@@ -175,6 +177,8 @@ def main(argv=None):
         if not args.postgres:
             print('Web and worker database: '+child_environment['LISA_DATABASE_URL'],flush=True)
         print('Dashboard: http://localhost:'+str(args.port)+' · admin: /admin · paper stakes: zero',flush=True)
+        if args.unlock_tiers:
+            print('Paper verification: all prediction tiers unlocked. Restart without --unlock-tiers to restore access limits.',flush=True)
         while not stopping[0]:
             if any(child.poll() is not None for child in children):
                 raise RuntimeError('A local service stopped; both services will be stopped')

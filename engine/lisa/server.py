@@ -235,6 +235,34 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             return None, None
         return session_data["user"], session_data
 
+    def _feed_access(self, parsed=None):
+        """Only proven operators may preview a tier; members use their account."""
+        user, _ = self._get_current_user_and_session()
+        if self._paper_tiers_unlocked():
+            return 'tier3', bool(user and user.get('telegram_verified')), user
+        tier = (user or {}).get('tier', 'free')
+        role = operator_role(user)
+        operator = bool(user and (role == 'owner' or user.get('tier') == 'admin'
+                                  or (role and user.get('telegram_verified'))))
+        if operator:
+            if parsed is None:
+                parsed = urllib.parse.urlparse(getattr(self, 'path', ''))
+            requested = urllib.parse.parse_qs(parsed.query).get('tier', [''])[0]
+            tier = requested if requested in ('free', 'tier1', 'tier2', 'tier3') else 'tier3'
+        verified = bool(user and user.get('telegram_verified'))
+        if user and not verified:
+            user_id = user.get('id', '')
+            verified = bool(user_id and ((self.storage and hasattr(self.storage, 'is_user_verified')
+                and self.storage.is_user_verified(user_id)) or registry.is_verified(user_id)))
+        return tier, verified, user
+
+    def _paper_tiers_unlocked(self):
+        settings = self.settings or cfg.load_settings()
+        return bool(settings.paper_mode and getattr(settings, 'paper_tiers_unlocked', False))
+
+    def _feed_access_metadata(self):
+        return {'paper_tiers_unlocked': self._paper_tiers_unlocked()}
+
     def _read_json_body(self) -> Optional[dict]:
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -755,37 +783,24 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
         payload["service"] = status
         if not status["ready"]:
             payload["stale_reason"] = status.get("error") or status["state"]
-        # Model forecasts are public; observed execution data belongs to the paid view.
-        user, _ = self._get_current_user_and_session()
-        paid = user and user.get("tier") in ("tier1", "tier2", "tier3", "admin")
-        if not paid:
-            board = payload.get("board") or {}
-            for rows in (board.get("winning", []), board.get("micro_bets", [])):
-                for row in rows:
-                    for field in ("best_odds", "best_book", "best_source", "ev"):
-                        row[field] = None
-                    row.update(priced=False, stake_fraction=0, basis="model_only",
-                               reason="Model forecast; observed execution prices require a paid account")
-            board["earning"] = []
-            board["accumulators"] = []
-            board["execution_locked"] = True
+        from .pick_feed import project_board_access
+        tier, verified, _ = self._feed_access(parsed)
+        project_board_access(payload, self.settings or cfg.load_settings(), tier, telegram_verified=verified)
+        payload['pick_feed'].update(self._feed_access_metadata())
         self._send_json(payload)
 
     def _handle_curated_picks(self):
-        """Return curated picks for each tier."""
+        """Return the current entitled selection, never all cached premium tiers."""
         try:
-            curated = self.storage.get_live_stale("curated_picks")
-            if not curated:
-                self._send_json({
-                    "success": True,
-                    "picks": {"tier1": [], "tier2": [], "tier3": []},
-                    "message": "No curated picks available yet. Run a pipeline cycle first.",
-                })
-                return
-            self._send_json({
-                "success": True,
-                "picks": curated,
-            })
+            from .dashboard import build_dashboard
+            from .pick_feed import tier_feed
+            tier, verified, _ = self._feed_access()
+            service = getattr(self.server, 'daily_service', None)
+            publication = service.read() if service else None
+            dashboard = build_dashboard(self.storage, self.settings or cfg.load_settings(), publication=publication)
+            picks = [row for row in tier_feed(dashboard['active_picks'], tier, telegram_verified=verified) if not row['is_locked']]
+            dashboard['pick_feed'].update(self._feed_access_metadata())
+            self._send_json({'success': True, 'tier': tier, 'picks': picks, 'count': len(picks), 'pick_feed': dashboard['pick_feed']})
         except Exception as exc:
             self._send_json({"success": False, "error": str(exc)}, status=500)
 
@@ -1082,14 +1097,13 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
 
         settings = self.settings or cfg.load_settings()
         try:
-            payload = build_dashboard(self.storage, settings)
-            user, _ = self._get_current_user_and_session()
-            if not user or user.get("tier") not in ("tier1", "tier2", "tier3", "admin"):
-                for row in payload.get("active_picks", []) + payload.get('awaiting_results', []):
-                    if row.get("source") in FORECAST_SOURCES:
-                        for key in ("best_odds", "best_book", "best_ev", "quotes"):
-                            row[key] = None
-                        row.update(recommended_stake_pct=0, recommended_units=0, execution_locked=True)
+            service = getattr(self.server, 'daily_service', None)
+            payload = build_dashboard(self.storage, settings, publication=service.read() if service else None)
+            from .pick_feed import tier_feed
+            tier, verified, _ = self._feed_access()
+            payload['active_picks'] = tier_feed(payload['active_picks'], tier, telegram_verified=verified)
+            payload['pick_feed'].update(tier=tier, unlocked_count=sum(not row['is_locked'] for row in payload['active_picks']))
+            payload['pick_feed'].update(self._feed_access_metadata())
         except Exception as exc:
             logger.warning("dashboard build failed: %s", type(exc).__name__)
             self._send_json({"error": "dashboard unavailable", "error_type": type(exc).__name__}, status=503)
@@ -1302,113 +1316,25 @@ class LISAProductionHandler(SimpleHTTPRequestHandler):
             self._send_json({"success": False, "error": "Invalid or expired verification token"}, status=403)
 
     def _handle_picks(self, parsed: urllib.parse.ParseResult):
-        qs = urllib.parse.parse_qs(parsed.query)
-        user_id = qs.get("user_id", [""])[0].strip()
-        requested_tier = qs.get("tier", ["free"])[0].strip().lower()
-
-        auth_user, _ = self._get_current_user_and_session()
-        is_ver = False
-        tier = "free"
-
-        if auth_user:
-            user_id = auth_user["id"]
-            if auth_user.get("telegram_verified"):
-                is_ver = True
-            is_admin = auth_user.get("tier") == "admin" or (self.bot and self.bot.is_admin(str(auth_user.get("telegram_id", ""))))
-            if is_admin:
-                tier = requested_tier if requested_tier in ("free", "tier1", "tier2", "tier3") else "tier3"
-            else:
-                tier = auth_user.get("tier", "free")
-        elif user_id.startswith("user_seed_") or user_id.startswith("test_"):
-            # Seed and test rows are a fixture convenience, not an entitlement.
-            # Honouring a `tier` parameter on them let any anonymous caller
-            # request `?user_id=test_x&tier=tier3` and receive every masked pick
-            # unmasked, which defeated the tiering entirely. They stay on the
-            # free view; the tests that need a paid view authenticate instead.
-            tier = "free"
-        else:
-            tier = "free"
-
-        if not is_ver and user_id:
-            if self.storage and hasattr(self.storage, "is_user_verified"):
-                is_ver = self.storage.is_user_verified(user_id)
-            if not is_ver:
-                is_ver = registry.is_verified(user_id)
-
-        # 1. Pending picks come from the ledger only. There is no static-file
-        # fallback: an empty ledger means "no live picks yet", not demo data.
-        raw_picks: list[dict] = []
-        if self.storage:
-            raw_picks = self.storage.list_pending_picks()
-
-        processed_picks = []
-        for idx, pick in enumerate(raw_picks):
-            p = dict(pick)
-            if p.get("source") in FORECAST_SOURCES:
-                if str(p.get("commence_time", "")) <= datetime.now(timezone.utc).isoformat():
-                    continue
-                p["is_locked"] = False
-                if tier not in ("tier1", "tier2", "tier3", "admin"):
-                    for key in ("best_odds", "best_book", "best_ev"):
-                        p[key] = None
-                    p.update(recommended_stake_pct=0, recommended_units=0, execution_locked=True)
-                processed_picks.append(p)
-                continue
-            tier_level = p.get("tier_level")
-
-            if idx == 0:
-                p["is_locked"] = False
-                p["tier_level"] = "FREE"
-            elif idx == 1:
-                p["tier_level"] = "TELEGRAM_UNLOCK"
-                if is_ver or tier in ("tier1", "tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Join Telegram to Unlock Match #2"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Telegram Unlock Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-            elif idx in (2, 3, 4):
-                p["tier_level"] = "TIER_1"
-                if tier in ("tier1", "tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Sharp Starter (Tier 1 Required)"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Tier 1 Subscription Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-            else:
-                p["tier_level"] = tier_level or "TIER_2"
-                if tier in ("tier2", "tier3", "all"):
-                    p["is_locked"] = False
-                else:
-                    p["is_locked"] = True
-                    p["outcome_name"] = "🔒 Pro Trader (Tier 2 Required)"
-                    p["best_odds"] = None
-                    p["fair_odds"] = None
-                    p["best_ev"] = None
-                    p["gauge_text"] = "Tier 2 Subscription Required"
-                    p["booking_codes"] = {}
-                    p["deep_links"] = {}
-
-            processed_picks.append(p)
-
-        self._send_json({
-            "active_picks": processed_picks,
-            "count": len(processed_picks),
-            "user_id": user_id,
-            "is_telegram_verified": is_ver,
-            "tier": tier,
-            "is_authenticated": auth_user is not None,
-        })
+        from .dashboard import build_dashboard
+        from .pick_feed import tier_feed
+        tier, verified, user = self._feed_access(parsed)
+        user_id = (user or {}).get('id', '')
+        # Preserve the legacy token-test convenience without allowing an
+        # anonymous caller to borrow a real account's verified identity.
+        requested_id = urllib.parse.parse_qs(parsed.query).get('user_id', [''])[0]
+        service = getattr(self.server, 'daily_service', None)
+        publication = service.read() if service else None
+        if not user and publication is None and requested_id.startswith(('user_seed_', 'test_')):
+            user_id = requested_id
+            verified = bool(self.storage and hasattr(self.storage, 'is_user_verified')
+                            and self.storage.is_user_verified(user_id)) or registry.is_verified(user_id)
+        payload = build_dashboard(self.storage, self.settings or cfg.load_settings(), publication=publication)
+        rows = tier_feed(payload['active_picks'], tier, telegram_verified=verified)
+        payload['pick_feed'].update(self._feed_access_metadata())
+        self._send_json({'active_picks': rows, 'count': len(rows), 'tier': tier, 'user_id': user_id,
+            'is_telegram_verified': verified, 'is_authenticated': user is not None,
+            'pick_feed': dict(payload['pick_feed'], unlocked_count=sum(not row['is_locked'] for row in rows))})
 
     def _handle_ledger(self, parsed: urllib.parse.ParseResult):
         # The graded ledger is the only source. There is no static JSON

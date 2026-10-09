@@ -1480,7 +1480,7 @@ class RedisStorage(Storage):
                 raise RuntimeError(
                     "LISA_STORAGE=redis requires the 'redis' package") from exc
             client = redis.Redis.from_url(
-                url or "redis://localhost:6379", dLecode_responses=True)
+                url or "redis://localhost:6379", decode_responses=True)
         self.r = client
     # -- hot layer -----------------------------------------------------------
 

@@ -34,7 +34,8 @@ def opportunity(**kwargs):
     defaults = dict(match_id="test-match", sport_key=LEAGUE, kickoff=NOW + timedelta(hours=2),
         home="Test Home", away="Test Away", market="h2h", selection="Home",
         p_model=0.7, fair_odds=1 / 0.7, priced=True, best_odds=1.8,
-        best_book="Test Book", ev=0.26, stake_fraction=0.02, basis="model_vs_market")
+        best_book="Test Book", ev=0.26, stake_fraction=0.02, basis="model_vs_market",
+        price_updated_at=NOW)
     return Opportunity(**dict(defaults, **kwargs))
 
 
@@ -218,19 +219,21 @@ class LifecycleTests(unittest.TestCase):
         self.service.tick(now=NOW + timedelta(hours=3))
         self.assertEqual(self.storage.count_picks()["total"], 0)
 
-    def test_http_reads_do_not_fetch_and_free_view_does_not_leak_prices(self):
+    def test_http_reads_do_not_fetch_and_free_view_only_exposes_its_featured_pick(self):
         self.service.tick(now=NOW)
         h = Handler(SimpleNamespace(storage=self.storage, daily_service=self.service, settings=self.settings))
         h._handle_opportunity_board(urlparse("/api/opportunity-board"))
         self.assertEqual(self.runner.call_count, 1)
-        self.assertIsNone(h.response["board"]["winning"][0]["best_odds"])
-        self.assertTrue(h.response["board"]["micro_bets"])
+        self.assertEqual(len(h.response["board"]["winning"]), 1)
+        self.assertEqual(h.response["board"]["winning"][0]["best_odds"], 1.8)
+        self.assertEqual(h.response["board"]["micro_bets"], [])
+        self.assertFalse(h.response["board"]["research_access"]["available"])
         h._handle_opportunity_board(urlparse("/api/opportunity-board?refresh=1"))
         self.assertEqual(h.response_status, 403)
         self.assertEqual(self.runner.call_count, 1)
         paid = Handler(h.server, {"tier": "tier1"})
         paid._handle_opportunity_board(urlparse("/api/opportunity-board"))
-        self.assertEqual(paid.response["board"]["winning"][0]["best_odds"], 1.8)
+        self.assertEqual(paid.response["board"]["earning"][0]["best_odds"], 1.8)
 
     def test_forecast_and_result_endpoints_use_publications_and_ledger(self):
         self.service.tick(now=NOW)

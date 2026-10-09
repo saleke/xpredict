@@ -20,6 +20,10 @@ VALID_TIERS = ("free", "tier1", "tier2", "tier3")
 
 TIER_RANK = {"free": 0, "tier1": 1, "tier2": 2, "tier3": 3}
 
+# Cumulative access to the same ranked, quality-filtered feed. None means all
+# qualifying headlines, not a promise to fill a daily quota.
+PICK_FEED_LIMITS = {"free": 1, "tier1": 5, "tier2": None, "tier3": None}
+
 TIER_LABELS = {
     "free": "Free",
     "tier1": "Tier 1 · Sharp Starter",
@@ -32,6 +36,24 @@ TIER_LABELS = {
 # receives it (larger = earlier = more valuable). A key already present on a
 # lower tier does not appear in the lists of higher-tier-owned features alone.
 FEATURES: dict[str, dict[str, Any]] = {
+    "curated_feed": {
+        "label": "Curated picks from different matches",
+        "grant": "free", "reveal_minutes": {},
+        "blurb": "One featured pick free, a second after Telegram verification; Tier 1 gets up to five. Every match contributes at most one pick.",
+        "upgrade_hint": "Tier 1 expands coverage using the same probability, price and value thresholds.",
+    },
+    "full_feed": {
+        "label": "Full curated pick feed",
+        "grant": "tier2", "reveal_minutes": {},
+        "blurb": "Every qualifying headline in the current window, without duplicate matches or quota padding.",
+        "upgrade_hint": "Add qualifying match coverage and available accumulators.",
+    },
+    "research_markets": {
+        "label": "Background market research",
+        "grant": "tier3", "reveal_minutes": {},
+        "blurb": "Explore up to two qualifying alternatives per match, with current prices and the same probability and value thresholds as the curated feed.",
+        "upgrade_hint": "Inspect alternatives, payout distributions and observed price context.",
+    },
     "bulletin": {
         "label": "Daily Match Forecast Board",
         "grant": "free",
@@ -45,13 +67,12 @@ FEATURES: dict[str, dict[str, Any]] = {
     },
     "micro_pack": {
         "label": "Micro Forecast Pack (BTTS / O/U / scoreline)",
-        "grant": "tier1",
-        "reveal_minutes": {"tier1": 120, "tier2": 240, "tier3": 360},
+        "grant": "tier3",
+        "reveal_minutes": {"tier3": 0},
         "blurb": "Per-match BTTS yes/no, over/under 2.5 and the most likely "
                  "scorelines from the Poisson model — high-volume forecasts "
                  "for the daily board.",
-        "upgrade_hint": "Tier 3 sees the micro pack two hours earlier than "
-                        "Tier 1, when the edge is freshest.",
+        "upgrade_hint": "Tier 3 includes the broader market research alongside the curated feed.",
     },
     "top_pick": {
         "label": "Pick of the Day",
@@ -225,10 +246,13 @@ def upgrade_path() -> dict[str, Any]:
     """Whole value ladder as a serialisable dict (for the CLI and web)."""
     return {
         "billing_available": False,
+        "pick_feed": {"limits": PICK_FEED_LIMITS, "telegram_free_limit": 2,
+                      "max_per_match": 1, "accumulators_from": "tier2", "research_from": "tier3",
+                      "quality_shared_across_tiers": True, "quota_padding": False},
         "features": [
             {
                 "key": k,
-                "available": k in {"bulletin", "micro_pack", "parlay"},
+                "available": k in {"bulletin", "micro_pack", "parlay", "curated_feed", "full_feed", "research_markets"},
                 "label": FEATURES[k]["label"],
                 "blurb": FEATURES[k]["blurb"],
                 "upgrade_hint": FEATURES[k]["upgrade_hint"],

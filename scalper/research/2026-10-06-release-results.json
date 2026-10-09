@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "release_local_date": "2026-10-06",
+  "timezone": "Africa/Lagos",
+  "recorded_at": "2026-10-06T00:01:02.360348+00:00",
+  "repository_state": "6e2907e plus uncommitted implementation",
+  "engine_tests": {
+    "passed": 924,
+    "subtests_passed": 32,
+    "skipped": 0,
+    "seconds": 469.08,
+    "postgres_enabled": true,
+    "postgres_version": "18.6"
+  },
+  "frontend_checks": {
+    "model_board": 25,
+    "accumulator_math": 7,
+    "dashboard_updates": 12,
+    "render_all": 3,
+    "asset_build": "passed"
+  },
+  "production_merge_replay": [
+    {
+      "source": "sportybet_browser",
+      "fixtures": 50,
+      "quotes": 1612,
+      "previous_statements": 1865,
+      "statements": 25,
+      "first_ms": 166.7,
+      "refresh_median_ms": 122.02
+    },
+    {
+      "source": "pinnacle_browser",
+      "fixtures": 20,
+      "quotes": 1482,
+      "previous_statements": 1585,
+      "statements": 23,
+      "first_ms": 111.73,
+      "refresh_median_ms": 126.45
+    }
+  ],
+  "local_http_smoke": {
+    "health_http": 200,
+    "public_board_http": 200,
+    "owner_login_http": 200,
+    "paid_board_http": 200,
+    "paper_mode": true,
+    "published_rows": 78,
+    "priced_rows": 49,
+    "earning_rows": 25,
+    "price_state": "ready",
+    "collection_state": "ok",
+    "minimum_priced_odds": 1.18,
+    "all_paper_stakes_zero": true,
+    "public_prices_masked": true,
+    "all_priced_rows_have_deadlines": true
+  },
+  "notes": [
+    "All SQL replay writes used temporary SQLite databases.",
+    "PostgreSQL tests used an isolated database ending in _test.",
+    "Price/EV/staking assertions in regressions use artificial test data.",
+    "Local HTTP smoke used the dedicated paper trial database with real saved source observations.",
+    "Displayed row counts can include the same selection in multiple lists.",
+    "Statement counts concern staging merges, excluding schema and history operations.",
+    "SQLite timings are not remote PostgreSQL performance or browser collection SLA evidence.",
+    "No new league routes, feeds or market models were enabled in this release."
+  ],
+  "local_browser_smoke": {
+    "owner_login_http": 200,
+    "model_board_rendered": true,
+    "price_readiness_message_rendered": true,
+    "javascript_errors": 0
+  },
+  "temporary_postgres_server_stopped": true
+}

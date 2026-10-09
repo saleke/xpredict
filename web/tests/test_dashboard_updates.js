@@ -51,6 +51,17 @@ check('model forecasts are public research cards without invented executable edg
   assert(getEl('slate-edges-count').textContent==='0 Executable Edges', 'unpriced research counted as executable');
 });
 
+check('temporary paper access opens the full view without subscription prompts', () => {
+  const {sandbox,getEl}=evaluate();
+  state(sandbox,{currentTier:'free',tierPreview:'free',data:{active_picks:[pick],
+    pick_feed:{paper_tiers_unlocked:true},summary:{}}});
+  sandbox.renderAll();
+  assert(sandbox.effectiveTier()==='tier3', 'paper verification kept a local tier lock');
+  assert(getEl('active-tier-badge').textContent.includes('ALL TIERS UNLOCKED'), 'temporary access is unlabeled');
+  assert(getEl('tier-cta-box').innerHTML==='', 'verification still asks for an upgrade');
+  assert(!getEl('tier-preview-banner').hidden, 'temporary access notice is hidden');
+});
+
 check('initial transport failure keeps polling and recovers', async () => {
   const {sandbox,getEl} = evaluate();
   let timers = 0;
@@ -178,6 +189,86 @@ check('past kickoff predictions stay visible awaiting a confirmed result without
   const html=getEl('ledger-tbody').innerHTML;
   assert(html.includes('Test Home') && html.includes('Awaiting confirmed result'), 'pending prediction vanished');
   assert(!html.includes('+0.0%') && html.includes('n/a'), 'missing closing data fabricated a CLV measurement');
+});
+
+check('curated feed shows earlier dates before stronger server quality ranks', () => {
+  const {sandbox,getEl} = evaluate();
+  state(sandbox,{data:{summary:{},active_picks:[
+    {...pick,home_team:'Later Stronger Rank',rank:1,commence_time:'2026-10-10T12:00:00Z'},
+    {...pick,home_team:'Early Lower Rank',rank:2,commence_time:'2026-10-09T18:00:00Z'}]}});
+  sandbox.renderPicks();
+  const html=getEl('picks-grid').innerHTML;
+  assert(html.indexOf('Early Lower Rank')<html.indexOf('Later Stronger Rank'), 'quality rank hid the earliest date');
+});
+
+check('calendar compares kickoff instants across offsets and puts unknown times last', async () => {
+  const {sandbox,getEl}=evaluate();
+  const match=(home_team,commence_time)=>({home_team,commence_time,away_team:'Away',status:'SCHEDULED'});
+  sandbox.fetch=async()=>response({success:true,timezone:'Africa/Lagos',board:{all_upcoming:[
+    match('Unknown Time',null),match('Later Offset','2026-10-09T22:45:00Z'),
+    match('Early Offset','2026-10-10T00:30:00+02:00')]}});
+  await sandbox.loadDailyBoard();
+  const html=getEl('daily-board-content').innerHTML;
+  assert(html.indexOf('Early Offset')<html.indexOf('Later Offset'), 'calendar sorted timestamp text instead of instants');
+  assert(html.indexOf('Later Offset')<html.indexOf('Unknown Time'), 'unknown kickoff displaced a scheduled match');
+});
+
+check('simultaneous curated picks use quality rank and unknown kickoffs come last', () => {
+  const {sandbox,getEl}=evaluate();
+  const time='2026-10-09T18:00:00Z';
+  state(sandbox,{data:{summary:{},active_picks:[
+    {...pick,home_team:'Unknown Kickoff',rank:1,commence_time:'invalid'},
+    {...pick,home_team:'Same Time Lower Rank',rank:3,commence_time:time,p_true:.9},
+    {...pick,home_team:'Same Time Stronger Rank',rank:2,commence_time:time,p_true:.8}]}});
+  sandbox.renderPicks();
+  const html=getEl('picks-grid').innerHTML;
+  assert(html.indexOf('Same Time Stronger Rank')<html.indexOf('Same Time Lower Rank'), 'quality order lost for simultaneous picks');
+  assert(html.indexOf('Same Time Lower Rank')<html.indexOf('Unknown Kickoff'), 'unknown time displayed first');
+});
+
+check('a server locked pick stays masked when a local paid tier is selected', () => {
+  const {sandbox,getEl} = evaluate();
+  state(sandbox,{currentTier:'tier3',data:{summary:{},active_picks:[{...pick,
+    is_locked:true,rank:6,tier_level:'TIER_2',outcome_name:'PRIVATE SELECTION',line:3.5}]}});
+  sandbox.renderPicks();
+  const html=getEl('picks-grid').innerHTML;
+  assert(html.includes('locked-card') && !html.includes('PRIVATE SELECTION'), 'local tier bypassed server entitlement');
+});
+
+check('only operator previews add a tier query to data requests', async () => {
+  const {sandbox} = evaluate();
+  const calls=[];
+  sandbox.fetch=async path=>{calls.push(path);return response({});};
+  state(sandbox,{isOperator:false,tierPreview:'tier3'});
+  await sandbox.fetchDashboardResource('/api/dashboard');
+  state(sandbox,{isOperator:true,tierPreview:'tier1'});
+  await sandbox.fetchDashboardResource('/api/dashboard');
+  await sandbox.fetchDashboardResource('/api/opportunity-board?refresh=1');
+  assert(calls[0]==='/api/dashboard', 'member preview sent a paid request');
+  assert(calls[1]==='/api/dashboard?tier=tier1' && calls[2].endsWith('&tier=tier1'), 'operator preview did not reach the backend');
+});
+
+check('the premium matrix cannot turn unpriced match probabilities into picks', () => {
+  const {sandbox,getEl}=evaluate();
+  state(sandbox,{forecast,modelBoard:{board:{research:[],research_access:{available:true}}}});
+  sandbox.renderTier3Alpha();
+  const html=getEl('alpha-poisson-tbody').innerHTML;
+  assert(html.includes('No qualifying alternatives'), 'empty accepted research was padded');
+  assert(!html.includes('Test Home') && !html.includes('Over 2.5'), 'model-only market entered premium output');
+});
+
+check('premium alternatives share the quality floor and render once', () => {
+  const {sandbox,getEl}=evaluate();
+  const row={match_id:'test',home:'Research Home',away:'Research Away',kickoff,
+    sport_key:'soccer_epl',market:'totals',selection:'Under',line:3.5,p_model:.7,
+    fair_odds:1/.7,priced:true,best_odds:2,ev:.4,basis:'model_vs_market'};
+  state(sandbox,{modelBoard:{board:{winning:[],earning:[],micro_bets:[row],notes:[],
+    research:[row],research_access:{available:true,candidate_count:1,evaluated_candidates:20}}}});
+  sandbox.renderModelBoardLadders();
+  const html=getEl('mb-ladders').innerHTML;
+  assert(html.includes('Qualifying market alternatives') && html.includes('Research Home'), 'tier alternatives are inaccessible');
+  assert(html.includes('same quality floor') && html.includes('at most two per match'), 'research quality limits are unclear');
+  assert((html.match(/Research Home/g)||[]).length===1, 'an alternative was rendered twice');
 });
 
 (async()=>{

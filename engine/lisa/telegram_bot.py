@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -787,7 +788,7 @@ def format_active_top_picks_contract(
         lines.append(bankroll_header.strip())
 
     if user_tier in ("tier2", "tier3", "admin"):
-        limit = 12
+        limit = len(picks)
     elif user_tier == "tier1":
         limit = 5
     else:
@@ -797,10 +798,13 @@ def format_active_top_picks_contract(
         home = p.get("home_team", "Home")
         away = p.get("away_team", "Away")
         kickoff = p.get("kickoff_human") or "Upcoming"
+        rank = p.get('rank')
+        if type(rank) is not int or rank < 1:
+            rank = idx
 
-        if idx == 1:
+        if rank == 1:
             tier_tag = "🆓 FREE"
-        elif idx == 2:
+        elif rank == 2:
             tier_tag = "✈️ TELEGRAM UNLOCKED"
             if not is_channel_member and user_tier == "free":
                 lines.append(
@@ -809,24 +813,30 @@ def format_active_top_picks_contract(
                     f"• 🔒 <i>Join our Telegram channel to unlock this selection and its best price for free!</i>\n"
                 )
                 continue
-        elif idx in (3, 4, 5):
+        elif rank in (3, 4, 5):
             tier_tag = "🥉 TIER 1"
         else:
             tier_tag = "🥈 TIER 2"
 
-        sel = p.get("outcome_name", "Pick")
-        prob = float(p.get("p_true", 0.75)) * 100
-        fair_odds = float(p.get("fair_odds", 1.25))
-        best_odds = float(p.get("best_odds", fair_odds))
-        best_book = str(p.get("best_book", "Pinnacle")).title()
-        ev = float(p.get("best_ev", 0.0)) * 100
-        units = float(p.get("recommended_units", 1.0))
-        conviction = float(p.get("conviction_score", 8.0))
-        conviction_display = min(10.0, conviction) if conviction <= 10.0 else round(conviction / 3.0, 1)
-        stars = "🟩" * min(5, max(1, int(round(conviction_display / 2.0))))
+        import html
+        def number(value, digits=2, multiplier=1):
+            return f'{float(value) * multiplier:.{digits}f}' if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else 'n/a'
+        sel = html.escape(str(p.get("outcome_name", "Pick")))
+        if p.get('line') is not None:
+            sel += ' ' + html.escape(str(p['line']))
+        probability = number(p.get('p_true'), 1, 100)
+        fair = number(p.get('fair_odds'))
+        odds = number(p.get('best_odds'))
+        best_book = html.escape(str(p.get("best_book") or 'Unpriced'))
+        ev_text = number(p.get('best_ev'), 1, 100)
+        units = float(p.get("recommended_units") or 0)
+        conviction = p.get('conviction_score')
+        conviction_display = (min(10., conviction) if conviction <= 10 else round(conviction / 3, 1)) if isinstance(conviction, (int, float)) and math.isfinite(conviction) else None
+        conviction_text = number(conviction_display, 1)
+        stars = "🟩" * min(5, max(1, int(round(conviction_display / 2.0)))) if conviction_display is not None else ''
         codes = p.get("booking_codes", {})
 
-        sizing_str = f"<code>{units:.1f}u</code>"
+        sizing_str = f"<code>{units:.1f}u</code>" if units > 0 else 'No stake recommended'
         if unit_dollar > 0:
             cash_stake = round(units * unit_dollar, 2)
             sizing_str += f" (<b>${cash_stake:,.2f}</b>)"
@@ -845,16 +855,21 @@ def format_active_top_picks_contract(
             if code_parts:
                 codes_line = "🎟️ " + " | ".join(code_parts) + "\n"
 
-        lines.append(
+        item = (
             f"<b>Match #{idx} [{tier_tag}] • {kickoff}</b>\n"
-            f"• <b>{home} vs {away}</b>\n"
+            f"• <b>{html.escape(str(home))} vs {html.escape(str(away))}</b>\n"
             f"• Selection: <code>{sel}</code>\n"
-            f"• P(true): <code>{prob:.1f}%</code> | Fair Odds: <code>{fair_odds:.2f}</code>\n"
-            f"• Market: <code>{best_odds:.2f}</code> @ {best_book} (<b>+{ev:.1f}% EV</b>)\n"
-            f"• Conviction: <code>{conviction_display:.1f}/10.0</code> {stars}\n"
+            f"• Model probability: <code>{probability}%</code> | Fair Odds: <code>{fair}</code>\n"
+            f"• Market: <code>{odds}</code> @ {best_book} (<b>{ev_text}% EV</b>)\n"
+            f"• Conviction: <code>{conviction_text}/10.0</code> {stars}\n"
             f"• Sizing: {sizing_str}\n"
             f"{codes_line}"
         )
+        # Telegram's message limit is a presentation boundary, not a tier quota.
+        if sum(len(part) for part in lines) + len(item) > 3200:
+            lines.append(f'<i>Showing {idx - 1} of {min(limit, len(picks))} accessible picks. The full curated feed is available in the web terminal.</i>')
+            break
+        lines.append(item)
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     if user_tier == "free":
@@ -1586,9 +1601,11 @@ class TelegramBot:
 
         if cmd in ("/micro", "/microbets"):
             import html
-            payload = self.storage.get_telemetry("daily:board") if self.storage and hasattr(self.storage, "get_telemetry") else None
+            if self.get_user_tier(user_id) not in ('tier3', 'admin'):
+                return ('🔒 Broader market research requires Tier 3. The curated picks use the same quality threshold for every tier.', None)
+            payload = self._published_board_for_user(user_id)
             rows = ((payload or {}).get("board") or {}).get("micro_bets", [])
-            lines = ["<b>Micro forecasts</b>", "Model probabilities; results grade the first published selection."]
+            lines = ["<b>Qualifying market alternatives</b>", "Current offers with positive estimated value; alternatives share match risk."]
             for r in rows[:12]:
                 line = "" if r.get("line") is None else f" {r['line']}"
                 lines.append(html.escape(f"{r['home']} v {r['away']}: {r['market']} {r['selection']}{line}")
@@ -1625,20 +1642,20 @@ class TelegramBot:
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🆓 <b>Free Tier:</b> 1 Daily Anchor Pick + Match #2 free upon joining Telegram\n\n"
                 f"⚡ <b>Tier 1: Sharp Starter</b> ($19/mo)\n"
-                f"• The 5 highest-conviction live selections\n"
-                f"• Real-time Telegram push alerts on value detection\n"
-                f"• Daily Sucker-Bet Avoidance Warnings\n"
+                f"• Up to five curated picks from different matches\n"
+                f"• Shared probability, price and expected-value thresholds\n"
+                f"• No quota padding or repeated-match picks\n"
                 f"• Best available price and book for each selection\n\n"
                 f"🚀 <b>Tier 2: Pro Trader</b> ($49/mo)\n"
-                f"• The complete live board across every configured league\n"
+                f"• The full qualifying curated feed, one pick per match\n"
                 f"• Accumulator priced from the live legs that actually exist\n"
-                f"• VIP Private Channel priority access\n"
-                f"• CLV early steam alerts before lines drop\n\n"
+                f"• Wider match coverage when current data supports it\n"
+                f"• The same quality threshold as the featured picks\n\n"
                 f"👑 <b>Tier 3: Syndicate VIP</b> ($149/mo)\n"
-                f"• Direct REST API & Webhook Feed (/api/v1/stream)\n"
-                f"• Portfolio correlation & joint covariance matrix\n"
-                f"• Real-time arbitrage & soft-book discrepancy stream\n"
-                f"• 1-on-1 Syndicate Desk consultation\n"
+                f"• Everything in Tier 2\n"
+                f"• Background model candidates before feed limits\n"
+                f"• Alternative lines and payout distributions\n"
+                f"• Research clearly separated from recommendations\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"🌐 <i>Upgrade online: http://localhost:8080</i>",
                 None,
@@ -2329,8 +2346,8 @@ class TelegramBot:
         tier_info = {
             "free": ("Free Tier", "$0", "2 picks in-bot"),
             "tier1": ("Tier 1 · Sharp Starter", "$19/mo", "Top 5 picks"),
-            "tier2": ("Tier 2 · Pro Trader", "$49/mo", "All 12 picks + parlay"),
-            "tier3": ("Tier 3 · Syndicate VIP", "$149/mo", "Full slate + API feed"),
+            "tier2": ("Tier 2 · Pro Trader", "$49/mo", "Full curated feed + available accumulators"),
+            "tier3": ("Tier 3 · Syndicate VIP", "$149/mo", "Full feed + broader market research"),
             "admin": ("Operator", "N/A", "Full access"),
         }
         name, price, picks = tier_info.get(tier, tier_info["free"])
@@ -2345,12 +2362,12 @@ class TelegramBot:
 
         upgrades = {
             "free": (
-                "• Tier 1 ($19/mo) — Top 5 daily picks\n"
-                "• Tier 2 ($49/mo) — All 12 picks + 5-fold parlay\n"
-                "• Tier 3 ($149/mo) — Full slate + REST/webhook feed"
+                "• Tier 1 ($19/mo) — Up to five picks from different matches\n"
+                "• Tier 2 ($49/mo) — Full curated feed + available accumulators\n"
+                "• Tier 3 ($149/mo) — Full feed + broader market research"
             ),
-            "tier1": "• Tier 2 ($49/mo) — All 12 picks + 5-fold parlay",
-            "tier2": "• Tier 3 ($149/mo) — Full slate + REST/webhook feed",
+            "tier1": "• Tier 2 ($49/mo) — Full curated feed + available accumulators",
+            "tier2": "• Tier 3 ($149/mo) — Full feed + broader market research",
         }
         if tier in upgrades:
             text += f"\n<b>Available upgrades:</b>\n{upgrades[tier]}\n"
@@ -2638,7 +2655,9 @@ class TelegramBot:
     def _handle_picks_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         """Handle /picks command — show tier-specific picks for the user."""
         import html
-        picks = self._load_dashboard_picks()
+        from .pick_feed import tier_feed
+        picks = [row for row in tier_feed(self._load_dashboard_picks(), self.get_user_tier(user_id),
+            telegram_verified=self.is_user_telegram_verified(user_id)) if not row['is_locked']]
         lines = ["<b>Published model forecasts</b>", "Probabilities are estimates, not guaranteed outcomes."]
         for pick in picks[:12]:
             probability = pick.get("p_true")
@@ -2653,7 +2672,9 @@ class TelegramBot:
 
     def _handle_acca_command(self, user_id: str) -> tuple[str, Optional[dict[str, Any]]]:
         import html
-        payload = self.storage.get_telemetry("daily:board") if self.storage and hasattr(self.storage, "get_telemetry") else None
+        if self.get_user_tier(user_id) not in ('tier2', 'tier3', 'admin'):
+            return ('🔒 Accumulators require Tier 2 or Tier 3.', None)
+        payload = self._published_board_for_user(user_id)
         accas = ((payload or {}).get("board") or {}).get("accumulators", [])
         lines = ["<b>Model combinations</b>", "Theoretical probabilities; no confirmed bookmaker parlay offer."]
         for acca in accas[:5]:
@@ -3204,25 +3225,25 @@ class TelegramBot:
             elif user_tier == "tier3":
                 desc = (
                     "👑 <b>Tier: Tier 3 Syndicate VIP</b>\n"
-                    "• Real-time REST API & Webhook data stream (/api/v1/stream)\n"
-                    "• The full live board + joint covariance & correlation matrix\n"
-                    "• Real-time arbitrage alerts & soft-book discrepancy stream\n"
-                    "• 1-on-1 Syndicate Desk consultation"
+                    "• The full curated feed and available accumulators\n"
+                    "• Broader match and market research\n"
+                    "• Alternative lines and payout distributions\n"
+                    "• Research is not a list of extra bets to place"
                 )
             elif user_tier == "tier2":
                 desc = (
                     "🚀 <b>Tier: Tier 2 Pro Trader</b>\n"
-                    "• The complete live board across every configured league\n"
+                    "• The full curated feed, one qualifying pick per match\n"
                     "• Accumulator priced from the live legs that actually exist\n"
-                    "• VIP Private Channel priority access\n"
-                    "• CLV early steam alerts before lines move"
+                    "• Shared probability, price and expected-value thresholds\n"
+                    "• No quota padding"
                 )
             elif user_tier == "tier1":
                 desc = (
                     "⚡ <b>Tier: Tier 1 Sharp Starter</b>\n"
-                    "• The 5 highest-conviction live selections\n"
+                    "• Up to five curated picks from different matches\n"
                     "• Best available price and book for each selection\n"
-                    "• Daily sucker-bet avoidance warnings\n"
+                    "• No repeated-match or quota padding\n"
                     "• <i>Upgrade to Tier 2 Pro for the whole board & the accumulator.</i>"
                 )
             else:
@@ -3231,7 +3252,7 @@ class TelegramBot:
                     "🆓 <b>Tier: Free Tier</b>\n"
                     "• Match #1 Daily Anchor Pick: Always Free\n"
                     f"• Match #2: {perk}\n"
-                    "• <i>Upgrade to Tier 1 ($19/mo) for 5 daily picks or Tier 2 Pro ($49/mo) for 12 picks & parlays.</i>"
+                    "• <i>Tier 1 includes up to five picks; Tier 2 includes the full curated feed and available accumulators.</i>"
                 )
             text = (
                 "👤 <b>YOUR LISA MEMBERSHIP PROFILE</b>\n"
@@ -3305,9 +3326,28 @@ class TelegramBot:
         return payload
 
     def _load_dashboard_picks(self) -> list[dict[str, Any]]:
-        """Pending picks straight from the ledger. Empty means none are live yet."""
+        """Recheck model prices on every command, including removal/expiry."""
+        if self.storage and hasattr(self.storage, 'get_telemetry') and self.storage.get_telemetry('daily:board'):
+            from .config import load_settings
+            from .pick_feed import publication_feed
+            value = self._published_board()
+            return publication_feed(value, load_settings())[0] if value else []
         picks = self._dashboard_payload().get("active_picks") or []
         return list(picks)
+
+    def _published_board(self):
+        if not self.storage or not hasattr(self.storage, 'get_telemetry'):
+            return None
+        from .config import load_settings
+        from .daily_service import DailyService
+        return DailyService(self.storage, load_settings()).read()
+
+    def _published_board_for_user(self, user_id):
+        from .config import load_settings
+        from .pick_feed import project_board_access
+        payload = self._published_board()
+        return project_board_access(payload, load_settings(), self.get_user_tier(user_id),
+            telegram_verified=self.is_user_telegram_verified(user_id)) if payload else None
 
     def _summary_from_settled_picks(self) -> dict[str, Any]:
         """Compute the audited summary from live graded picks in storage."""

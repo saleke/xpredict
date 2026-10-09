@@ -1,0 +1,33 @@
+{
+  "verified_at": "2026-10-06T02:00:27.270242+00:00",
+  "local_url": "http://localhost:8080",
+  "backend_focused_checks_passed": 158,
+  "frontend_checks_passed": 57,
+  "public_asset_build_passed": true,
+  "whitespace_checks_passed": true,
+  "display_order": "kickoff_asc",
+  "quality_ranking_preserved_for_selection_and_access": true,
+  "uncapped_feed": true,
+  "all_tiers_unlocked_for_paper_verification": true,
+  "live_snapshot": {
+    "curated_headlines": 12,
+    "qualifying_alternatives": 14,
+    "forecasts": 16,
+    "calendar_fixtures": 53,
+    "headline_first_kickoff": "2026-10-09T18:30:00+00:00",
+    "headline_last_kickoff": "2026-10-10T14:15:00+00:00",
+    "calendar_last_kickoff": "2026-10-12T19:00:00+00:00",
+    "headlines_and_alternatives_chronological": true,
+    "accumulators_and_legs_chronological": true,
+    "calendar_and_forecasts_chronological": true,
+    "all_paper_stakes_zero": true
+  },
+  "chrome": {
+    "anonymous_session": true,
+    "picks_curated_board_micro_bets_and_calendar_chronological": true,
+    "javascript_errors": 0,
+    "locked_cards": 0
+  },
+  "original_manual_sheet_unchanged": true,
+  "original_manual_sheet_sha256": "b94b37ff37172cd4108ed06aef57d938f3175c7299e860921ef69d2cce53f462"
+}

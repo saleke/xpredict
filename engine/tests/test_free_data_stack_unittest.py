@@ -214,7 +214,7 @@ class FreeFileTests(unittest.TestCase):
         service._collect_seasons(api, history, LEAGUE, NOW+timedelta(days=2), statistics=True)
         api.with_corners.assert_called_once_with(second, purpose='history')
 
-    def test_bulk_history_and_verified_fixture_generate_publish_and_settle_without_visitors(self):
+    def test_bulk_history_publishes_match_analysis_without_inventing_bets(self):
         upcoming = official(NOW+timedelta(hours=2), completed=False, status='SCHEDULED',
             home_score=None, away_score=None)
         calendar = SimpleNamespace(name='football_data', leagues=lambda: (LEAGUE,),
@@ -223,13 +223,13 @@ class FreeFileTests(unittest.TestCase):
         settings = config.Settings(board_leagues=(LEAGUE,))
         service = DailyService(self.store, settings, providers=providers)
         generated = service.tick(now=NOW)
-        self.assertGreater(generated['predictions_added'], 0)
+        self.assertEqual(generated['predictions_added'], 0)  # No offers or strong eligible selections.
         with patch('lisa.daily_service.datetime') as clock:
             clock.now.return_value = NOW
             clock.fromisoformat.side_effect = datetime.fromisoformat
             snapshot = service.read()
         self.assertEqual(snapshot['forecast']['count'], 1)
-        self.assertTrue(snapshot['board']['micro_bets'])
+        self.assertEqual(snapshot['board']['micro_bets'], [])  # No observed derivative offers.
         self.assertTrue(all(r['match_id'] == upcoming['match_id'] and r['stake_fraction'] == 0
             for name in ('winning', 'micro_bets') for r in snapshot['board'][name]))
         settled = service._settle([dict(upcoming, completed=True, status='FINISHED', home_score=2, away_score=1)],

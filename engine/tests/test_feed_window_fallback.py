@@ -163,7 +163,8 @@ def test_an_empty_window_widens_and_finds_the_next_days_fixtures(monkeypatch) ->
 
     assert report.window_hours == 40.0
     assert report.board.coverage.fixtures_modelled == 3
-    assert report.board.winning, "widening found fixtures but published none"
+    assert report.forecast['count'] == 3, "widening found fixtures but published no match analysis"
+    assert report.board.winning == ()  # No offers; coverage must not force betting picks.
 
 
 def test_widening_spends_no_additional_requests(monkeypatch) -> None:
@@ -249,11 +250,12 @@ def test_every_published_fixture_really_lies_inside_the_reported_window(
     report, _ = _run(monkeypatch, rows, 24.0)
 
     horizon = NOW + timedelta(hours=report.window_hours)
-    published = [o for o in report.board.winning + report.board.earning]
+    published = report.forecast['matches']
     assert published, "the widened board published nothing, so this proves nothing"
     for row in published:
-        assert NOW <= row.kickoff <= horizon, (
-            f"{row.home} v {row.away} at {row.kickoff} is outside the "
+        kickoff = datetime.fromisoformat(row['commence_at'])
+        assert NOW <= kickoff <= horizon, (
+            f"{row['home']} v {row['away']} at {kickoff} is outside the "
             f"{report.window_hours:.0f}h window the report names")
 
 

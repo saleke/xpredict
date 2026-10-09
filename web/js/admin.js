@@ -1182,7 +1182,10 @@
         var id = 'f_' + f.name;
         var hint = [];
         if (f.overridden) hint.push('overridden');
-        if (f.min !== null && f.min !== undefined) hint.push(f.min + '–' + f.max);
+        if (f.min !== null && f.min !== undefined) {
+          hint.push(f.max !== null && f.max !== undefined ? f.min + '–' + f.max : 'minimum ' + f.min);
+        }
+        if (f.name === 'pick_feed_limit') hint.push('0 = all qualifying matches; positive = optional cap');
         if (f.choices && f.choices.length) hint.push(f.choices.join(' | '));
 
         var control;
@@ -1200,8 +1203,8 @@
         } else {
           control = '<input class="input input--mono" id="' + attr(id) + '" type="' +
             (f.type === 'int' ? 'number' : 'text') + '" value="' + attr(f.value) + '"' +
-            (f.min !== null && f.min !== undefined
-              ? ' min="' + attr(f.min) + '" max="' + attr(f.max) + '"' : '') + '>';
+            (f.min !== null && f.min !== undefined ? ' min="' + attr(f.min) + '"' : '') +
+            (f.max !== null && f.max !== undefined ? ' max="' + attr(f.max) + '"' : '') + '>';
         }
         return '<div class="card" data-field="' + attr(f.name) + '"><div class="stat">' +
           '<div class="stat__label">' + esc(f.name) +

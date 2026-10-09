@@ -35,6 +35,21 @@ def interchange(*, now=NOW, eid='e1', source='local_book', quotes=True):
                 quotes=[quote] if quotes else [], replace_books=[dict(event_id=eid, book_key='bet365')])
 
 
+def large_interchange(*, now=NOW, count=260):
+    template = interchange(now=now)
+    fixtures, quotes, books = [], [], []
+    for index in range(count):
+        event = dict(template['fixtures'][0], event_id=f'event-{index}')
+        fixtures.append(event)
+        for line in (2.5, 3.5):
+            for selection in ('Over', 'Under'):
+                quotes.append(dict(template['quotes'][0], event_id=event['event_id'],
+                                   line=line, selection=selection))
+        books.append(dict(event_id=event['event_id'], book_key='bet365'))
+    return dict(schema_version=1, collected_at=now.isoformat(), fixtures=fixtures,
+                quotes=quotes, replace_books=books)
+
+
 def scoreboard(*, final=False, extra=False):
     people = []
     for side, name, score, team_id in [('home', 'Arsenal', '2', '1'), ('away', 'Chelsea', '1', '2')]:
@@ -378,6 +393,9 @@ class ScalperTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         payload = interchange(now=now)
         payload['fixtures'][0]['kickoff'] = (now + timedelta(hours=2)).isoformat()
+        # An actually offered, viable candidate makes this a publication test.
+        # A losing Over 2.5 offer must not be rescued by synthetic unpriced lines.
+        payload['quotes'][0].update(selection='Under', line=3.5, odds=1.8)
         for index in range(12):
             payload['fixtures'].append(dict(event_id='historic' + str(index), sport_key=LEAGUE,
                 kickoff=(now - timedelta(days=index + 2)).isoformat(), home_team='Arsenal', away_team='Chelsea',
@@ -459,6 +477,48 @@ class ScalperTests(unittest.TestCase):
         self.assertEqual(board._micro_bets([replace(row, market='btts')], set()), ())
         self.assertEqual(board._earning_ladder([replace(row, best_odds=1.18)])[0].best_odds, 1.18)
 
+    def test_large_snapshot_has_bounded_query_volume_and_complete_revocation(self):
+        from contextlib import contextmanager
+        original_tx = self.store._tx
+        statements = []
+        class CountedConnection:
+            def __init__(self, conn): self.conn = conn
+            def execute(self, sql, params=()):
+                statements.append(sql.split()[0])
+                return self.conn.execute(sql, params)
+        @contextmanager
+        def counted_tx():
+            with original_tx() as conn:
+                yield CountedConnection(conn)
+        payload = large_interchange()
+        with patch.object(self.store, '_tx', counted_tx):
+            self.save(payload)
+        self.assertLess(len(statements), 40)
+        self.assertEqual(len(self.repo.quotes([LEAGUE], now=NOW)), 1040)
+        empty = large_interchange(now=NOW + timedelta(seconds=1))
+        empty['quotes'] = []
+        self.save(empty, now=NOW + timedelta(seconds=1))
+        self.save(payload)  # Older snapshots cannot undo any of the 260 tombstones.
+        self.assertEqual(self.repo.quotes([LEAGUE], now=NOW + timedelta(seconds=2)), [])
+
+    def test_large_merge_rolls_back_chunks_before_a_late_failure(self):
+        payload = large_interchange()
+        self.save(payload)
+        original_hash = self.repo.resource('local_book', 'feed')['content_hash']
+        now = NOW + timedelta(seconds=1)
+        changed = large_interchange(now=now)
+        for quote in changed['quotes']:
+            quote['odds'] = 2.05
+        batch = normalized(changed, 'local_book', now=now)
+        # Inject a late uniqueness failure after prior chunks have been written.
+        broken = replace(batch, quotes=batch.quotes + (batch.quotes[0],))
+        with self.assertRaises(self.store.integrity_errors):
+            self.repo.accept(broken, resource='feed', payload=changed, now=now, ttl=60)
+        self.assertEqual(self.repo.resource('local_book', 'feed')['content_hash'], original_hash)
+        self.assertTrue(all(q['odds'] == 1.95 for q in self.repo.quotes([LEAGUE], now=now)))
+        self.save(changed, now=now)
+        self.assertTrue(all(q['odds'] == 2.05 for q in self.repo.quotes([LEAGUE], now=now)))
+
 
 @unittest.skipUnless(os.getenv('LISA_TEST_POSTGRES_URL'), 'isolated PostgreSQL test URL is not configured')
 class ScalperPostgresTests(unittest.TestCase):
@@ -503,6 +563,52 @@ class ScalperPostgresTests(unittest.TestCase):
         with self.store._tx() as conn:
             row = conn.execute('SELECT kickoff FROM scalper_events WHERE source=?', (self.source,)).fetchone()
         self.assertEqual(row['kickoff'], (NOW + timedelta(hours=5)).timestamp())
+
+    def test_large_merge_failure_rolls_back_all_chunked_writes(self):
+        payload = large_interchange()
+        batch = normalized(payload, self.source, now=NOW)
+        self.repo.accept(batch, resource='feed', payload=payload, now=NOW, ttl=60)
+        original_hash = self.repo.resource(self.source, 'feed')['content_hash']
+        now = NOW + timedelta(seconds=1)
+        changed = large_interchange(now=now)
+        for quote in changed['quotes']:
+            quote['odds'] = 2.05
+        batch = normalized(changed, self.source, now=now)
+        broken = replace(batch, quotes=batch.quotes + (batch.quotes[0],))
+        with self.assertRaises(self.store.integrity_errors):
+            self.repo.accept(broken, resource='feed', payload=changed, now=now, ttl=60)
+        self.assertEqual(self.repo.resource(self.source, 'feed')['content_hash'], original_hash)
+        rows = [q for q in self.repo.quotes([LEAGUE], now=now) if q['source'] == self.source]
+        self.assertEqual(len(rows), 1040)
+        self.assertTrue(all(q['odds'] == 1.95 for q in rows))
+        self.repo.accept(batch, resource='feed', payload=changed, now=now, ttl=60)
+        rows = [q for q in self.repo.quotes([LEAGUE], now=now) if q['source'] == self.source]
+        self.assertTrue(all(q['odds'] == 2.05 for q in rows))
+
+    def test_publication_reader_observes_postgres_offer_revocation(self):
+        from unittest.mock import Mock
+        from lisa.board import Board
+        from lisa.daily_service import DailyService, BOARD_KEY
+        first = interchange()
+        self.repo.accept(normalized(first, self.source, now=NOW), resource='feed', payload=first, now=NOW, ttl=60)
+        provider = ScalperProvider(leagues=(LEAGUE,), clock=lambda: NOW)
+        provider.storage = self.store
+        fixture = Fixture('canonical', LEAGUE, NOW + timedelta(hours=2), 'Arsenal', 'Chelsea')
+        quotes = [q for q in provider.fetch(sport_keys=(LEAGUE,), now=NOW).quotes if q.source == self.source]
+        quote = provider.match(quotes, [fixture]).prices[fixture.match_id][0]
+        model = Mock(spec=['strength'])
+        model.strength.return_value.games = 100
+        row = OpportunityBoard(model)._opportunity(fixture, 'totals', 'Over', 2.5, .7, quote)
+        board = Board(NOW, 24, False, {}, winning=(row,), earning=(row,))
+        self.store.set_telemetry(BOARD_KEY, {'generated_at': NOW.isoformat(), 'board': board.to_dict()})
+        reader = DailyService(self.store, config.Settings(board_leagues=(LEAGUE,)))
+        self.assertTrue(reader.read(now=NOW)['price_readiness']['ready'])
+        now = NOW + timedelta(seconds=1)
+        empty = interchange(now=now, quotes=False)
+        self.repo.accept(normalized(empty, self.source, now=now), resource='feed', payload=empty, now=now, ttl=60)
+        value = reader.read(now=now)
+        self.assertFalse(value['price_readiness']['ready'])
+        self.assertEqual(value['board']['winning'][0]['price_state'], 'removed')
 
 if __name__ == '__main__':
     unittest.main()

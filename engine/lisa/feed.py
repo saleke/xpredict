@@ -35,6 +35,7 @@ import hashlib
 import json
 import math
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -778,7 +779,23 @@ def fetch_prices(provider_set: ProviderSet, fixtures: Sequence[Fixture],
         report.prices = snapshot.to_dict()
         previous_sources[source.name] = snapshot.to_dict()
         report.prices['sources'] = previous_sources
-        report.price_match = outcome.to_dict()
+        if len(previous_sources) > 1:
+            report.prices['source'] = 'multiple'
+            for name in ('quotes', 'rows', 'pages'):
+                report.prices[name] = sum(value.get(name, 0) for value in previous_sources.values())
+            dropped = Counter()
+            for value in previous_sources.values():
+                dropped.update(value.get('dropped', {}))
+            report.prices['dropped'] = dict(dropped)
+            report.prices['truncated'] = any(value.get('truncated') for value in previous_sources.values())
+            report.prices['error'] = '; '.join(value['error'] for value in previous_sources.values() if value.get('error'))
+            report.prices['quota'] = None  # Budgets remain attached to their individual sources.
+            report.prices['stopped_because'] = 'multiple_sources'
+        match_sources = dict(report.price_match.get('sources', {}))
+        match_sources[source.name] = outcome.to_dict()
+        report.price_match = {name: sum(value.get(name, 0) for value in match_sources.values())
+            for name in ('matched_events', 'unmatched_events', 'ambiguous_events', 'contested_fixtures')}
+        report.price_match.update(matched_fixtures=len(priced), sources=match_sources)
         for status in report.providers:
             if status.name == source.name:
                 status.fixtures = len(outcome.prices)
@@ -815,16 +832,20 @@ def _collect_provider_errors(report: FeedReport) -> None:
 def build_board(model: DixonColesModel, settings: Any) -> OpportunityBoard:
     """One configuration seam, shared by narrow and fallback windows."""
     fields = {"min_ev": "board_min_ev", "min_model_prob": "board_min_model_prob",
-        "min_fair_odds": "board_min_fair_odds", "min_offer_odds": "board_min_offer_odds",
+        "min_offer_odds": "board_min_offer_odds",
         "min_accumulator_prob": "board_min_accumulator_prob",
         "kelly_fraction": "board_kelly_fraction", "max_stake": "board_max_stake",
-        "max_total_line": "board_max_total_line", "accumulator_sizes": "board_accumulator_sizes",
+        "max_total_line": "board_max_total_line", "max_team_total_line": "board_max_team_total_line",
+        "accumulator_sizes": "board_accumulator_sizes",
         "volume_target": "board_volume_target"}
     from .model_policy import EvidenceGate, configuration_hash
+    options = {k: getattr(settings, v) for k, v in fields.items() if hasattr(settings, v)}
+    options['min_model_prob'] = max(options.get('min_model_prob', .12), getattr(settings, 'pick_feed_min_probability', .55))
+    options['min_accumulator_prob'] = max(options.get('min_accumulator_prob', .02),
+        getattr(settings, 'pick_feed_min_accumulator_probability', .35))
     return OpportunityBoard(model, evidence_gate=EvidenceGate(getattr(settings, 'model_validation_path', '')),
                             configuration_hash=configuration_hash(settings),
-                            **{k: getattr(settings, v) for k, v in fields.items()
-                                     if hasattr(settings, v)})
+                            **options)
 
 
 def _default_leagues(settings: Any = None) -> list[str]:

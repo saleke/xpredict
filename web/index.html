@@ -980,8 +980,8 @@
               </div>
               <p class="pricing-blurb">Explore daily algorithmic picks and verify our complete public track record.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> Match #1 completely free daily</li>
-                <li><span>✔</span> Match #2 unlock via Telegram bot</li>
+                <li><span>✔</span> One featured pick when a current price qualifies</li>
+                <li><span>✔</span> A second pick unlocks via Telegram verification</li>
                 <li><span>✔</span> Full access to Audited Ledger archive</li>
                 <li><span>✔</span> Standard Kelly Bankroll Calculator</li>
               </ul>
@@ -1002,9 +1002,9 @@
               </div>
               <p class="pricing-blurb">The strongest selections the live engine currently rates, with the measured edge shown on each one.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> Top-ranked live selections, ranked by measured conviction</li>
-                <li><span>✔</span> Instant Telegram alert before kickoff</li>
-                <li><span>✔</span> Trap &amp; vig avoidance warning radar</li>
+                <li><span>✔</span> Up to five curated picks from different matches</li>
+                <li><span>✔</span> Shared probability, price and value thresholds</li>
+                <li><span>✔</span> No repeated-match or quota padding</li>
                 <li><span>✔</span> Best available price and book per selection, from the live feed</li>
               </ul>
               <button type="button" class="btn-pricing-action" onclick="window.handlePricingSelect('tier1')">
@@ -1023,12 +1023,12 @@
                   <span class="price-period">/month</span>
                 </div>
               </div>
-              <p class="pricing-blurb">The full live board, ranked alternatives, and a priced accumulator built from real legs.</p>
+              <p class="pricing-blurb">The full curated feed and available model combinations with dependence adjustments.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> Every live selection on the board, not a fixed count</li>
-                <li><span>✔</span> Accumulator priced from the live legs that actually exist</li>
-                <li><span>✔</span> Smart Market Pivots &amp; pass advisories</li>
-                <li><span>✔</span> Early CLV steam alerts before bookies cut odds</li>
+                <li><span>✔</span> All qualifying curated picks, one per match</li>
+                <li><span>✔</span> Accumulator analysis with current leg prices where available</li>
+                <li><span>✔</span> Same quality threshold as the featured picks</li>
+                <li><span>✔</span> Wider match coverage when data supports it</li>
               </ul>
               <button type="button" class="btn-pricing-action featured" onclick="window.handlePricingSelect('tier2')">
                 Unlock The Full Board
@@ -1045,12 +1045,12 @@
                   <span class="price-period">/month</span>
                 </div>
               </div>
-              <p class="pricing-blurb">Institutional data feed for sports syndicates, funds, and sharp desks.</p>
+              <p class="pricing-blurb">The complete curated feed plus deeper match and market research.</p>
               <ul class="pricing-feature-list">
-                <li><span>✔</span> Sub-second REST &amp; WebSocket raw odds feed</li>
-                <li><span>✔</span> Advanced Over/Under &amp; Handicap Matrix</li>
-                <li><span>✔</span> Live Arbitrage &amp; line drift steam tracker</li>
-                <li><span>✔</span> Dedicated private syndicate communication desk</li>
+                <li><span>✔</span> Everything in Tier 2</li>
+                <li><span>✔</span> Background model candidates before feed limits</li>
+                <li><span>✔</span> Alternative lines, payout distributions and price context</li>
+                <li><span>✔</span> Research clearly separated from recommendations</li>
               </ul>
               <button type="button" class="btn-pricing-action" onclick="window.handlePricingSelect('tier3')">
                 Join VIP Syndicate Desk
@@ -1301,13 +1301,13 @@
       <div id="micro-markets"></div>
     </section>
 
-    <!-- VIEW 2: Predictions Slate (Today's Picks) -->
+    <!-- VIEW 2: Predictions Slate (Upcoming Picks) -->
     <section class="view-panel" id="view-picks">
       <!-- Predictions Slate View Head -->
       <div class="picks-view-head">
         <div class="view-head-main">
           <div class="view-head-kicker">COMMERCIAL CONSENSUS SLATE</div>
-          <h2 class="view-head-title">Today's Picks &amp; Pass Advisories</h2>
+          <h2 class="view-head-title">Upcoming Picks &amp; Pass Advisories</h2>
           <p class="view-head-sub">
             Strict algorithmic predictions derived from multi-sportsbook divergence. Each selection carries an explicit
             conviction score, fair value odds, and fractional Kelly stake.
@@ -1364,8 +1364,7 @@
         <div class="tier-info-left">
           <span class="tier-badge" id="active-tier-badge">FREE TIER ACCESS</span>
           <span class="tier-info-text" id="active-tier-text">
-            Displaying Match #1 completely free. Matches #2 &amp; #3 unlock via Telegram. Matches #4 to #12 require Tier
-            2 Pro.
+            One featured pick free. A second unlocks via Telegram verification. Tier 1 includes up to five picks from different matches.
           </span>
         </div>
         <div class="tier-info-right" id="tier-cta-box">
@@ -1734,11 +1733,11 @@
       <div class="alpha-card">
         <div class="alpha-card-header">
           <div>
-            <h3 class="alpha-title">Double-Poisson Soccer Derivative Matrix</h3>
-            <p class="alpha-sub">Unbiased true probabilities for exotic derivative markets from bivariate Poisson goal
-              distributions.</p>
+            <h3 class="alpha-title">Qualifying market alternatives</h3>
+            <p class="alpha-sub">Observed offers meeting the same probability, odds and value thresholds as the
+              curated picks. Model probabilities are estimates.</p>
           </div>
-          <span class="badge-accent cyan">High-Yield Micro-Bets</span>
+          <span class="badge-accent cyan">Tier 3 Research</span>
         </div>
 
         <div class="table-scroll-container">
@@ -1748,7 +1747,7 @@
                 <th>Match</th>
                 <th>Kickoff Window</th>
                 <th>Derived Micro Market</th>
-                <th>Poisson Prob</th>
+                <th>Model Probability</th>
                 <th>Fair Odds</th>
                 <th>Market Best Odds</th>
                 <th>Alpha Edge (EV)</th>

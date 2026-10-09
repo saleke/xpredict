@@ -660,7 +660,7 @@ class TestTelegramBot(unittest.TestCase):
         self.assertIn("LISA TODAY'S TOP SELECTIONS", reply)
         self.assertIn("$5,000.00", reply)
         self.assertIn("SportyBet", reply)
-        self.assertIn("P(true)", reply)
+        self.assertIn("Model probability", reply)
         self.assertIn("Fair Odds", reply)
         self.assertIn("Conviction", reply)
 

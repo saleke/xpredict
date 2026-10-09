@@ -110,13 +110,9 @@ def test_board_route_serves_all_four_ladders(live_server):
     # unreachable from anywhere.
     for key in ("winning", "earning", "micro_bets", "accumulators"):
         assert key in board
-    assert len(board["winning"]) == 1
+    assert board["winning"] == []  # Basic forecasts without offers are not published picks.
     assert board["accumulators"] == []  # execution details require a paid account
-    assert board["winning"][0]["selection"] == "Home"
-    # No price was supplied, so the row must be flagged unpriced, not faked.
-    assert board["winning"][0]["priced"] is False
-    assert board["winning"][0]["best_odds"] is None
-    assert board["winning"][0]["ev"] is None
+    assert board["earning"] == []
 
 
 def test_board_route_reports_coverage_honestly(live_server):

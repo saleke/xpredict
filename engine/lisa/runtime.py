@@ -49,6 +49,8 @@ READONLY_FIELDS: frozenset[str] = frozenset({
     "provider_credentials_path",
     "provider_credentials_backend", "credential_encryption_key",
     "paper_mode",
+    "paper_tiers_unlocked",
+    "board_min_fair_odds",  # Deprecated; retained only for old environment/config files.
 })
 
 #: Never echoed to the console, even masked-by-accident. Substrings cover
@@ -59,7 +61,7 @@ _SECRET_HINTS: tuple[str, ...] = ("token", "secret", "password", "api_key",
 #: Per-field range limits. A setting outside these is rejected at the edge
 #: rather than being allowed to break ingestion or the scheduler loop.
 #: (minimum, maximum). Fields absent from this map are only type-checked.
-_BOUNDS: dict[str, tuple[float, float]] = {
+_BOUNDS: dict[str, tuple[float | None, float | None]] = {
     'scalper_fixture_max_age_sec': (60, 86400),
     'scalper_quote_max_age_sec': (15, 3600),
     'openfootball_cache_sec': (21600, 604800),
@@ -75,6 +77,10 @@ _BOUNDS: dict[str, tuple[float, float]] = {
     "board_min_model_prob": (0, 1),
     "board_min_fair_odds": (1.01, 1000),
     'board_min_offer_odds': (1.01, 1000),
+    'pick_feed_min_probability': (0, 1),
+    'pick_feed_min_accumulator_probability': (0, 1),
+    'pick_feed_limit': (0, None),
+    'board_max_team_total_line': (.5, 7.5),
     "board_kelly_fraction": (0, 1),
     "board_max_stake": (0, 0.1),
     "board_min_accumulator_prob": (0, 1),
@@ -207,7 +213,9 @@ def _coerce(name: str, raw: Any) -> Any:
         low, high = bounds
         # bool fields are ints in Python; comparing them is harmless but the
         # guard keeps a stray 1/0 out of a flag setting.
-        if not isinstance(value, bool) and not (low <= value <= high):
+        if not isinstance(value, bool) and ((low is not None and value < low) or (high is not None and value > high)):
+            if high is None:
+                raise OverrideError(f"{name} must be at least {low:g} (got {value:g})")
             raise OverrideError(
                 f"{name} must be between {low:g} and {high:g} (got {value:g})")
     return value

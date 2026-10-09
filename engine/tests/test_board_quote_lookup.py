@@ -138,10 +138,8 @@ def test_a_total_price_does_not_leak_onto_a_different_line() -> None:
     assert [(o.market, o.selection, o.line) for o in priced] == [
         ("totals", "Over", 2.5)]
     # The other side of the same line is a separate selection the book did not
-    # quote, and must stay unpriced rather than inherit the Over price.
-    under_25 = [o for o in found if o.market == "totals" and o.line == 2.5
-                and o.selection == "Under"][0]
-    assert not under_25.priced and under_25.ev is None
+    # quote, and must not become a market candidate or inherit the Over price.
+    assert not any(o.market == 'totals' and o.line == 2.5 and o.selection == 'Under' for o in found)
 
 
 def test_btts_is_priced() -> None:
@@ -161,7 +159,7 @@ def test_correct_score_is_priced() -> None:
 
     scores = {o.selection: o for o in found if o.market == "correct_score"}
     assert scores["1-1"].priced and scores["1-1"].best_odds == 7.50
-    assert not scores["1-0"].priced, "a price leaked to another scoreline"
+    assert "1-0" not in scores, "an unoffered scoreline became a bet candidate"
 
 
 def test_a_line_formatted_differently_still_matches() -> None:
@@ -189,6 +187,7 @@ def test_the_highest_price_across_books_wins() -> None:
 def test_no_quotes_leaves_everything_unpriced_rather_than_zero() -> None:
     found = _board()._fixture_opportunities(_fixture(), [])
 
+    assert len(found) == 3 and all(o.market == 'h2h' for o in found)
     assert all(not o.priced for o in found)
     assert all(o.ev is None for o in found)
     assert all(o.best_odds is None for o in found)

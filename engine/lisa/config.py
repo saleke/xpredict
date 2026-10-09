@@ -159,6 +159,7 @@ class Settings:
     #: bulk inputs and configured live feeds; verification is separate.
     board_leagues: tuple[str, ...] = ()
     paper_mode: bool = False
+    paper_tiers_unlocked: bool = False  # Temporary full read access for a paper verification server.
     #: The product window. 24h is the priority; 48h is the outer bound.
     board_window_hours: float = 24.0
     #: Matches to deliver per cycle. A shortfall is reported, never hidden.
@@ -173,13 +174,17 @@ class Settings:
     # -- Board selection ------------------------------------------------------
     board_min_ev: float = 0.03
     board_min_model_prob: float = 0.12
-    board_min_fair_odds: float = 1.18
+    board_min_fair_odds: float = 1.18  # Legacy input; offered odds determine eligibility.
     board_min_offer_odds: float = 1.18
+    pick_feed_min_probability: float = 0.55
+    pick_feed_min_accumulator_probability: float = 0.35
+    pick_feed_limit: int = 0  # Zero means every qualifying match; positive values are optional caps.
     board_min_accumulator_prob: float = 0.02
     board_kelly_fraction: float = 0.25
     board_max_stake: float = 0.02
     board_accumulator_sizes: tuple[int, ...] = (2, 3, 4, 5)
     board_max_total_line: float = 5.5
+    board_max_team_total_line: float = 3.5
     # A full free-stack cycle costs a few seconds of network time, so the API
     # caches the board rather than re-running the feed on every dashboard poll.
     daily_interval_sec: float = 300.0
@@ -427,6 +432,7 @@ def load_settings() -> Settings:
         sharpapi_max_pages=_int("LISA_SHARPAPI_MAX_PAGES", 6),
         board_leagues=_csv("LISA_BOARD_LEAGUES", ()),
         paper_mode=_bool('LISA_PAPER_MODE', False),
+        paper_tiers_unlocked=_bool('LISA_PAPER_TIERS_UNLOCKED', False),
         board_window_hours=_float("LISA_BOARD_WINDOW_HOURS", 24.0),
         board_volume_target=_int("LISA_BOARD_VOLUME_TARGET", 12),
         # -- independent model
@@ -439,10 +445,14 @@ def load_settings() -> Settings:
         board_min_model_prob=_float("LISA_BOARD_MIN_MODEL_PROB", 0.12),
         board_min_fair_odds=_float("LISA_BOARD_MIN_FAIR_ODDS", 1.18),
         board_min_offer_odds=_float('LISA_BOARD_MIN_OFFER_ODDS', 1.18),
+        pick_feed_min_probability=_float('LISA_PICK_FEED_MIN_PROBABILITY', .55),
+        pick_feed_min_accumulator_probability=_float('LISA_PICK_FEED_MIN_ACCUMULATOR_PROBABILITY', .35),
+        pick_feed_limit=_int('LISA_PICK_FEED_LIMIT', 0),
         board_min_accumulator_prob=_float("LISA_BOARD_MIN_ACCUM_PROB", 0.02),
         board_kelly_fraction=_float("LISA_BOARD_KELLY_FRACTION", 0.25),
         board_max_stake=_float("LISA_BOARD_MAX_STAKE", 0.02),
         board_max_total_line=_float("LISA_BOARD_MAX_TOTAL_LINE", 5.5),
+        board_max_team_total_line=_float('LISA_BOARD_MAX_TEAM_TOTAL_LINE', 3.5),
         daily_interval_sec=_float("LISA_DAILY_INTERVAL_SEC", 300.0),
         product_timezone=os.getenv("LISA_PRODUCT_TIMEZONE", "Africa/Lagos"),
         board_cache_ttl_sec=_float("LISA_BOARD_CACHE_TTL_SEC", 300.0),

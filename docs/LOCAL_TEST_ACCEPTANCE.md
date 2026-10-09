@@ -1,5 +1,14 @@
 # Watching the local paper trial
 
+The current dedicated Scalper trial is at `http://localhost:8080` and has
+temporary all-tier read access for manual verification, enabled with
+`--unlock-tiers`. It displays an explicit paper-verification banner. This
+2026-10-06 trial supersedes the historical startup limitations recorded below.
+The [current selection and verification policy](PICK_FEED_POLICY.md) documents
+the access switch and frozen grading sheets under `data/manual-grading/`.
+Grade each exact market and line individually, then compare with the Ledger;
+paper stakes remain zero. Restart without the flag to restore normal tier access.
+
 This checklist tests the data pipeline and public behavior. Model skill and
 profitability require separate chronological evaluation and dated bookmaker
 quotes. A single winning or losing prediction does not certify either.

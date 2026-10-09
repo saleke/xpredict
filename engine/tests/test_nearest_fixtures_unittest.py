@@ -197,7 +197,7 @@ class ChronologicalPickTests(unittest.TestCase):
     def test_winning_probability_is_secondary_to_kickoff_and_strongest_side_is_kept(self):
         candidates = [pick('later', hours=100, probability=.9),
             pick('early-low', probability=.5), pick('early-high', probability=.8),
-            pick('early-low', probability=.7, market='double_chance', selection='1X')]
+            pick('early-low', probability=.7, market='double_chance', selection='1X', priced=True, ev=.4)]
         self.assertEqual([(p.match_id, p.p_model) for p in self.board._winning_ladder(candidates)],
             [('early-high', .8), ('early-low', .7), ('later', .9)])
 
@@ -209,14 +209,14 @@ class ChronologicalPickTests(unittest.TestCase):
         self.assertEqual(result[0].match_id, 'nearest')
 
     def test_micro_display_limit_cannot_drop_the_nearest_match_or_prefer_market_type(self):
-        candidates = [pick('nearest', probability=.6, market='btts')] + [
-            pick(i, hours=100+i, probability=.9, market='double_chance')
+        candidates = [pick('nearest', probability=.6, market='btts', priced=True, ev=.2)] + [
+            pick(i, hours=100+i, probability=.9, market='double_chance', priced=True, ev=.8)
             for i in range(MAX_MICRO_BETS+5)]
         result = self.board._micro_bets(candidates, excluded=set())
         self.assertEqual(len(result), MAX_MICRO_BETS)
         self.assertEqual(result[0].match_id, 'nearest')
-        ties = self.board._micro_bets([pick('low', probability=.6, market='totals'),
-            pick('high', probability=.8, market='btts')], excluded=set())
+        ties = self.board._micro_bets([pick('low', probability=.6, market='totals', priced=True, ev=.2),
+            pick('high', probability=.8, market='btts', priced=True, ev=.6)], excluded=set())
         self.assertEqual(ties[0].match_id, 'high')
 
     def test_earning_requires_real_ev_and_orders_urgency_then_probability(self):

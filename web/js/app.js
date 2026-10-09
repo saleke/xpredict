@@ -48,6 +48,16 @@ function formatKo(iso) {
   return `${day} ${mon}, ${hh}:${mm} UTC`;
 }
 
+function kickoffTimestamp(match) {
+  const time = Date.parse(match.commence_time || match.kickoff || match.commence_at);
+  return Number.isFinite(time) ? time : Infinity;
+}
+
+// Stable sorting preserves the server's quality order for simultaneous matches.
+function matchesByKickoff(matches) {
+  return matches.slice().sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b) || 0);
+}
+
 let state = {
   data: null,
   activeGradeFilter: 'all',
@@ -59,6 +69,7 @@ let state = {
   // tier" without changing the account. Persisted so a reload does not
   // silently drop an operator back to their real tier mid-inspection.
   tierPreview: localStorage.getItem('lisa_tier_preview') || '',
+  accountTier: null,
   isOperator: false,
   isTelegramUnlocked: localStorage.getItem('lisa_telegram_unlocked') === 'true',
   selectedBooks: {},
@@ -510,7 +521,10 @@ async function fetchDashboardResource(path) {
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), 10000) : null;
   try {
-    const response = await fetch(path, { cache: 'no-cache', ...(controller ? { signal: controller.signal } : {}) });
+    const requested = state.isOperator && state.tierPreview
+      ? path + (path.includes('?') ? '&' : '?') + 'tier=' + encodeURIComponent(state.tierPreview)
+      : path;
+    const response = await fetch(requested, { cache: 'no-cache', ...(controller ? { signal: controller.signal } : {}) });
     const payload = await response.json();
     return { ok: response.ok, status: response.status, json: async () => payload };
   } finally {
@@ -528,7 +542,7 @@ function renderLiveStatusBanner() {
     banner.style.display = 'block';
     banner.className = 'live-banner ' + (pipeline.has_errors ? 'stale' : 'live');
     banner.textContent = pipeline.generated_at
-      ? `${pipeline.paper_mode ? 'Paper testing · ' : ''}${pipeline.upcoming_selections} upcoming selections${awaiting ? ' · '+awaiting+' predictions awaiting confirmed results in Ledger' : ''} · ${pipeline.fixtures_priced} fixtures priced · published ${formatKo(pipeline.published_at || pipeline.generated_at)}${pipeline.has_errors ? ' · Some data sources failed; coverage is limited.' : ''}`
+      ? `${pipeline.paper_mode ? 'Paper testing · ' : ''}${pipeline.upcoming_selections} curated picks across ${pipeline.selected_matches ?? pipeline.upcoming_selections} matches · ${pipeline.background_candidates ?? pipeline.upcoming_selections} candidates evaluated internally${awaiting ? ' · '+awaiting+' predictions awaiting confirmed results in Ledger' : ''} · ${pipeline.fixtures_priced} fixtures priced · published ${formatKo(pipeline.published_at || pipeline.generated_at)}${pipeline.has_errors ? ' · Some data sources failed; coverage is limited.' : ''}`
       : `Prediction worker ${pipeline.state === 'running' ? 'is collecting fixtures and fitting models' : pipeline.state === 'failed' ? 'failed to publish; review provider health in the admin panel' : 'has not published yet'}. Saved data refreshes automatically.`;
     return;
   }
@@ -593,7 +607,9 @@ function renderAll() {
   // a reload would show the account's real tier until something else happened
   // to call setTier, which is exactly the "locked to one tier" confusion this
   // control exists to remove.
-  if (state.tierPreview && state.currentTier !== state.tierPreview) {
+  if (state.data && state.data.pick_feed && state.data.pick_feed.paper_tiers_unlocked) {
+    state.currentTier = 'tier3';
+  } else if (state.tierPreview && state.currentTier !== state.tierPreview) {
     state.currentTier = state.tierPreview;
   }
 
@@ -1188,17 +1204,29 @@ function renderTierControls() {
 
   if (!badgeEl || !textEl) return;
 
-  const totalPicks = (state.data && state.data.active_picks) ? state.data.active_picks.length : 12;
-  const proLockedDesc = totalPicks > 3 ? `Matches #4 through #${totalPicks}` : 'Remaining matches';
-  const tier1LockedDesc = totalPicks > 5 ? `Matches #6 through #${totalPicks}` : 'Remaining matches';
+  const totalPicks = (state.data && state.data.active_picks) ? state.data.active_picks.length : 0;
+  const tier1LockedDesc = totalPicks > 5 ? `Picks #6 through #${totalPicks}` : 'Further qualifying picks';
+
+  if (state.data && state.data.pick_feed && state.data.pick_feed.paper_tiers_unlocked) {
+    badgeEl.textContent = 'PAPER VERIFICATION · ALL TIERS UNLOCKED';
+    badgeEl.style.color = 'var(--accent-gold)';
+    textEl.textContent = `All ${totalPicks} qualifying picks, market alternatives and accumulator analysis are open for manual verification. Paper stakes remain zero.`;
+    if (ctaBox) ctaBox.innerHTML = '';
+    const notice = document.getElementById('tier-preview-banner');
+    if (notice) {
+      notice.hidden = false;
+      notice.textContent = 'Temporary paper verification access: all tiers unlocked. Account subscriptions are unchanged.';
+    }
+    return;
+  }
 
   if (state.currentTier === 'free') {
     badgeEl.textContent = 'FREE TIER ACCESS';
     badgeEl.style.color = 'var(--accent-cyan)';
     badgeEl.style.borderColor = 'rgba(6, 182, 212, 0.4)';
     textEl.innerHTML = state.isTelegramUnlocked
-      ? `Match #1 free. Matches #2 and #3 <strong>unlocked via Telegram</strong>. ${proLockedDesc} require Tier 2 Pro.`
-      : `Displaying Match #1 completely free. Matches #2 and #3 unlock via Telegram. ${proLockedDesc} locked.`;
+      ? `Featured pick free. A second pick <strong>unlocked via Telegram</strong>. Tier 1 includes up to five different matches.`
+      : `One featured pick free. A second unlocks via Telegram. Tier 1 includes up to five different matches.`;
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" onclick="window.switchTab('overview')">
@@ -1210,7 +1238,7 @@ function renderTierControls() {
     badgeEl.textContent = 'TIER 1 STARTER ($19/MO)';
     badgeEl.style.color = 'var(--accent-emerald)';
     badgeEl.style.borderColor = 'rgba(16, 185, 129, 0.4)';
-    textEl.innerHTML = `Top 5 daily high-conviction consensus picks unlocked. ${tier1LockedDesc} locked for Tier 2 Pro.`;
+    textEl.innerHTML = `Up to 5 quality-filtered picks from different matches. ${tier1LockedDesc} require Tier 2. No quota padding.`;
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" onclick="window.setTier('tier2')">
@@ -1222,7 +1250,7 @@ function renderTierControls() {
     badgeEl.textContent = 'TIER 2 ALL-ACCESS ($49/MO)';
     badgeEl.style.color = 'var(--accent-cyan)';
     badgeEl.style.borderColor = 'rgba(6, 182, 212, 0.4)';
-    textEl.innerHTML = `All ${totalPicks} daily match predictions unlocked with smart safety picks and recommended bet sizes.`;
+    textEl.innerHTML = `All ${totalPicks} curated picks from different matches, plus available accumulators. Stakes require reviewed evidence.`;
     if (ctaBox) {
       ctaBox.innerHTML = `
         <button class="btn-upgrade-glow" onclick="window.setTier('tier3')">
@@ -1234,7 +1262,7 @@ function renderTierControls() {
     badgeEl.textContent = 'TIER 3 VIP SYNDICATE ($149/MO)';
     badgeEl.style.color = 'var(--accent-gold)';
     badgeEl.style.borderColor = 'rgba(251, 191, 36, 0.5)';
-    textEl.innerHTML = `Full VIP Access: All ${totalPicks} predictions, early line movement alerts, and deep match analysis.`;
+    textEl.innerHTML = `All ${totalPicks} curated picks, accumulators and the broader market research. Alternatives are analysis, not extra recommendations.`;
     if (ctaBox) {
       // This used to be a static "Active VIP Member" pill, which was a dead
       // end: at the top tier there was no control left to move anywhere else.
@@ -1265,8 +1293,9 @@ function renderTierControls() {
 }
 
 window.setTier = function (tier) {
-  state.currentTier = tier;
-  localStorage.setItem('lisa_tier', tier);
+  const unlocked = state.data && state.data.pick_feed && state.data.pick_feed.paper_tiers_unlocked;
+  state.currentTier = unlocked ? 'tier3' : tier;
+  if (!unlocked) localStorage.setItem('lisa_tier', tier);
   renderTierControls();
   renderPicks();
 
@@ -1279,6 +1308,7 @@ window.setTier = function (tier) {
 // otherwise the locally selected tier. Every gating decision should read
 // this rather than state.currentTier directly.
 window.effectiveTier = function () {
+  if (state.data && state.data.pick_feed && state.data.pick_feed.paper_tiers_unlocked) return 'tier3';
   return state.tierPreview || state.currentTier;
 };
 
@@ -1290,6 +1320,7 @@ window.setTierPreview = function (tier) {
     localStorage.setItem('lisa_tier_preview', tier);
   } else {
     localStorage.removeItem('lisa_tier_preview');
+    if (state.accountTier) state.currentTier = state.accountTier;
   }
   // Re-render against the preview, and repaint the operator controls.
   window.setTier(window.effectiveTier());
@@ -1301,6 +1332,11 @@ window.setTierPreview = function (tier) {
     showToast(`Previewing the ${tier.toUpperCase()} experience. Your account is unchanged.`, 'info');
   } else {
     showToast('Tier preview off. Showing your real access.', 'info');
+  }
+  // A preview needs a fresh server projection, not just a local card repaint.
+  if (state.isOperator) {
+    pollDashboard();
+    refreshModelBoard(false);
   }
 };
 
@@ -1335,7 +1371,7 @@ function renderPicks() {
   // Update Grade Filter Buttons to strictly match current active slate
   const catAll = document.getElementById('cat-all');
   if (catAll) {
-    catAll.innerHTML = `All Matches (<span id="total-picks-count">${allActive.length}</span>)`;
+    catAll.innerHTML = `All Picks (<span id="total-picks-count">${allActive.length}</span>)`;
   }
   const catGradeA = document.getElementById('cat-grade-a');
   if (catGradeA) catGradeA.textContent = `Flagship Diamonds (${diamondCount})`;
@@ -1369,7 +1405,8 @@ function renderPicks() {
   });
 
   let picks = allActive.slice().sort((a, b) =>
-    Date.parse(a.commence_time) - Date.parse(b.commence_time)
+    kickoffTimestamp(a) - kickoffTimestamp(b)
+    || (Number.isFinite(a.rank) && Number.isFinite(b.rank) ? a.rank - b.rank : 0)
     || (b.p_true || 0) - (a.p_true || 0)
     || String(a.dedupe_key || '').localeCompare(String(b.dedupe_key || '')));
   if (state.activeGradeFilter !== 'all') {
@@ -1406,7 +1443,7 @@ function renderPicks() {
   if (picks.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1/-1; text-align: center; padding: 48px; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-subtle);">
-        No active picks for selected filter. Switch grade or league filter to view available opportunities.
+        ${allActive.length ? 'No curated picks for this filter.' : 'No current priced selection clears the feed thresholds. Background match forecasts remain in the Forecasts and Model Board views.'}
       </div>
     `;
     return;
@@ -1417,6 +1454,7 @@ function renderPicks() {
   let seenPassHeader = false;
 
   grid.innerHTML = picks.map(p => {
+    if (p.is_locked) return lockedFeedCard(p);
     if (p.model_forecast) return modelForecastCard(p);
     let headerHtml = '';
     if (state.activeGradeFilter === 'all' && state.activeSportFilter === 'all') {
@@ -1753,6 +1791,19 @@ function modelForecastCard(p) {
       <div class="metric-item"><div class="metric-lbl">Measured EV</div><div class="metric-num">${fmtPct(p.best_ev)}</div></div>
     </div>
     <p class="alpha-sub">${p.is_recommendation ? 'Reviewed selection' : 'Research forecast · no stake recommended'}${p.execution_locked ? ' · price access requires a paid account' : ''}</p>
+    ${p.selection_reason ? '<p class="alpha-sub">' + esc(p.selection_reason) + '</p>' : ''}
+  </article>`;
+}
+
+function lockedFeedCard(p) {
+  const telegram = p.tier_level === 'TELEGRAM_UNLOCK';
+  const label = telegram ? 'Verify Telegram to reveal this pick' : p.tier_level === 'TIER_1' ? 'Tier 1 includes this pick' : 'Tier 2 includes this pick';
+  return `<article class="pick-card locked-card">
+    <div class="pick-card-header"><span>Pick #${esc(p.rank)}</span><span>Subscription preview</span></div>
+    <h3>${esc(p.home_team)} vs ${esc(p.away_team)}</h3>
+    <p>${esc(formatKo(p.commence_time))}</p>
+    <p>${esc(label)}</p>
+    <button class="btn-upgrade-glow" onclick="${telegram ? 'window.openTelegramModal()' : "window.switchTab('overview')"}">${telegram ? 'Verify Telegram' : 'View tiers'}</button>
   </article>`;
 }
 
@@ -1861,40 +1912,18 @@ function renderCalibration() {
 }
 
 function renderTier3Alpha() {
-  // Everything here is derived from the live forecast board (real fixtures, real
-  // Poisson output) and the settled ledger (real CLV). Nothing is templated.
-  const forecast = state.forecast || { matches: [] };
-  const rows = (forecast.matches || []).filter(m => m && m.micro);
+  // Premium market rows come from the server's accepted alternatives. Basic
+  // match probabilities do not establish an offered or valuable betting market.
+  const board = state.modelBoard && state.modelBoard.board;
+  const rows = board && board.research_access && board.research_access.available
+    ? matchesByKickoff(board.research || []) : [];
   const settled = (state.data && state.data.settled_ledger) || [];
 
-  // 1. Poisson micro markets for upcoming fixtures
+  // 1. Qualifying alternatives for upcoming fixtures
   const poissonTbody = document.getElementById('alpha-poisson-tbody');
   if (poissonTbody) {
-    const micro = [];
-    rows.forEach(m => {
-      const p = m.micro.p_over_2_5;
-      if (typeof p !== 'number' || !m.commence_at) return;
-      micro.push({ m, market: 'Over 2.5 goals', p, fair: 1 / p });
-    });
-    micro.sort((a, b) => b.p - a.p);
-    poissonTbody.innerHTML = micro.length ? micro.slice(0, 12).map(({ m, market, p, fair }) => {
-      const cd = formatCountdown(m.commence_at);
-      return `
-      <tr>
-        <td style="font-weight: 600; color: #ffffff;">${esc(cleanText(m.home))} vs ${esc(cleanText(m.away))}</td>
-        <td>
-          <div class="kickoff-countdown-badge ${cd.status}" data-commence="${m.commence_at || ''}">
-            <span class="countdown-text tabular-nums">${cd.text}</span>
-          </div>
-        </td>
-        <td style="color: var(--text-primary); font-weight: 600;">${market}</td>
-        <td class="tabular-nums" style="font-weight: 700; color: var(--accent-emerald);">${(p * 100).toFixed(1)}%</td>
-        <td class="tabular-nums">${fair.toFixed(2)}</td>
-        <td class="tabular-nums" style="color: var(--text-muted);">no priced market</td>
-        <td class="tabular-nums" style="color: var(--text-muted);">n/a</td>
-        <td><span class="pill-accent">${m.model && m.model.ready ? 'model ready' : 'thin model'}</span></td>
-      </tr>`;
-    }).join('') : `<tr><td colspan="8" style="color: var(--text-muted);">No live fixtures with a scored model right now.</td></tr>`;
+    poissonTbody.innerHTML = rows.length ? rows.slice(0, 12).map(mbOpportunityRow).join('')
+      : `<tr><td colspan="8" style="color: var(--text-muted);">No qualifying alternatives available for this view.</td></tr>`;
   }
 
   // 2. CLV reality check: what the ledger actually recorded
@@ -1923,7 +1952,8 @@ function renderTier3Alpha() {
     const legs = picks
       .filter(p => p.best_odds && p.p_true && p.outcome_name)
       .sort((a, b) => (b.p_true || 0) - (a.p_true || 0))
-      .slice(0, 5);
+      .slice(0, 5)
+      .sort((a, b) => kickoffTimestamp(a) - kickoffTimestamp(b) || 0);
     if (legs.length < 2) {
       parlaysList.innerHTML = `<div class="parlay-item"><div class="parlay-meta">Not enough priced live selections to build an honest parlay.</div></div>`;
     } else {
@@ -2155,7 +2185,7 @@ function renderTicker() {
   const wrap = document.getElementById('market-ticker');
   const btn = document.getElementById('btn-ticker-trigger');
   if (!track) return;
-  const matches = (state.forecast && state.forecast.matches) || [];
+  const matches = matchesByKickoff((state.forecast && state.forecast.matches) || []);
   if (!matches.length) {
     if (wrap) wrap.style.display = 'none';
     if (btn) btn.style.display = 'none';
@@ -2343,6 +2373,21 @@ function renderModelBoardStatus() {
       errors.push(p.stale_reason);
     }
   }
+  const priceReadiness = p.price_readiness || (p.service && p.service.price_readiness);
+  if (priceReadiness) {
+    const freshPrices = Number(priceReadiness.fixtures_priced) || 0;
+    const message = freshPrices
+      ? `${freshPrices} fixture${freshPrices === 1 ? ' has' : 's have'} current prices. ${Number(priceReadiness.fresh_earning_selections) || 0} earning candidates.`
+      : priceReadiness.state === 'expired'
+        ? 'Published prices have expired. Forecasts remain available while prices refresh.'
+        : priceReadiness.state === 'unavailable'
+          ? 'Price collection needs attention. Forecasts remain available without executable prices.'
+          : 'No current prices qualify for the published selections. Forecasts remain available.';
+    rows.push(`<p class="alpha-sub" style="margin-top:10px;">${esc(message)}</p>`);
+    if (priceReadiness.collection_state === 'degraded') {
+      rows.push('<p class="alpha-sub" style="margin-top:10px;">Some collection sources need attention; current price coverage is partial.</p>');
+    }
+  }
   if (cov) {
     rows.push(`<div class="metrics-row" style="margin-top:14px;">
       <div class="metric-item"><div class="metric-lbl">Fixtures seen</div>
@@ -2427,18 +2472,18 @@ function renderModelBoardLadders() {
 
   const parts = [];
 
-  // Winning ladder: nearest kickoff, then model probability. Model-only, so it
-  // is the one list that can be full with no price source at all.
-  parts.push(`<div class="alpha-card">
+  // Current publications share one curated selection list. Avoid rendering
+  // identical winning and earning tables twice; older views remain readable.
+  const samePicks = JSON.stringify(board.winning) === JSON.stringify(board.earning);
+  if (!samePicks) parts.push(`<div class="alpha-card">
     <div class="alpha-card-header"><div>
       <h3 class="alpha-title">Winning ladder</h3>
-      <p class="alpha-sub">Earliest kickoff first, then highest model probability.
-        Each fixture contributes its strongest eligible pick. Model fair odds
-        need a current bookmaker price before their value can be assessed.</p>
+      <p class="alpha-sub">One qualifying pick per match, selected for estimated
+        winning probability and price value, displayed by earliest kickoff.</p>
     </div>
     <span class="pill-accent">${board.winning.length}</span></div>
     ${board.winning.length
-      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.winning.map(mbOpportunityRow).join('')}</tbody></table></div>`
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${matchesByKickoff(board.winning).map(mbOpportunityRow).join('')}</tbody></table></div>`
       : '<p class="alpha-sub">No opportunities in window.</p>'}
   </div>`);
 
@@ -2449,8 +2494,15 @@ function renderModelBoardLadders() {
   const coverage = board.coverage || {};
   const priceDiag = (state.modelBoard && state.modelBoard.prices) || {};
   const matchDiag = (state.modelBoard && state.modelBoard.price_match) || {};
+  const priceReadiness = (state.modelBoard && state.modelBoard.price_readiness) || {};
   let emptyReason;
-  if (!priceDiag.quotes) {
+  if (priceReadiness.state === 'expired') {
+    emptyReason = '<p class="alpha-sub">Published prices have expired. Fresh eligible offers are required for earning candidates.</p>';
+  } else if (priceReadiness.state === 'unavailable') {
+    emptyReason = '<p class="alpha-sub">Current offers could not be verified. Price collection needs attention.</p>';
+  } else if (!coverage.fixtures_priced && matchDiag.matched_fixtures && priceReadiness.scope) {
+    emptyReason = '<p class="alpha-sub">Prices were collected, but none are currently usable for these published selections.</p>';
+  } else if (!priceDiag.quotes) {
     emptyReason = `<p class="alpha-sub" style="color: var(--warn);">
            Empty by design. Expected value is
            <code>probability &times; price &minus; 1</code>, and no market price has
@@ -2471,17 +2523,25 @@ function renderModelBoardLadders() {
   }
   parts.push(`<div class="alpha-card">
     <div class="alpha-card-header"><div>
-      <h3 class="alpha-title">Earning ladder</h3>
-      <p class="alpha-sub">Current prices must clear the expected-value threshold.
-        Earliest kickoff first, then winning probability and expected value.</p>
+      <h3 class="alpha-title">${samePicks ? 'Curated picks' : 'Earning ladder'}</h3>
+      <p class="alpha-sub">Current offers must clear the probability, odds and value thresholds.
+        Best qualifying pick per match, earliest kickoff first. No picks are added to fill a quota.</p>
     </div>
     <span class="pill-accent ${pricedCount ? 'emerald' : 'amber'}">${board.earning.length}</span></div>
     ${board.earning.length
-      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.earning.map(mbOpportunityRow).join('')}</tbody></table></div>`
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${matchesByKickoff(board.earning).map(mbOpportunityRow).join('')}</tbody></table></div>`
       : emptyReason}
   </div>`);
 
   parts.push(microMarketsHtml(board));
+  if (board.research_access) {
+    const access = board.research_access;
+    parts.push(`<div class="alpha-card"><h3 class="alpha-title">Market research</h3>
+      <p class="alpha-sub">${esc(access.evaluated_candidates)} candidates evaluated internally;
+        ${esc(access.candidate_count)} qualifying alternatives available.
+        ${access.available ? 'The alternatives above use the same quality floor, with at most two per match. They share match risk.' : 'Tier 3 adds qualifying alternatives and deeper analysis. Every tier uses the same quality floor.'}</p>
+    </div>`);
+  }
 
   el.innerHTML = parts.join('');
 }
@@ -2490,15 +2550,15 @@ function renderModelBoardLadders() {
 function microMarketsHtml(board) {
   return `<div class="alpha-card">
     <div class="alpha-card-header"><div>
-      <h3 class="alpha-title">Derived micro markets</h3>
-      <p class="alpha-sub">Selections derived from the model itself (correct score,
-        totals lines, both teams to score), excluding anything already on the
-        earning ladder. Earliest kickoff first, then winning probability.</p>
+      <h3 class="alpha-title">Qualifying market alternatives</h3>
+      <p class="alpha-sub">Current offers meeting the same probability, odds and value
+        thresholds as the headline feed. At most two alternatives per match,
+        from different market families, earliest kickoff first. Alternatives share match risk.</p>
     </div>
     <span class="pill-accent">${board.micro_bets.length}</span></div>
     ${board.micro_bets.length
-      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${board.micro_bets.map(mbOpportunityRow).join('')}</tbody></table></div>`
-      : '<p class="alpha-sub">No derived micro markets in window.</p>'}
+      ? `<div class="table-scroll-container"><table class="data-table">${MB_HEAD}<tbody>${matchesByKickoff(board.micro_bets).map(mbOpportunityRow).join('')}</tbody></table></div>`
+      : '<p class="alpha-sub">No qualifying alternatives available for this view.</p>'}
   </div>`;
 }
 
@@ -2524,7 +2584,9 @@ function renderModelBoardAccumulators() {
   const board = state.modelBoard && state.modelBoard.board;
   if (!board) { el.innerHTML = ''; return; }
 
-  const accas = board.accumulators || [];
+  const firstKickoff = acca => Math.min(...(acca.legs || []).map(kickoffTimestamp));
+  const accas = (board.accumulators || []).slice().sort((a, b) =>
+    firstKickoff(a) - firstKickoff(b) || (b.p_adjusted || 0) - (a.p_adjusted || 0));
   const anyPriced = accas.some(a => a.priced);
 
   const body = accas.length
@@ -2559,7 +2621,7 @@ function renderModelBoardAccumulators() {
               <div class="metric-num tabular-nums">${evText}</div></div>
           </div>
           <div class="table-scroll-container" style="margin-top:12px;"><table class="data-table">${MB_HEAD}
-            <tbody>${a.legs.map(mbOpportunityRow).join('')}</tbody></table></div>
+            <tbody>${matchesByKickoff(a.legs).map(mbOpportunityRow).join('')}</tbody></table></div>
           ${Array.isArray(a.warnings) && a.warnings.length ? `
             <ul style="margin-top:10px; font-size:12px; color: var(--warn);">
               ${a.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
@@ -2587,6 +2649,7 @@ function renderModelBoard() {
   renderMicroBets();
   renderModelBoardLadders();
   renderModelBoardAccumulators();
+  renderTier3Alpha();
 }
 
 function renderForecastBoard() {
@@ -2611,7 +2674,7 @@ function renderForecastBoard() {
 
   const rows = state.forecast.matches.slice();
   rows.sort((a, b) => {
-    const time = Date.parse(a.commence_at) - Date.parse(b.commence_at);
+    const time = kickoffTimestamp(a) - kickoffTimestamp(b);
     const probability = m => Math.max(m.model.p_home, m.model.p_draw, m.model.p_away);
     return time || probability(b) - probability(a) || String(a.match_id).localeCompare(String(b.match_id));
   });
@@ -2760,7 +2823,7 @@ function renderTierMatrix() {
       icon: '01',
       badge: 'Alpha Engine',
       badgeColor: '#ccff00',
-      keys: ['bulletin', 'top_pick', 'diamond_picks', 'micro_pack', 'traps']
+      keys: ['curated_feed', 'full_feed', 'research_markets', 'bulletin', 'top_pick', 'diamond_picks', 'micro_pack', 'traps']
     },
     {
       id: 'slip_execution',
@@ -3042,7 +3105,7 @@ function switchTab(viewName) {
   state.activeTab = viewName;
 
   // All views read persisted data. Opening a view never calls providers.
-  if (['model-board', 'micro-bets'].includes(viewName) && state.modelBoardState === 'idle') {
+  if (['model-board', 'micro-bets', 'alpha'].includes(viewName) && state.modelBoardState === 'idle') {
     refreshModelBoard(false);
   }
   if (viewName === 'daily-board') loadDailyBoard(state.dailyBoardTab || 'upcoming');
@@ -3094,10 +3157,10 @@ window.loadDailyBoard = async function(tab = 'upcoming') {
     const data = await response.json();
     if (version !== calendarRequestVersion) return;
     if (!response.ok || !data.success) throw new Error(data.error || 'Saved calendar unavailable');
-    const matches = (data.board || {})[tab === 'week' ? 'this_week' : tab === 'upcoming' ? 'all_upcoming' : tab] || [];
+    const matches = matchesByKickoff((data.board || {})[tab === 'week' ? 'this_week' : tab === 'upcoming' ? 'all_upcoming' : tab] || []);
     const status = `<p class="alpha-sub">${data.worker_observed_at ? 'Worker observation: ' + esc(formatKo(data.worker_observed_at)) : 'Waiting for the first worker observation'} · dates in ${esc(data.timezone || 'UTC')}. Source caches determine score freshness.</p>`;
     if (matches.length === 0) {
-      const upcoming = Array.isArray((data.board || {}).all_upcoming) ? data.board.all_upcoming : [];
+      const upcoming = Array.isArray((data.board || {}).all_upcoming) ? matchesByKickoff(data.board.all_upcoming) : [];
       const next = upcoming[0];
       const otherDates = next && tab !== 'upcoming'
         ? `<p>${upcoming.length} verified upcoming ${upcoming.length === 1 ? 'fixture is' : 'fixtures are'} recorded for later dates. Next kickoff: ${esc(formatKo(next.commence_time))}.</p><button type="button" class="pill-filter" onclick="window.switchBoardTab('upcoming')">View Next Matches</button>`
@@ -3872,6 +3935,7 @@ function setupAuthUI() {
       // Operator status drives the Tier Preview control. It is recomputed on
       // every auth notification because the server is the only authority on it.
       state.isOperator = !!user.is_operator;
+      state.accountTier = user.is_operator ? 'tier3' : user.tier || 'free';
       renderTierPreviewControls();
       document.querySelectorAll('[data-preview-tier]').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-preview-tier') === state.tierPreview);
@@ -3880,7 +3944,11 @@ function setupAuthUI() {
       // If user has higher tier than current, elevate view tier -- but never
       // while an operator preview is active, or every auth refresh would
       // yank them out of the tier they are inspecting.
-      if (user.tier && user.tier !== 'free' && !state.tierPreview) {
+      if (state.data && state.data.pick_feed && state.data.pick_feed.paper_tiers_unlocked) {
+        state.currentTier = 'tier3';
+        renderTierControls();
+        renderPicks();
+      } else if (user.tier && user.tier !== 'free' && !state.tierPreview) {
         state.currentTier = user.tier;
         renderTierControls();
         renderPicks();
@@ -4093,22 +4161,22 @@ const TIER_PRICING = {
     name: 'Tier 1 Sharp Starter',
     price: '$19.00 / mo',
     title: 'Upgrade to Tier 1: Sharp Starter',
-    sub: 'Unlock the top-ranked selections, automated Kelly sizing, and Telegram kickoff alerts.',
+    sub: 'Up to five quality-filtered picks from different matches, with current price and value context.',
     desc: 'The engine\'s strongest live selections, with the measured edge and best price on each one.'
   },
   tier2: {
     name: 'Tier 2 Pro Trader',
     price: '$49.00 / mo',
     title: 'Upgrade to Tier 2: Pro Trader',
-    sub: 'Unlock the complete live board, ranked alternatives, and priced accumulators.',
-    desc: 'Every live selection with its measured price, edge, and Kelly sizing.'
+    sub: 'Unlock the full curated feed and available accumulators.',
+    desc: 'One qualifying selection per match. No quota padding; staking requires reviewed evidence.'
   },
   tier3: {
     name: 'Tier 3 VIP Syndicate',
     price: '$149.00 / mo',
     title: 'Upgrade to Tier 3: VIP Syndicate Desk',
-    sub: 'Sub-second REST/WebSocket feeds, Double-Poisson Soccer Matrix, and live line drift execution.',
-    desc: 'Institutional data feed for sports syndicates, funds, and sharp desks with custom Kelly staking.'
+    sub: 'The full curated feed, accumulators and broader match and market research.',
+    desc: 'Explore qualifying alternatives and deeper match analysis under the same quality rules as the headline feed.'
   }
 };
 

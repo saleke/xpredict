@@ -27,8 +27,8 @@ def capture(payload, *, role='events', now=NOW, age=0):
         'received_at': now.isoformat(), 'headers': {'date': format_datetime(now, usegmt=True), 'age': str(age)}}}}
 
 
-def sporty(*, now=NOW, changed=None, price='1.95', active=1):
-    event = {'eventId': 'sr:match:123', 'estimateStartTime': int((NOW + timedelta(hours=2)).timestamp() * 1000),
+def sporty(*, now=NOW, changed=None, price='1.95', active=1, kickoff=None):
+    event = {'eventId': 'sr:match:123', 'estimateStartTime': int((kickoff or NOW + timedelta(hours=2)).timestamp() * 1000),
         'homeTeamName': 'Arsenal', 'awayTeamName': 'Chelsea', 'status': 0, 'matchStatus': 'Not start',
         'sport': {'id': 'sr:sport:1', 'category': {'name': 'England', 'tournament': {'id': 'sr:tournament:17'}}},
         'markets': [{'id': '18', 'specifier': 'total=2.5', 'status': 0, 'banned': False,
@@ -198,10 +198,15 @@ class BrowserSourceTests(unittest.TestCase):
     def test_odds_history_records_changes_and_skips_unchanged_polls(self):
         # Immutable history rejects future observations against the real clock.
         observed = (datetime.now(timezone.utc) - timedelta(hours=2)).replace(minute=0, second=0, microsecond=0)
-        self.assertEqual(self.save(sporty(now=observed), now=observed)['history_added'], 2)
-        self.assertEqual(self.save(sporty(now=observed + timedelta(seconds=10)), now=observed + timedelta(seconds=10))['history_added'], 0)
-        self.assertEqual(self.save(sporty(now=observed + timedelta(seconds=20), price='2.00'), now=observed + timedelta(seconds=20))['history_added'], 1)
-        self.assertEqual(self.save(sporty(now=observed + timedelta(hours=1), price='2.00'), now=observed + timedelta(hours=1))['history_added'], 2)
+        # Keep the same upcoming event throughout the real-clock archive test.
+        # A calendar-fixed kickoff expires and makes it test closed offers.
+        def sample(now, price='1.95'):
+            return sporty(now=now, changed=observed - timedelta(days=1), price=price,
+                          kickoff=observed + timedelta(hours=2))
+        self.assertEqual(self.save(sample(observed), now=observed)['history_added'], 2)
+        self.assertEqual(self.save(sample(observed + timedelta(seconds=10)), now=observed + timedelta(seconds=10))['history_added'], 0)
+        self.assertEqual(self.save(sample(observed + timedelta(seconds=20), price='2.00'), now=observed + timedelta(seconds=20))['history_added'], 1)
+        self.assertEqual(self.save(sample(observed + timedelta(hours=1), price='2.00'), now=observed + timedelta(hours=1))['history_added'], 2)
         with self.store._tx() as conn:
             rows = conn.execute('SELECT payload FROM odds_observations').fetchall()
         self.assertEqual(len(rows), 5)

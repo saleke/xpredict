@@ -87,7 +87,8 @@ class CalendarSnapshotTests(unittest.TestCase):
         result = build_dashboard(self.storage,self.settings)
         self.assertTrue(all(r['model_forecast'] for r in result['active_picks']))
         self.assertTrue(result['pipeline']['paper_mode'])
-        self.assertEqual(result['pipeline']['upcoming_selections'],3)
+        self.assertEqual(result['pipeline']['upcoming_selections'],1)
+        self.assertEqual(result['pipeline']['selected_matches'],1)
         self.assertIsNotNone(result['pipeline']['published_at'])
 
     def test_past_kickoff_predictions_remain_visible_while_awaiting_final_results(self):

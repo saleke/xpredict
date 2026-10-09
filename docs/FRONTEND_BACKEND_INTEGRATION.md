@@ -1,6 +1,6 @@
 # Xpredict backend integration contract for a replacement UI
 
-Reviewed against the repository on **2026-10-04**. This describes the current
+Reviewed against the repository on **2026-10-06**. This describes the current
 Python backend implementation, including the automatic nearest-fixture policy.
 It is a source-based contract, not a claim that every provider, production
 deployment or legacy feature has passed live validation. A running Python worker
@@ -38,14 +38,14 @@ identifiers. They contain no production credentials, sessions or personal data.
 |---|---|---|
 | Upcoming match forecasts | `GET /api/forecast` → `matches` | Render fixture-level probabilities and uncertainty; earliest kickoff first. |
 | Forecast count and horizon | Same → `count`, `window_hours`, `window_selection` | Explain the actual adaptive horizon; future fixtures are not necessarily today's fixtures. |
-| Winning picks | `GET /api/opportunity-board` → `board.winning` | One strongest eligible selection per selected fixture; kickoff before winning probability. |
+| Winning picks | `GET /api/opportunity-board` → `board.winning` | Same entitled curated selections as `board.earning`; best qualifying pick per match, earliest kickoff first. |
 | Micro bets | Same → `board.micro_bets` | Render actual returned markets, lines, sides, probability and fair odds. Do not manufacture markets. |
 | Value / earning opportunities | Same → `board.earning` | Respect `board.execution_locked`; distinguish locked, unpriced and no qualifying edge. |
 | Accumulators | Same → `board.accumulators` | Render server-supplied legs, adjusted joint probability and warnings; currently research combinations. |
 | Coverage / model evidence | Same → `board.coverage`, `model`, `providers`, `prices`, `price_match` | Show available, modelled and priced coverage separately. |
 | Publication freshness | Same → `generated_at`, `published_at`, `cached`, `service`, `stale_reason` | A saved board can exist while service readiness is false. |
 | Overview statistics | `GET /api/dashboard` → `summary`, `pipeline`, `live` | Honor nulls, sample limits and the difference between HTTP health and publication health. |
-| Saved upcoming selection cards | Same → `active_picks` | These are immutable ledger predictions, not the same object as opportunity rows. |
+| Curated upcoming selection cards | Same → `active_picks`, `pick_feed` | One qualifying selection per match from the latest price-checked publication, earliest kickoff first. Respect server locks. |
 | Predictions awaiting results | Same → `awaiting_results` | Keep past-kickoff predictions visible while confirmed results are missing. |
 | Previous prediction results | `GET /api/ledger?limit=200` → `settled_ledger` | Show original probability/selection alongside result, actual score, settlement time and source. |
 | Overview result preview | `GET /api/dashboard` → `settled_ledger` | Bounded recent sample; use the ledger endpoint for its explicit truncation metadata. |
@@ -103,15 +103,21 @@ admin cookie. See section 12 for CSRF and operator roles.
 | Public resource | Guest / free | `tier1`, `tier2`, `tier3`, `admin` account tier |
 |---|---|---|
 | Match forecasts and derived probability detail | Public | Public |
-| Winning and micro opportunity rows | Public model data; execution fields masked | Includes observed execution fields when available |
-| Earning opportunities | Empty list; `execution_locked:true` | Returned when usable prices and gates qualify |
-| Research accumulators | Empty list; `execution_locked:true` | Returned when combinations qualify |
-| Saved model cards in dashboard/picks | Public model data; execution fields masked | Observed execution fields when available |
+| Winning opportunity rows | Entitled featured pick(s) only | Same entitled picks as the curated feed |
+| Curated earning / pick feed | First pick; second after Telegram verification | Tier 1: up to five; Tier 2/3: full qualifying feed |
+| Research accumulators | Empty list | Tier 1: empty; Tier 2/3: available combinations |
+| Micro tables and `board.research` | Empty lists | Tier 1/2: empty; Tier 3: up to two qualifying alternatives per match |
 | Settled ledger | Public; current handler has no tier mask | Same endpoint |
 
-An operator **role** is not a substitute for an account **tier** in public
-masking. An email-allowlisted owner with a free-tier account can use admin APIs,
-but public paid fields still use the account-tier check above. Public
+Proven operators receive the full view by default and may preview a tier using
+the controls described below. For the temporary paper-verification server,
+`pick_feed.paper_tiers_unlocked:true` means every caller receives the full Tier 3
+read view, including guests. Display the explicit testing banner, suppress
+upgrade prompts and preserve zero paper stakes. This requires both paper mode
+and the server-side unlock flag; it does not update account subscriptions.
+Normal operator preview uses
+`?tier=free|tier1|tier2|tier3` without changing their account. Ordinary accounts
+cannot upgrade through that query. Public
 `?refresh=1` specifically requires `user.tier === 'admin'`.
 
 ### 2.3 Cross-origin integration
@@ -170,7 +176,7 @@ Naming differs across projections:
 | GET | `/api/forecast` | Match-level bulletin; modern publication or legacy/empty fallback. |
 | GET | `/api/opportunity-board` | Saved market selections, diagnostics, earning and accumulators. Optional `refresh=1|true|yes` requires admin-tier public session. |
 | GET, POST | `/api/daily-board` | Saved calendar; no supported period/filter body or query. Select its returned arrays client-side. |
-| GET | `/api/picks` | Raw pending rows and lock projection. Optional `user_id`, `tier`; these do not grant paid entitlement. |
+| GET | `/api/picks` | Same curated feed and lock projection as dashboard. Tier query is an operator preview only. |
 | GET | `/api/ledger` | Recent settled raw rows. `limit`: default 200, clamped 1–1000; invalid values use 200. |
 | GET | `/api/status` | Public health payload. Aliases: `/api/health`, `/api/telemetry`. |
 | GET | `/api/ready` | Readiness object, HTTP 200 when ready and 503 otherwise. |
@@ -185,7 +191,7 @@ Naming differs across projections:
 | POST | `/api/verify-token` | `{user_id,token}` → verification, not a paid-tier purchase. |
 | POST | `/api/activate-tier` | `{key}` → redeem an existing one-time payment key; requires account session. |
 | POST | `/api/auth/update-tier` | Privileged tier mutation; **not self-service checkout**. Alias: `/api/auth/tier`. |
-| POST | `/api/curated-picks` | Legacy cached tier curation; not the current opportunity board. |
+| POST | `/api/curated-picks` | Current unlocked curated picks for the caller's tier; read-only. |
 
 Public routes currently do not provide server-side league/date/market filtering,
 search, arbitrary sorting or pagination beyond ledger `limit`. Filter the returned
@@ -329,6 +335,24 @@ Before the first publication: HTTP **503**, with `success:false`,
 HTTP **200** while `service.ready:false`, because a saved forecast survives a
 provider outage. Past-kickoff rows/accumulator legs are filtered on read.
 
+Price eligibility is also checked on publication and read. Expired, suspended,
+withdrawn or changed native Scalper offers lose `best_odds`, `ev` and stake;
+earning rows are removed while model forecasts remain available. Priced rows
+carry `price_valid_until`, `price_book_key`, `price_source_event_id` and
+`price_quote_identity`; execution metadata is masked for free accounts.
+
+The returned `price_readiness` includes `ready`, `state`, `observed_at`,
+`fixtures_priced`, per-state `selections` counts, `fresh_earning_selections`,
+`opportunity_state`, `collection_state`, `failed_sources` and
+`accumulators_without_current_leg_prices`. Its scope is
+`published_model_candidates` when the full research population is retained;
+older publications use `published_selections`.
+`service.price_ready` is separate from worker/publication `service.ready`.
+Coverage retains `fixtures_priced_at_generation` and projects current
+`fixtures_priced`; it does not claim complete bookmaker inventory. Multi-source
+price/matching diagnostics retain individual entries under `sources` and
+aggregate quote counts and unique matched fixtures.
+
 `board` fields: `generated_at`, `window_hours`, `unproven`, `model`, `winning`,
 `earning`, `micro_bets`, `accumulators`, `coverage`, `notes`, and optional
 `execution_locked`. Current paper publication forces `board.unproven:true`;
@@ -435,13 +459,17 @@ For refund/split markets, `p_model` is not enough to price the bet. Use the
 supplied `fair_odds`, `ev` and `payout_probabilities`; do not calculate binary
 `p_model * odds - 1` for a quarter line or draw-no-bet contract.
 
-Winning selection chooses the strongest eligible side per fixture, with minimum
-probability/fair-odds constraints. Its default maximum is **25** fixtures. Micro
-selection adds eligible market detail, excluding exact earning-ladder selections,
-with a default maximum of **40** rows. Earning selects usable priced rows that
-clear the EV threshold, with a maximum of **25**. Listing limits apply **after**
-chronological ranking. At equal kickoff, higher winning probability leads;
-earning then uses EV as an additional tie-breaker.
+HTTP `winning` and `earning` project the same entitled curated feed from the
+private candidate pool before internal ladder caps: one currently priced,
+qualifying selection per match, with no default count cap. A configured positive
+`LISA_PICK_FEED_LIMIT` optionally caps the publication; zero means unlimited and
+API metadata reports `limit:null`. Probability and price value determine the
+best market per match, quality rank, optional cap and tier access. Returned
+arrays display earliest kickoff first, with quality breaking equal-kickoff ties.
+Derived market candidates require
+observed offers. Every returned opportunity must clear the shared quality floor;
+unpriced, low-probability and poor-value outcomes stay out of user-facing pick
+lists. See [the selection policy](PICK_FEED_POLICY.md).
 
 ### 5.4 Accumulator: all fields
 
@@ -459,18 +487,27 @@ earning then uses EV as an additional tie-breaker.
 | `priced` | boolean | Currently false for research combinations. |
 | `warnings` | string array | Shared-league/day dependence and no confirmed parlay offer. |
 
-Maximum **12** published accumulators. Ordered by earliest leg kickoff, then
-adjusted joint probability, with legs ordered by kickoff. These are research
+Maximum **12** published accumulators, displayed by the earliest leg's kickoff,
+then adjusted joint probability. Legs are also displayed earliest kickoff first.
+Each leg must meet the shared single-pick acceptance rules; adjusted probability
+must also meet `LISA_PICK_FEED_MIN_ACCUMULATOR_PROBABILITY` (default 35%). These are research
 combinations, **not executable bookmaker slips**. Do not synthesize booking
 codes, multiply best prices from different books into an executable offer, or
 combine multiple same-match selections as an independently priced accumulator.
 
 ### 5.5 Paid masking and refresh
 
-For guest/free opportunity requests, `best_odds`, `best_book`, `best_source`,
-`ev` are set to null on winning/micro rows; `priced:false`, `stake_fraction:0`,
-`basis:'model_only'` and an access reason are supplied. `board.earning` and
-`board.accumulators` become empty arrays and `board.execution_locked:true`.
+The same server-enforced ladder applies to dashboard, picks and the opportunity
+board. Free receives one full featured pick, two after Telegram verification;
+Tier 1 receives up to five; Tier 2/3 receive all qualifying headlines. Winning
+and earning lists expose only the caller's entitled picks. Tier 2/3 receive
+qualifying accumulator analysis. Only Tier 3 receives `micro_bets` and `research`:
+these contain the same bounded qualifying alternatives, up to two per match
+from different market families, excluding the headline family. Render that
+alternative table once. `research_access` reports availability, required tier,
+`candidate_count` (qualifying alternatives), `evaluated_candidates` (private pool
+size), `qualifying_candidates`, and `max_alternatives_per_match`. Rejected
+calculations remain private at every tier. No tier pads its quota.
 
 An empty earning/accumulator array **plus** `execution_locked:true` means access
 is restricted. An unlocked empty earning array may mean missing prices, no safe
@@ -490,21 +527,21 @@ read/build failure is HTTP 503 with `error` and `error_type`.
 | Object | Exact fields / purpose |
 |---|---|
 | `meta` | `generated_at` (response time), `sports_scope`, `data_provenance:{synthetic,source,statement}`. |
-| `summary` | `active_picks_count`, `awaiting_results_count`, `settled_picks_count`, `total_picks_count`, `total_matches_evaluated`, `won_count`, `lost_count`, `win_rate`, `brier_score`, `ece`, `mean_clv`, `positive_clv_share`. |
+| `summary` | `active_picks_count`, `pending_journal_count`, `awaiting_results_count`, `settled_picks_count`, `total_picks_count`, `total_matches_evaluated`, `won_count`, `lost_count`, `win_rate`, `brier_score`, `ece`, `mean_clv`, `positive_clv_share`. |
 | `live` | `state:'live'|'stale'|'never'`, `observed_at`, `age_sec`, `sports_observed`, `matches_observed`, `credits_remaining`, `quota_state:'unknown'|'exhausted'|'constrained'|'ok'`, `last_error`. |
-| `pipeline` | `state`, `has_errors`, `published_at`, `generated_at`, `window_hours`, `fixtures_modelled`, `fixtures_priced`, `upcoming_selections`, `paper_mode`. |
-| `active_picks` | Saved upcoming card projection, at most **50** by default. |
+| `pipeline` | `state`, `has_errors`, `published_at`, `generated_at`, `window_hours`, `fixtures_modelled`, `fixtures_priced`, `upcoming_selections`, `selected_matches`, `background_candidates`, `paper_mode`. |
+| `active_picks` | Latest curated selection projection, at most **50** distinct matches by default, including safe locked teasers. |
+| `pick_feed` | Policy, thresholds, candidate/qualifying/selected counts, rejection reasons, tier and unlocked count. |
 | `awaiting_results` | Past-kickoff saved model card projection awaiting official results, at most **200** by default. |
 | `settled_ledger` | Recent raw settled rows, at most **200** by default; additionally derives `pnl` for qualifying quoted recommendations. |
 | `traps` | At most 10 advisories: `home_team,away_team,public_favorite,cv,fair_odds,public_odds,detected_at`. |
 | `calibration` | Object or null; field list below. |
 | `clv` | Object or null; field list below. |
 
-Summary database counts can exceed the lengths of these capped arrays. In
-particular `active_picks_count` uses pending ledger counts and can include
-past-kickoff picks awaiting results; do not label that number as the count of
-unique upcoming matches. `pipeline.upcoming_selections` is the displayed card
-count. `total_matches_evaluated` refers to the latest observation, not an
+Summary journal counts can exceed the lengths of these capped arrays.
+`active_picks_count` is the curated card count; `pending_journal_count` separately
+includes original predictions awaiting results. `pipeline.upcoming_selections`
+and `selected_matches` describe the displayed feed. `total_matches_evaluated` refers to the latest observation, not an
 all-time audit total. These endpoints do not provide lifetime profit/ROI charts.
 
 The `live.state` age cutoff is 300 seconds in this projection; it describes the
@@ -520,10 +557,12 @@ quota diagnostics are elsewhere. Readiness uses a separate configured cutoff.
 `best_ev`, `n_books`, `stdev`, `cv`, `conviction_score`, `recommended_stake_pct`,
 `recommended_units`, `freshness`, `badge_color`, `gauge_text`.
 
-`active_picks` additionally gets `quotes` (object or null). `awaiting_results`
-does not normally add it. Guest/free **model** cards mask `best_odds`, `best_book`,
-`best_ev`, `quotes`, zero recommended stake/units and add `execution_locked:true`.
-Do not rely on `freshness` or `gauge_text` to override missing/masked prices.
+Curated cards additionally carry `rank`, `selection_score`, `selection_reason`,
+current price proof, `is_locked` and `tier_level`. `rank` is the quality rank used
+for access; display earliest kickoff first, using rank only for equal kickoffs.
+`pick_feed.display_order` is `kickoff_asc`. Locked rows only expose fixture metadata, rank and
+required access; market, side, line, probability, fair price and quote identities
+are removed. Local tier changes must never unmask a server-locked card.
 
 `freshness` values: `UNPRICED`, `FRESH`, `FAIR`, `DECAYED`. They are derived from
 entry price versus fair price, **not bookmaker quote age**. They are not a stake
@@ -595,22 +634,15 @@ is not the source's guaranteed update time. There is no score push stream.
 
 ### 8.1 `GET /api/picks`
 
-Response: `active_picks` (raw pending ledger rows plus masking), `count`,
-`user_id`, `is_telegram_verified`, `tier`, `is_authenticated`.
+Response: `active_picks` (curated cards plus safe locked teasers), `count`,
+`user_id`, `is_telegram_verified`, `tier`, `is_authenticated`, `pick_feed`.
 
 Authenticated user identity replaces a supplied `user_id`. Normal accounts use
-their stored tier. Anonymous `?tier=tier3` does not unlock access. Admin-tier
-accounts can request a public tier preview via the `tier` query parameter.
-
-Current model rows are always `is_locked:false` for public probabilities, with
-execution masking for free users. Past-kickoff model rows are excluded here.
-For **legacy consensus rows**, rank-based `tier_level/is_locked` masking still
-exists; a locked side can contain a lock explanation instead of the selection.
-Do not apply that old ranking/paywall to modern public model forecasts.
-
-This endpoint is not paginated and does not offer the dashboard's card
-projection. Prefer opportunity board for market lists and dashboard for shaped
-saved cards. Preserve exact market/side/line identity across any normalization.
+their stored tier. Anonymous `?tier=tier3` does not unlock access. Proven
+operators can request a tier preview. All rows use the same access ladder as
+dashboard; model forecast rows no longer bypass locks. Future kickoff, current
+offer eligibility and quality thresholds are required. The journal remains a
+separate settlement/audit resource. Preserve exact market/side/line identity.
 
 ### 8.2 `GET /api/ledger?limit=200`
 
@@ -810,15 +842,15 @@ initialized serverless instances. There is no public checkout-creation endpoint.
 | `tiers` | Map of tier ID to display label: free and three paid tiers. |
 | `ladder` | Map keyed by tier; each value has `unlocked` and `new_vs_previous` feature-key arrays. |
 
-Only `bulletin`, `micro_pack` and `parlay` currently have `available:true` in
+Only `bulletin`, `micro_pack`, `parlay`, `curated_feed`, `full_feed`, and
+`research_markets` currently have `available:true` in
 this catalog. Other catalog entries describe unavailable features. The exported
 `reveal_minutes` maps are currently empty; do not implement timed early-access
 promises from promotional descriptions.
 
-The catalog and current opportunity-route access rules are not identical:
-micro probability data is public, and opportunity-board accumulators are
-returned for any paid/admin account tier, even if catalog wording suggests a
-higher tier. Actual endpoint masking and `execution_locked` are authoritative.
+Basic match probability analysis is public. Opportunity-board accumulator
+analysis starts at Tier 2, and qualifying alternatives start at Tier 3.
+Actual endpoint entitlement checks remain authoritative.
 The backend does not supply subscription prices here. Prices hardcoded in the
 old UI are not a backend pricing contract.
 
@@ -1287,19 +1319,13 @@ with event information. Do not render these server-to-server provisioning
 responses as a public purchase API. `/api/tiers` currently reports billing
 unavailable.
 
-### 13.3 Legacy curated picks
+### 13.3 Curated picks
 
 `POST /api/curated-picks` returns
-`{success,picks:{tier1,tier2,tier3,suppressed?},message?}`. A successful empty
-result can contain empty tier arrays. Its rows can have `match_id`, `sport_key`,
-`home_team`, `away_team`, `outcome_name`, `market`, `tier`, `conviction_score`,
-`fair_odds`, `best_odds`, `p_true`, `selected_at`, `reason`. Suppression entries
-can contain match-ID/reason pairs.
-
-This invokes the legacy curation/write path; it is not the current league
-model's read-only opportunity board, does not guarantee kickoff/line metadata,
-and its handler does not enforce a modern entitlement contract. The new public
-prediction UI should use `/api/opportunity-board`, not call this on mount.
+`{success,tier,picks:[...],count,pick_feed}`. `picks` contains only the caller's
+unlocked current curated cards. It no longer returns every tier's old cached
+curation. The handler is read-only and uses the same price and entitlement
+projection as dashboard/picks. An empty selection is a valid result.
 
 ## 14. Client loading, polling and state handling
 
@@ -1411,8 +1437,9 @@ or a client `tier` parameter is not entitlement.
 | Partial provider failures | Show scoped coverage/freshness warning while keeping successful predictions and observations. |
 | Auth 401 / admin CSRF 403 | Restore session or request login as appropriate; do not retry mutations blindly. |
 
-Default listing order remains **earliest kickoff first, strongest eligible
-probability within that order**. Honor server order or use an equivalent stable
+Default listing order is **earliest kickoff first**. Curated picks use quality
+rank to break equal-kickoff ties; forecasts use strongest outright probability.
+Honor server order or use an equivalent stable
 sort. Do not promote a later “hero” match above the nearest fixtures because it
 has a high probability. Calendar's supplied timezone groups may differ from
 the browser/device timezone; label that distinction explicitly.
