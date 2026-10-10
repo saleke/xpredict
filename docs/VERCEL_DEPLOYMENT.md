@@ -119,14 +119,37 @@ dependencies install from root `requirements.txt`. Public assets are built by
 `scripts/build_vercel.py`, which excludes private data, reports and tests.
 `.vercelignore` also excludes local environments and credentials.
 
+Use the dedicated Vercel project **xpredict** for `saleke/xpredict`. Before
+transferring secrets or deploying, verify the linked project ID in
+`.vercel/project.json` and inspect the remote project with
+`vercel project inspect xpredict --scope alek15`. An existing local link does not establish that the
+project belongs to this repository. Keep unrelated projects and their domains
+separate.
+
+The production-testing origin is **https://xpredict-three.vercel.app**. Its
+Vercel project ID is `prj_cXSQvKFhjWPxoFPw4EmjMNmPOFjw` in scope `alek15`.
+Use this primary domain for public checks; generated deployment URLs and the
+team alias can require Vercel authentication even after promotion.
+
+Keep an explicit `class handler(VercelHandler)` in `api/index.py`. Vercel's
+Python source detector does not recognize an assignment alias such as
+`handler = VercelHandler`; that produces an unmatched-function build error even
+when the file exists. The static `public/` build and native Python function work
+together; no services configuration or catch-all function rewrite is required.
+For a local prebuilt deployment, install `uv` and put it on `PATH`, alongside the
+Vercel CLI. The Python builder uses it to install the pinned runtime and dependencies.
+The root requirements line names the local distribution explicitly:
+`lisa-engine[postgres,cloud] @ ./engine`. A bare `./engine[postgres,cloud]`
+is inferred as a package named `engine` by Vercel's requirements-to-project
+conversion, which conflicts with the declared distribution name `lisa-engine`.
+
 The GitHub workflow runs Python tests against real PostgreSQL 18, frontend
 checks and public packaging. A deployment job depends on all these checks. It
 builds once, stages the prebuilt production artifact without assigning the
 stable domain, verifies API/database configuration, paper mode, static HTML,
 private-path isolation and cron authentication, and then promotes that artifact.
 The pinned Vercel CLI version is 59.11.7. Actual Vercel build/routing and database
-checks must pass on the network-enabled CI runner; they cannot be certified by
-this restricted coding workspace.
+checks must pass against a network-accessible deployment.
 
 Create the Vercel project and a GitHub environment named `production-testing`.
 Set GitHub secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and,
@@ -134,8 +157,7 @@ if staged deployments are protected, `VERCEL_AUTOMATION_BYPASS_SECRET`.
 Set repository variable `VERCEL_CD_ENABLED=1` when ready to activate deployments
 from pushes to main. The Git-based Vercel auto-deployer is disabled in
 `vercel.json` to avoid bypassing the test gate or duplicating deployments.
-Protect main with the engine check if PRs are used. No commit, push or deployment
-has been performed by this preparation.
+Protect main with the engine check if PRs are used.
 [Vercel's CI pattern](https://vercel.com/kb/guide/how-can-i-use-github-actions-with-vercel),
 [staging without domain assignment](https://vercel.com/docs/cli/deploy#skip-domain).
 

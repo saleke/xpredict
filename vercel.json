@@ -7,7 +7,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 300,
-      "excludeFiles": "{data/**,web/**,engine/tests/**,docs/**,deploy/**,.env*,.git/**,.github/**,scripts/**,public/**}"
+      "excludeFiles": "{data/**,web/**,engine/tests/**,docs/**,deploy/**,.env*,env,.git/**,.github/**,scripts/**,public/**}"
     }
   },
   "rewrites": [

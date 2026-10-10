@@ -1,8 +1,11 @@
 .git/
 .github/
 .env*
+env
 .api_key
 .venv/
+.vercel/
+.vercel_python_packages/
 .agents/
 .codex/
 .aws/

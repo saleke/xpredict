@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 .env
 .env.pilot
+env
 .api_key
 data/
 # The dashboard reads live data from the API; no generated JSON is committed.
@@ -13,6 +14,7 @@ dist/
 build/
 public/
 .vercel/
+.vercel_python_packages/
 .env.*
 !.env.example
 
