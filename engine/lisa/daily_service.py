@@ -274,6 +274,7 @@ class DailyService:
             "recommended_stake_pct", "recommended_units", "created_at", "source", "basis",
             "is_recommendation", "model_version")
         inserted = 0
+        pending_values = []
         with self.storage._tx() as conn:
             self.storage.begin_write(conn)
             lease = conn.execute("SELECT owner, expires FROM worker_leases WHERE name=?" + self.storage.lock_suffix, (self.lease_name,)).fetchone()
@@ -291,9 +292,19 @@ class DailyService:
                     row.get('best_odds'), row.get('ev'), None, row.get('stake_fraction', 0) * 100 if recommended else 0,
                     1 if recommended else 0, now.isoformat(), MODEL_VERSION, row.get('basis', 'model_only'),
                     int(recommended), MODEL_VERSION)
+                pending_values.append(values)
+            from .job_budget import check_budget
+            # Bound parameters for SQLite and round trips for remote Postgres.
+            batch_size = 900 // len(columns)
+            for start in range(0,len(pending_values),batch_size):
+                check_budget()
+                batch = pending_values[start:start+batch_size]
                 inserted += conn.execute(
-                    f"INSERT INTO picks ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) ON CONFLICT(dedupe_key) DO NOTHING",
-                    values).rowcount
+                    f"INSERT INTO picks ({','.join(columns)}) VALUES "
+                    + ','.join('('+','.join('?' for _ in columns)+')' for _ in batch)
+                    + ' ON CONFLICT(dedupe_key) DO NOTHING',
+                    tuple(value for row in batch for value in row)).rowcount
+            check_budget()
             day = now.astimezone(ZoneInfo(settings.product_timezone)).date().isoformat()
             payload["forecast"]["day"] = day
             encoded = json.dumps(payload, allow_nan=False)

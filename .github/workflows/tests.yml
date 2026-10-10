@@ -69,6 +69,12 @@ jobs:
           LISA_DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: python scripts/run_deployed_jobs.py --smoke
+      - name: Collect initial paper data and verify saved publication
+        env:
+          LISA_DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: python scripts/run_deployed_jobs.py --bootstrap
       - name: Promote the validated deployment
         env:
           LISA_DEPLOYMENT_URL: ${{ steps.stage.outputs.url }}

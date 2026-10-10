@@ -283,6 +283,22 @@ class RoutingAndModelTests(unittest.TestCase):
         self.assertEqual(len(feed.fetch_calendar([bulk, primary], [LEAGUE], [], purpose='settlement')[LEAGUE]), 1)
         self.assertEqual(bulk.get_fixtures.call_count, 1)
 
+    def test_expired_fallback_budget_preserves_successful_primary_observations(self):
+        other = 'soccer_france_ligue_one'
+        expired = [False]
+        primary = self.provider('football_data',leagues=(LEAGUE,other))
+        def fetch(league):
+            if league == other:
+                expired[0] = True
+            return FixturesResult('football_data',league,(official(),) if league == LEAGUE else ())
+        primary.get_fixtures.side_effect = fetch
+        fallback = self.provider('allsports',leagues=(LEAGUE,other))
+        with patch('lisa.feed.time.monotonic',side_effect=lambda:100 if expired[0] else 0):
+            result = feed.fetch_calendar([primary,fallback],[LEAGUE,other],[])
+        self.assertEqual(len(result[LEAGUE]),1)
+        self.assertEqual(result[other],[])
+        fallback.get_fixtures.assert_not_called()
+
     def test_cancelled_or_unconfirmed_fixtures_never_become_selections(self):
         rows = [official(NOW+timedelta(hours=1), completed=False, status=status,
                          home_score=None, away_score=None) for status in ('POSTPONED', 'CANCELED', 'IN_PLAY')]

@@ -41,12 +41,26 @@ LISA_DEPLOYMENT_URL=https://xpredict-three.vercel.app python3 scripts/run_deploy
 This checks API access, PostgreSQL storage, enforced paper mode, dashboard HTML,
 private-path isolation and unauthenticated cron rejection. It does **not** run
 provider jobs. The production domain passed these checks on 2026-10-10.
+That wiring result did not establish that any collector had run or data had
+been published. Use the separate data check:
+
+```bash
+LISA_DEPLOYMENT_URL=https://xpredict-three.vercel.app python3 scripts/run_deployed_jobs.py --verify-data
+```
+
+It requires recent successful generation, a saved publication and observed
+calendar fixtures. Zero picks can be correct when no real offer passes the
+quality gates; missing/stale collection is a failed check.
 For a protected staging URL, provide the private
 `VERCEL_AUTOMATION_BYPASS_SECRET`; never paste it into a URL or report.
 
 The same script without `--smoke` invokes history, generation and settlement and
 can spend quota. Run those jobs intentionally with a matching private
 `CRON_SECRET`; `--job` narrows the scope. See [deployment](VERCEL.md).
+Use `--bootstrap` to run all three jobs and require the saved-data check after
+them. A cold start batches match-history and pick writes rather than issuing
+one remote SQL request per record. Failed serverless dispatches use a five-minute
+retry gate; healthy generation/history dispatches retain their hourly cadence.
 
 ## Operational and model acceptance
 

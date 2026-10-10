@@ -1441,9 +1441,22 @@ function renderPicks() {
   if (countBadge) countBadge.textContent = picks.length;
 
   if (picks.length === 0) {
+    const pipeline = (state.data && state.data.pipeline) || {};
+    const forecastsAvailable = !!(state.forecast && state.forecast.matches && state.forecast.matches.length);
+    const noPublication = !pipeline.generated_at;
+    const emptyMessage = allActive.length ? 'No curated picks for this filter.'
+      : noPublication && (pipeline.state === 'failed' || pipeline.state === 'broken' || pipeline.has_errors)
+        ? 'Match data collection failed before a prediction board was published.'
+      : noPublication && pipeline.state === 'running'
+        ? 'Collecting match data. The first prediction cycle has not completed yet.'
+      : noPublication
+        ? 'No match data has been published yet.'
+      : forecastsAvailable
+        ? 'No current priced selection clears the feed thresholds. Background match forecasts remain in the Forecasts and Model Board views.'
+        : 'No current priced selection clears the feed thresholds. No upcoming match forecasts are available in this publication.';
     grid.innerHTML = `
       <div style="grid-column: 1/-1; text-align: center; padding: 48px; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-subtle);">
-        ${allActive.length ? 'No curated picks for this filter.' : 'No current priced selection clears the feed thresholds. Background match forecasts remain in the Forecasts and Model Board views.'}
+        ${emptyMessage}
       </div>
     `;
     return;

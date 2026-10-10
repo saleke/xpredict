@@ -130,6 +130,32 @@ class ServerlessTests(unittest.TestCase):
         lease.lease_name = 'dispatch:generation'
         self.assertTrue(lease._claim(NOW+timedelta(days=100)))
 
+    def test_failed_dispatch_retries_after_five_minutes_instead_of_an_hour(self):
+        job = Mock()
+        job.tick.side_effect = [dict(state='failed',error=True),dict(state='ok',error=None)]
+        self.context.jobs = {'generation':job}
+        with patch('lisa.serverless.datetime') as clock:
+            clock.now.return_value = NOW
+            self.assertTrue(run_job(self.context,'generation')['failed'])
+            clock.now.return_value = NOW+timedelta(minutes=4)
+            self.assertEqual(run_job(self.context,'generation')['state'],'not_due')
+            clock.now.return_value = NOW+timedelta(minutes=6)
+            self.assertFalse(run_job(self.context,'generation')['failed'])
+            clock.now.return_value = NOW+timedelta(minutes=12)
+            self.assertEqual(run_job(self.context,'generation')['state'],'not_due')
+        self.assertEqual(job.tick.call_count,2)
+
+    def test_interrupted_dispatch_does_not_suppress_recovery_for_an_hour(self):
+        job = Mock()
+        job.tick.return_value = dict(state='ok',error=None)
+        self.context.jobs = {'generation':job}
+        self.storage.set_telemetry('serverless:last_dispatch:generation',
+            {'timestamp':(NOW-timedelta(minutes=6)).timestamp(),'state':'running'})
+        with patch('lisa.serverless.datetime') as clock:
+            clock.now.return_value = NOW
+            self.assertEqual(run_job(self.context,'generation')['state'],'ok')
+        job.tick.assert_called_once()
+
     def test_encrypted_credentials_survive_restart_disable_and_inherit(self):
         key = Fernet.generate_key().decode()
         store = EncryptedCredentialStore(self.storage,key)

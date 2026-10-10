@@ -98,6 +98,18 @@ requests and one season per function invocation, with durable checkpoints.
 Model fits are cached as validated JSON parameters keyed by data, configuration
 and date to avoid repeating unchanged fits on cold starts.
 
+For a reproducible setup from the configured private environment:
+
+```bash
+python3 scripts/configure_deployed_scheduler.py
+python3 scripts/configure_deployed_scheduler.py --apply --origin https://xpredict-three.vercel.app
+```
+
+The first command reads configuration only. `--apply` validates the paper
+deployment, enables the required extensions, stores the origin/credentials in
+Vault and installs the three named schedules. Database owner extension privileges
+are required. Scheduler configuration alone does not prove successful collection.
+
 Cron's SQL success means a request was queued, not that the application job
 completed. The SQL file includes a query for HTTP status/timeouts. The app's
 Production testing page records starts, completions, failures and interrupted
@@ -148,11 +160,15 @@ checks and public packaging. A deployment job depends on all these checks. It
 builds once, stages the prebuilt production artifact without assigning the
 stable domain, verifies API/database configuration, paper mode, static HTML,
 private-path isolation and cron authentication, and then promotes that artifact.
+It also runs `--bootstrap` before promotion: initial paper jobs must produce
+fresh saved calendar observations and a model publication. An HTTP 200 response
+with an unstarted pipeline cannot pass this gate. Optional provider failures
+remain visible; an empty quality-filtered pick feed does not require padding.
 The pinned Vercel CLI version is 59.11.7. Actual Vercel build/routing and database
 checks must pass against a network-accessible deployment.
 
 Create the Vercel project and a GitHub environment named `production-testing`.
-Set GitHub secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and,
+Set GitHub secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `CRON_SECRET`, and,
 if staged deployments are protected, `VERCEL_AUTOMATION_BYPASS_SECRET`.
 Set repository variable `VERCEL_CD_ENABLED=1` when ready to activate deployments
 from pushes to main. The Git-based Vercel auto-deployer is disabled in
@@ -172,11 +188,14 @@ From an ordinary terminal, supply the stable HTTPS origin as
 
 ```bash
 python3 scripts/run_deployed_jobs.py --smoke
-python3 scripts/run_deployed_jobs.py
+python3 scripts/run_deployed_jobs.py --bootstrap
+python3 scripts/run_deployed_jobs.py --verify-data
 ```
 
 The second command uses Python `requests` to call history, generation and
-settlement sequentially. It prints only safe status/counter fields and refuses
+settlement sequentially and then verifies fresh saved fixtures/publication.
+The third command repeats only that read-only data check. These commands print
+only safe status/counter fields and refuse
 redirects carrying secrets. It can also run one job with `--job settlement`.
 You can trigger due jobs as the owner from the admin Production testing page.
 

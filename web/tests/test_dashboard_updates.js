@@ -51,6 +51,24 @@ check('model forecasts are public research cards without invented executable edg
   assert(getEl('slate-edges-count').textContent==='0 Executable Edges', 'unpriced research counted as executable');
 });
 
+check('an unstarted collector is not described as a quality-filtered slate', () => {
+  const {sandbox,getEl}=evaluate();
+  state(sandbox,{data:{active_picks:[],pipeline:{state:'starting'}},forecast:{matches:[]}});
+  sandbox.renderPicks();
+  const html=getEl('picks-grid').innerHTML;
+  assert(html.includes('No match data has been published yet'), 'missing collection was hidden');
+  assert(!html.includes('clears the feed thresholds') && !html.includes('forecasts remain'), 'uncollected data claimed model evaluation');
+});
+
+check('a published slate without qualifying prices preserves its real forecasts', () => {
+  const {sandbox,getEl}=evaluate();
+  state(sandbox,{data:{active_picks:[],pipeline:{state:'degraded',generated_at:kickoff}},forecast});
+  sandbox.renderPicks();
+  const html=getEl('picks-grid').innerHTML;
+  assert(html.includes('No current priced selection clears'), 'honest empty pick feed missing');
+  assert(html.includes('Background match forecasts remain'), 'real research was hidden');
+});
+
 check('temporary paper access opens the full view without subscription prompts', () => {
   const {sandbox,getEl}=evaluate();
   state(sandbox,{currentTier:'free',tierPreview:'free',data:{active_picks:[pick],

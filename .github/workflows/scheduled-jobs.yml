@@ -25,3 +25,6 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install './engine[validation]'
       - run: python scripts/run_deployed_jobs.py
+      - name: Verify fresh saved data
+        if: always()
+        run: python scripts/run_deployed_jobs.py --verify-data

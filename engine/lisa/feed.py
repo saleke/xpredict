@@ -375,15 +375,16 @@ def fetch_calendar(providers: Sequence[Any], leagues: Sequence[str],
         source, source_leagues = item
         provider = by_name[source]
         rows = []
-        with execution_budget(deadline=min(deadline, job_deadline) if job_deadline else deadline):
-            for league in source_leagues:
-                if time.monotonic() >= deadline:
-                    rows.append((source, league, None, 'skipped: calendar time budget exhausted'))
-                    continue
-                try:
+        source_deadline = min(deadline, job_deadline) if job_deadline else deadline
+        for league in source_leagues:
+            if time.monotonic() >= source_deadline:
+                rows.append((source, league, None, 'skipped: calendar time budget exhausted'))
+                continue
+            try:
+                with execution_budget(deadline=source_deadline):
                     rows.append((source, league, provider.get_fixtures(league), ''))
-                except Exception as exc:
-                    rows.append((source, league, None, safe_error_summary(exc)))
+            except Exception as exc:
+                rows.append((source, league, None, safe_error_summary(exc)))
         return rows
 
     rounds = max((len(route) for route in routes.values()), default=0)

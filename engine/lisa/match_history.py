@@ -2,6 +2,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from .providers.calendar import dedupe_fixtures
+from .job_budget import check_budget
 
 HISTORY_DDL = '''
 CREATE TABLE IF NOT EXISTS match_observations (
@@ -58,6 +59,7 @@ class HistoryRepository:
                     found = conn.execute('SELECT match_id, payload FROM match_observations WHERE source=? '
                         'AND match_id IN (' + ','.join('?' for _ in batch) + ')', (source, *batch)).fetchall()
                     existing.update({(source, r['match_id']): r['payload'] for r in found})
+            changed = []
             for key, values in sorted(staged.items()):
                 previous = existing.get(key)
                 if previous is not None:
@@ -79,9 +81,19 @@ class HistoryRepository:
                     if encoded == previous:
                         continue
                     values = (*values[:-1], encoded)
-                conn.execute('INSERT INTO match_observations VALUES (?, ?, ?, ?, ?, ?) '
+                changed.append(values)
+            # Remote PostgreSQL cannot afford a network round trip per match
+            # during a serverless cold start. Stay below SQLite's historical
+            # 999-parameter ceiling and keep the entire merge atomic.
+            for start in range(0,len(changed),100):
+                check_budget()
+                batch = changed[start:start+100]
+                conn.execute('INSERT INTO match_observations VALUES '
+                    + ','.join('(?, ?, ?, ?, ?, ?)' for _ in batch) + ' '
                     'ON CONFLICT(source, match_id) DO UPDATE SET sport_key=excluded.sport_key, '
-                    'kickoff=excluded.kickoff, observed_at=excluded.observed_at, payload=excluded.payload', values)
+                    'kickoff=excluded.kickoff, observed_at=excluded.observed_at, payload=excluded.payload',
+                    tuple(value for row in batch for value in row))
+            check_budget()
         return len(staged)
 
     def results(self, leagues, *, as_of, years=4):

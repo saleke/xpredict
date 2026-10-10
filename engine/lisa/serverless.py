@@ -19,6 +19,7 @@ _context = None
 _context_lock = threading.Lock()
 JOBS = frozenset(('generation', 'settlement', 'history'))
 JOB_INTERVALS = {'generation': 3600, 'settlement': 900, 'history': 3600}
+FAILED_JOB_RETRY_SEC = 300
 
 
 def bootstrap_owner(auth, environment=None):
@@ -142,12 +143,18 @@ def run_job(context, name):
     try:
         key = 'serverless:last_dispatch:'+name
         last = context.storage.get_telemetry(key) or {}
-        if now.timestamp()-float(last.get('timestamp',0)) < JOB_INTERVALS[name]:
+        interval = (FAILED_JOB_RETRY_SEC if last.get('failed') or last.get('state') == 'running'
+                    else JOB_INTERVALS[name])
+        if now.timestamp()-float(last.get('timestamp',0)) < interval:
             return {'job':name,'state':'not_due'}
-        context.storage.set_telemetry(key,{'timestamp':now.timestamp()})
-        with execution_budget(seconds=210):
-            status = job.tick()
-            check_budget()
+        context.storage.set_telemetry(key,{'timestamp':now.timestamp(),'state':'running'})
+        try:
+            with execution_budget(seconds=210):
+                status = job.tick()
+                check_budget()
+        except Exception:
+            context.storage.set_telemetry(key,{'timestamp':now.timestamp(),'state':'failed','failed':True})
+            raise
         # Provider exception strings and bodies never enter scheduler responses.
         safe = {key:status[key] for key in ('state','predictions_added','settled',
                     'observations','statistics_requests','error_type') if key in status}
@@ -157,6 +164,8 @@ def run_job(context, name):
             if isinstance(detail,dict):
                 failed |= bool(detail.get('error')) or detail.get('state') in ('failed','broken','degraded')
         safe.update(job=name, failed=failed, paper_mode=True)
+        context.storage.set_telemetry(key,{'timestamp':now.timestamp(),
+            'state':'completed','failed':bool(failed)})
         return safe
     finally:
         dispatch._release()
