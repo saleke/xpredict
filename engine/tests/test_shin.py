@@ -1,7 +1,7 @@
 """Shin's method: correctness against known values and structural invariants.
 
 The known-value case [1.16, 5.20] was derived by hand from the published
-algorithm (see docs/DESIGN.md) — independent of this implementation.
+algorithm (see docs/architecture/MODELS.md) — independent of this implementation.
 """
 from __future__ import annotations
 

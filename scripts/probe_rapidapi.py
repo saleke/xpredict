@@ -58,6 +58,7 @@ def main():
         value['checked_at'] = datetime.now(timezone.utc).isoformat()
         encoded = json.dumps(value, indent=2, sort_keys=True)
         if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(encoded + '\n')
         print(encoded)
     settings = RuntimeConfig(load_settings()).settings()

@@ -1,66 +1,35 @@
 # LISA engine
 
-The data-refinery core of **LISA**: ingest multi-book odds → strip bookmaker margin with
-Shin's method → weighted consensus → quality gate → write-once ledger with auto-settlement.
+The Python package behind xPredict. It contains football models, interchangeable
+data providers, the Scalper supply component, shared SQLite/PostgreSQL
+repositories, scheduled jobs, authentication and HTTP handlers.
 
-Built as a **stdlib-only Python package** (runtime has zero dependencies) so the whole
-pipeline runs locally, in CI, or on a $0 machine. Redis/Postgres drivers are optional extras.
-
-## Quickstart
+Install from the repository root:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install pytest          # dev only
-.venv/bin/python -m pytest -q         # 85 tests
-
-.venv/bin/python -m lisa demo          # full cycle + settlement on bundled fixtures
+python3 -m pip install -e './engine[test,postgres,cloud,validation]'
+PYTHONPATH=engine python3 -m pytest engine/tests
+python3 -m lisa --help
 ```
 
-Live API usage (The Odds API key required):
+The `postgres` extra installs database drivers; `cloud` installs credential
+encryption support; `validation` installs the HTTP client for deployed checks.
+The separate `scalper-browser` extra requires a compatible Chromium installation.
+See [local operation](../docs/operations/LOCAL_RUNNING.md) for the application
+launcher and [Scalper](../docs/scalper/README.md) for collectors.
 
-```bash
-export THE_ODDS_API_KEY=your_key   # LISA_ODDS_API_KEY also accepted
-python -m lisa run-cycle               # one ingestion+refinement pass
-python -m lisa settle                  # grade pending ledger rows
-```
+| Area | Modules |
+| --- | --- |
+| Goal/corner modelling | `league_model`, `dixon_coles`, `corners`, `model_policy` |
+| Market contracts and selection | `markets`, `market_policy`, `board`, `pick_feed`, `price_readiness` |
+| Data supply | `providers/`, `scalper/`, `history_service`, `odds_history` |
+| Publication and settlement | `daily_service`, `settlement_service`, `calendar_snapshot` |
+| Persistence | `storage`, `postgres_storage`, `postgres_schema`, `provider_credentials` |
+| Web, accounts and operations | `server`, `serverless`, `admin_api`, `auth`, `runtime`, `observability` |
+| Legacy consensus/research | `shin`, `consensus`, `gate`, `pipeline`, `backtest`, `walkforward` |
 
-Scheduler (adapted cadence: live → spike → prematch → idle) and live-validation metrics:
-
-```bash
-python -m lisa run                     # scheduler loop, runs until stopped
-python -m lisa run --once              # single tick (drop into cron)
-python -m lisa run --duration 168 --metrics data/metrics.jsonl   # one validation week
-python -m lisa report --metrics data/metrics.jsonl               # weekly summary
-```
-
-Optional storage drivers:
-
-```bash
-# Redis hot+cold (needs: pip install redis)
-LISA_STORAGE=redis LISA_REDIS_URL=redis://localhost:6379 python -m lisa run-cycle
-# Postgres cold ledger (needs: pip install 'psycopg[binary]')
-LISA_STORAGE=postgres LISA_DATABASE_URL=postgresql://localhost:5432/lisa python -m lisa run-cycle
-```
-
-## Layout
-
-| Module | Responsibility |
-|---|---|
-| `lisa/shin.py` | Shin's method de-vig (2-way closed form, n-way iteration) + proportional fallback |
-| `lisa/consensus.py` | Per-book de-vig → sharp/margin weighted consensus → stdev/CV agreement |
-| `lisa/gate.py` | Quality gate (75% certainty, 5 books, CV ≤ 10%) + leave-one-out EV execution overlay |
-| `lisa/pipeline.py` | Stage-1 orchestration: ingest → refine → gate → persist + notify (idempotent) |
-| `lisa/settle.py` | 3h-after-kickoff settlement: WIN / LOSS / VOID |
-| `lisa/storage.py` | `Storage` interface + in-memory / Redis / Postgres drivers |
-| `lisa/client.py` | The Odds API transport (`fetch_league_odds`, retry/backoff, credit tracking) + fixture client |
-| `lisa/parsing.py` | Strict Odds-API JSON → domain types (per-market filter, outcome-line harvest) |
-| `lisa/cadence.py` | Pure schedule-state logic (live / spike / prematch / idle) |
-| `lisa/scheduler.py` | Tick loop with adapted cadence + credit-budget guard |
-| `lisa/tracker.py` | JSONL validation trail + weekly `report` summary |
-| `lisa/fixtures.py` | Deterministic bundled payloads covering every gate outcome |
-| `lisa/config.py` | `THE_ODDS_*` credentials + `LISA_*` knobs, strict 9-league scope whitelist |
-| `lisa/notify.py` | Log / Telegram notifier |
-
-See [`docs/DESIGN.md`](../docs/DESIGN.md) for the full engineering analysis: the math,
-edge cases, performance bottlenecks, mitigations and the decisions taken during design
-(notably the 85%→75% gate finding and the EV overlay).
+The legacy consensus pipeline is separate from the active daily model-based
+feed. Its historical backtest is not evidence for the current strategy.
+See [system architecture](../docs/architecture/SYSTEM.md),
+[model boundaries](../docs/architecture/MODELS.md), and the
+[documentation index](../docs/README.md).

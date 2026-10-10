@@ -102,7 +102,7 @@ def evaluate(rows, test_from):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--test-from', default='2024-07-01')
-    parser.add_argument('--output', default='docs/current-model-evaluation.json')
+    parser.add_argument('--output', default='data/reports/current-model-evaluation.json')
     parser.add_argument('--league')
     parser.add_argument('files', nargs='*')
     args = parser.parse_args()
@@ -120,7 +120,9 @@ def main():
             'No historical corner odds, so no corner ROI or executable-price validation',
             'No tuning/calibration on this evaluation period; no profitability approval artifact generated'],
         'leagues': evaluate(rows, start), 'approved_for_staking': False}
-    Path(args.output).write_text(json.dumps(output, indent=2, allow_nan=False) + '\n')
+    destination = Path(args.output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(output, indent=2, allow_nan=False) + '\n')
     print(f'Saved evaluation to {args.output}')
 
 

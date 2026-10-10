@@ -1,4 +1,4 @@
-"""Run current offline lifecycle checks. Original audit evidence stays in docs."""
+"""Run isolated offline publication and settlement lifecycle checks."""
 from pathlib import Path
 import sys
 import unittest

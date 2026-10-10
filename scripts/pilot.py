@@ -13,6 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'engine'))
 
 
+def report_path(filename):
+    directory = ROOT/'data/reports'
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory/filename
+
+
 def preflight():
     """Read local prerequisites without requesting providers or exposing keys."""
     from dataclasses import replace
@@ -45,7 +51,7 @@ def preflight():
                  'account_sample_received','price_sample_received','sample_received','no_price_sample'}
     for provider,filename in (('oddspapi','oddspapi-validation-local.json'),
                               ('the_odds_api','the-odds-api-validation-local.json')):
-        source=ROOT/'docs'/filename
+        source=ROOT/'data/reports'/filename
         state='missing_report'
         checked_at=None
         quotes=0
@@ -89,9 +95,9 @@ def preflight():
             'Docker builds install PostgreSQL dependencies; host drivers are needed only for host execution.',
             'Run PostgreSQL checks and collect the separate live pilot report before accepting operations.']}
     encoded=json.dumps(report,indent=2,allow_nan=False)+'\n'
-    (ROOT/'docs/pilot-readiness.json').write_text(encoded)
+    report_path('pilot-readiness.json').write_text(encoded)
     print(encoded,end='')
-    print('Saved sanitized prerequisites: docs/pilot-readiness.json')
+    print('Saved sanitized prerequisites: data/reports/pilot-readiness.json')
     return 1 if blockers else 0
 
 
@@ -123,11 +129,11 @@ def main():
             except ValueError:
                 print('Pilot report unavailable. Start the pilot and confirm Docker can run locally.')
                 return 1
-            destination=ROOT/'docs/pilot-live-report.json'
+            destination=report_path('pilot-live-report.json')
             encoded=json.dumps(report,indent=2,allow_nan=False)+'\n'
             destination.write_text(encoded)
             print(encoded,end='')
-            print('Saved sanitized report: docs/pilot-live-report.json')
+            print('Saved sanitized report: data/reports/pilot-live-report.json')
             return result.returncode
         return subprocess.run(command+commands[args.action],cwd=ROOT).returncode
     except FileNotFoundError:

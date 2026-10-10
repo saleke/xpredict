@@ -32,4 +32,15 @@ engine/tests/
 # verified-users or report JSON is host-only state.
 web/data/
 .venv/
+.vercel/
+.vercel_python_packages/
+.pytest_cache/
+.agents/
+.codex/
+.aws/
+docs/
+public/
+dist/
+build/
+env
 .github/

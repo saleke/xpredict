@@ -1,8 +1,0 @@
-{
-  "checked_at": "2026-10-03T18:53:08.576847+00:00",
-  "connection": "direct",
-  "detail": "Hostname cannot be resolved; key not authenticated.",
-  "league": "soccer_epl",
-  "provider": "oddspapi",
-  "state": "blocked_network"
-}

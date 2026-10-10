@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only, bounded provider checks. Reports never include keys or error bodies.
 
-PYTHONPATH=engine python scripts/validate_providers.py --output docs/provider-validation.json
+PYTHONPATH=engine python scripts/validate_providers.py --output data/reports/provider-validation.json
 Add --history to check one previous season; --allsports-odds to test odds entitlement.
 No prediction publication, database writes, purchases or notifications occur.
 """
@@ -137,6 +137,7 @@ def main():
                       history=args.history, allsports_odds=args.allsports_odds)
     encoded = json.dumps(report, indent=2, allow_nan=False) + '\n'
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded)
     print(encoded, end='')
     return 0 if report['live_validation_complete'] else 1

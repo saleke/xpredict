@@ -45,6 +45,7 @@ def main():
         report.update(state='failed',error_type=type(exc).__name__,detail='Response and exception text withheld.')
     encoded=json.dumps(report,indent=2,sort_keys=True)+'\n'
     if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded)
     print(encoded,end='')
     return 0 if report['state']=='sample_received' else 1
