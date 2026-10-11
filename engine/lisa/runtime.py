@@ -26,7 +26,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import threading
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional, get_args, get_type_hints
 
 from . import config as cfg
 
@@ -138,6 +138,63 @@ class OverrideError(ValueError):
     """A rejected edit. Carries per-field detail so the UI can show why."""
 
 
+#: Resolved ``Settings`` annotations, filled on first use. ``from __future__
+#: import annotations`` turns every annotation into a string, so the element
+#: type of a tuple field cannot be read directly off ``field.type``.
+_TYPE_HINTS: Optional[dict[str, Any]] = None
+
+
+def _tuple_element_type(name: str, default: tuple) -> Any:
+    """Declared element type of a tuple-typed setting.
+
+    Without this the override path stringified *every* tuple element, so a
+    numeric list such as ``board_accumulator_sizes`` became ``("2", "3", ...)``
+    and later failed an integer comparison mid-cycle.
+    """
+    global _TYPE_HINTS
+    if _TYPE_HINTS is None:
+        try:
+            _TYPE_HINTS = get_type_hints(cfg.Settings)
+        except Exception:
+            _TYPE_HINTS = {}
+    for argument in get_args(_TYPE_HINTS.get(name, ())):
+        if isinstance(argument, type) and argument is not Ellipsis:
+            return argument
+    # No usable annotation: infer from the concrete default so a value is still
+    # typed rather than silently becoming a string.
+    for item in default:
+        if isinstance(item, (bool, int, float, str)):
+            return type(item)
+    return str
+
+
+def _coerce_tuple_item(name: str, element: Any, raw: Any) -> Any:
+    if element is bool:
+        if isinstance(raw, bool):
+            return raw
+        text = str(raw).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        raise OverrideError(f"{name} values must be true or false")
+    if element is int:
+        if isinstance(raw, bool):
+            raise OverrideError(f"{name} values must be whole numbers")
+        try:
+            return int(str(raw).strip())
+        except (TypeError, ValueError):
+            raise OverrideError(f"{name} values must be whole numbers")
+    if element is float:
+        if isinstance(raw, bool):
+            raise OverrideError(f"{name} values must be numbers")
+        try:
+            return float(str(raw).strip())
+        except (TypeError, ValueError):
+            raise OverrideError(f"{name} values must be numbers")
+    return str(raw).strip()
+
+
 def _coerce(name: str, raw: Any) -> Any:
     """Coerce one override to the field's declared type and range."""
     fields = {f.name: f for f in dataclasses.fields(cfg.Settings)}
@@ -168,13 +225,17 @@ def _coerce(name: str, raw: Any) -> Any:
         # A tuple-typed field arrives as a JSON list, a comma-separated string,
         # or a genuine tuple. A single scalar is treated as a one-element list
         # so a form field sending "soccer_epl" does not explode into letters.
+        # Elements are coerced to the declared element type, not blindly to
+        # strings: the console submits list values as text, and a numeric list
+        # left as text would fail the first arithmetic or comparison that uses it.
+        element = _tuple_element_type(name, default)
         if isinstance(raw, str):
             items = [p.strip() for p in raw.split(",") if p.strip()]
         elif isinstance(raw, (list, tuple)):
-            items = [str(p) for p in raw]
+            items = list(raw)
         else:
-            items = [str(raw)]
-        value = tuple(items)
+            items = [raw]
+        value = tuple(_coerce_tuple_item(name, element, item) for item in items)
     elif isinstance(default, int):
         # bool is a subclass of int, but the bool branch above already claimed
         # it, so this only sees genuine integers.

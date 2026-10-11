@@ -406,7 +406,10 @@ class OpportunityBoard:
         self.max_stake = max_stake
         self.max_total_line = max_total_line
         self.max_team_total_line = max_team_total_line
-        self.accumulator_sizes = tuple(sorted(accumulator_sizes))
+        # Coerce defensively: a persisted override that stringified this tuple
+        # must not become a lexicographic sort of strings and then raise on the
+        # integer comparison in ``_accumulators``.
+        self.accumulator_sizes = tuple(sorted(int(size) for size in accumulator_sizes))
         self.volume_target = volume_target
         self.evidence_gate = evidence_gate
         self.configuration_hash = configuration_hash

@@ -309,6 +309,14 @@ class ModelIntegrationTests(unittest.TestCase):
         self.assertEqual({leg.market for leg in accas[0].legs}, {'double_chance', 'totals'})
         self.assertEqual(len({leg.match_id for leg in accas[0].legs}), len(accas[0].legs))
 
+    def test_accumulator_sizes_are_never_left_as_strings(self):
+        # Defence in depth for an override persisted as text: the builder must
+        # still hand ``_accumulators`` integers, otherwise the first size
+        # comparison raises mid-cycle and the whole generation run fails.
+        board = OpportunityBoard(self.model, accumulator_sizes=("2", "3", "4"))
+        self.assertEqual((2, 3, 4), board.accumulator_sizes)
+        self.assertTrue(all(type(size) is int for size in board.accumulator_sizes))
+
     def test_new_markets_settle_draws_and_team_goal_pushes(self):
         score = Score('test', LEAGUE, NOW, True, 1, 1, 'final')
         self.assertEqual(score.grade_pick('double_chance', '1X'), 'WIN')

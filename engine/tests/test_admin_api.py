@@ -696,6 +696,21 @@ class TestAdminSettingsRuntime(unittest.TestCase):
         reloaded = RuntimeConfig(cfg.Settings(), storage=self.c.storage)
         self.assertEqual(9, reloaded.settings().forecast_min_matches)
 
+    def test_numeric_list_override_stays_numeric(self):
+        # The console renders a tuple[int, ...] setting such as
+        # board_accumulator_sizes as a comma-separated list and submits its
+        # elements as strings. Stored as text they fail the integer comparison
+        # in BoardBuilder._accumulators and abort the whole generation cycle
+        # with "'>' not supported between instances of 'str' and 'int'".
+        status, _, _ = self.c.patch(
+            "/api/admin/settings",
+            {"settings": {"board_accumulator_sizes": ["2", "3", "4"]}},
+            cookie=self.cookie, csrf=self.csrf)
+        self.assertEqual(200, status)
+        sizes = self.c.runtime.settings().board_accumulator_sizes
+        self.assertEqual((2, 3, 4), sizes)
+        self.assertTrue(all(type(size) is int for size in sizes))
+
     def test_tampered_override_row_is_discarded_on_load(self):
         # Anything able to write system_telemetry must not be able to use the
         # override row to install a credential or switch a feature on.
