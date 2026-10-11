@@ -168,6 +168,65 @@ class OddsPapiTests(unittest.TestCase):
         self.assertIn('oddspapi', [p.name for p in providers.prices])
         self.assertIn('api_football', [p.name for p in providers.calendar])
 
+    def test_oddspapi_is_also_a_reserved_calendar_source(self):
+        providers = feed.build_providers(Settings(oddspapi_key='new-key'))
+        self.assertIn('oddspapi', [p.name for p in providers.calendar])
+
+    def test_calendar_fixtures_verify_status_and_identity_without_scores(self):
+        now = datetime.now(timezone.utc)
+        payloads = {
+            'account': account_payload(),
+            'tournaments': [{'tournamentId': 17, 'categorySlug': 'england',
+                             'tournamentSlug': 'premier-league'}],
+            'fixtures': [
+                {'fixtureId': 'upcoming-1', 'sportId': 10, 'tournamentId': 17, 'statusId': 0,
+                 'startTime': (now + timedelta(hours=3)).isoformat(),
+                 'participant1Name': 'Arsenal', 'participant2Name': 'Chelsea',
+                 'hasOdds': True,
+                 'externalProviders': {'sofascoreId': 99999, 'betradarId': 44444,
+                     'flashscoreId': None, 'oddinId': None}},
+                {'fixtureId': 'finished-1', 'sportId': 10, 'tournamentId': 17, 'statusId': 2,
+                 'startTime': (now - timedelta(hours=20)).isoformat(),
+                 'participant1Name': 'Liverpool FC', 'participant2Name': 'Man Utd',
+                 'hasOdds': False, 'externalProviders': {}},
+            ],
+        }
+        self.transport.request.side_effect = lambda path, params, key: payloads[path]
+        result = self.provider.get_fixtures(LEAGUE)
+        self.assertEqual(len(result.fixtures), 2)
+        upcoming, finished = result.fixtures
+        self.assertEqual(upcoming['match_id'], 'oddspapi:upcoming-1')
+        self.assertEqual(upcoming['status'], 'SCHEDULED')
+        self.assertFalse(upcoming['completed'])
+        self.assertTrue(upcoming['has_odds'])
+        self.assertEqual(upcoming['external_provider_ids']['sofascoreId'], 99999)
+        self.assertEqual(upcoming['external_provider_ids']['betradarId'], 44444)
+        self.assertNotIn('flashscoreId', upcoming['external_provider_ids'])
+        self.assertAlmostEqual(upcoming['epoch'], (now + timedelta(hours=3)).timestamp(), delta=300)
+        self.assertEqual(finished['status'], 'FINISHED')
+        self.assertFalse(finished['completed'])
+        self.assertIsNone(finished['home_score'])
+        path, params, _ = self.transport.request.call_args_list[-1].args
+        self.assertEqual(path, 'fixtures')
+        self.assertEqual(params['tournamentId'], '17')
+        self.assertIn('language', params)
+
+    def test_unknown_calendar_league_spends_no_request(self):
+        result = self.provider.get_fixtures('soccer_brazil_serie_a')
+        self.assertEqual(result.fixtures, ())
+        self.transport.request.assert_not_called()
+
+    def test_ambiguous_calendar_tournament_is_a_warning_not_a_guess(self):
+        payloads = {'account': account_payload(), 'tournaments': [
+            {'tournamentId': 17, 'categorySlug': 'england', 'tournamentSlug': 'premier-league'},
+            {'tournamentId': 99, 'categorySlug': 'england', 'tournamentSlug': 'premier-league'}]}
+        self.transport.request.side_effect = lambda path, params, key: payloads[path]
+        result = self.provider.get_fixtures(LEAGUE)
+        self.assertEqual(result.fixtures, ())
+        self.assertTrue(any('exactly one' in w for w in result.warnings))
+        called = [call.args[0] for call in self.transport.request.call_args_list]
+        self.assertNotIn('fixtures', called)
+
 
 class CredentialTests(unittest.TestCase):
     def setUp(self):

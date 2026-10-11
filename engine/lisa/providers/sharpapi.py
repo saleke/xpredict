@@ -8,10 +8,12 @@ ladder, the accumulators, Kelly staking, slippage and CLV are all structurally
 empty -- every pick is unpriced, every edge is ``None``, and the board is
 honest about being unable to answer the question it exists to answer.
 
-SharpAPI's free tier is the only multi-book price feed available at zero cost:
-DraftKings and FanDuel, 12 requests per minute, prices delayed 60 seconds. That
-is enough to price a 24-48 hour board; it is not enough to poll aggressively,
-which shapes every decision below.
+SharpAPI's free tier is the reference multi-book price feed for this stack:
+DraftKings and FanDuel, 12 requests per minute, prices delayed 60 seconds.
+(OddsPapi's free plan adds more books on 250 billable calls/month plus always
+unmetered ``/v4/historical-odds``.) This tier is enough to price a 24-48 hour
+board; it is not enough to poll aggressively, which shapes every decision
+below.
 
 Three things this module is careful about
 -----------------------------------------

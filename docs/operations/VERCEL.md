@@ -21,6 +21,13 @@ Supabase Auth, anon keys or service-role HTTP keys. Automatic migrations are
 serialized by a transaction advisory lock and currently apply versions 1–6.
 The connection role needs permission to create and own this private schema.
 
+Vercel's finite jobs cannot run the HTTP Scalper (ESPN corners/results) or
+browser capture. The hybrid deployment runs that collector as a native worker
+against the *same* `lisa_private` schema; see
+[`HYBRID.md`](HYBRID.md) for the worker environment and the
+`LISA_SCALPER_PRIVATE_SCHEMA=1` requirement (without it the worker writes a
+separate `public` schema and the board never sees its data).
+
 ## Required Vercel Production environment variables
 
 Set these in Vercel's **Environment Variables**, not in committed files:

@@ -9,14 +9,15 @@ import math
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
-from .base import SourceTier, ProviderNotAvailableError
+from .base import FixturesResult, SourceTier, ProviderNotAvailableError
 from .diagnostics import http_error, transport_error, safe_error_summary
 from .sharpapi import SharpSnapshot, SharpQuote, MatchOutcome
-from .calendar import normalise_team
+from .calendar import normalise_fixture, normalise_team
 from ..board import MarketPrice
 from ..odds_history import OddsHistoryRepository
 
@@ -32,6 +33,18 @@ TOURNAMENTS = {
  'soccer_portugal_primeira_liga': ('portugal', 'primeira-liga'),
  'soccer_uefa_champions_league': ('international-clubs', 'uefa-champions-league'),
 }
+
+#: ``/v4/fixtures`` ``statusId`` -> the engine's own status vocabulary. Three is
+#: a cancellation (stakes refunded), never a scoreless draw.
+_FIXTURE_STATUS = {0: 'SCHEDULED', 1: 'LIVE', 2: 'FINISHED', 3: 'CANCELED'}
+
+#: Third-party match identities OddsPapi publishes beside its own ``fixtureId``.
+#: They are provenance for cross-source joins (Sofascore, Flashscore, Pinnacle,
+#: Betradar...), never a substitute for the local match identity.
+_EXTERNAL_IDENTITY_KEYS = (
+    'betradarId', 'betgeniusId', 'flashscoreId', 'lsportsId', 'mollybetId',
+    'oddinId', 'opticoddsId', 'pinnacleId', 'sofascoreId', 'txoddsId',
+)
 
 
 def timestamp(value):
@@ -58,7 +71,7 @@ class PrivateTransport:
         from ..job_budget import check_budget, bounded_timeout, budget_sleep
         check_budget()
         if path not in ('account', 'markets', 'tournaments', 'participants',
-                        'odds-by-tournaments', 'historical-odds'):
+                        'odds-by-tournaments', 'historical-odds', 'fixtures'):
             raise ValueError('Unsupported OddsPapi endpoint')
         with self.lock:
             wait = self.next_request - time.monotonic()
@@ -111,6 +124,69 @@ class OddsPapiProvider:
 
     def leagues(self):
         return list(TOURNAMENTS)
+
+    # -- last-resort verified calendar --------------------------------------
+
+    def get_fixtures(self, sport_key: str) -> FixturesResult:
+        """Verified kickoffs, status and identity for one mapped league.
+
+        This is a *reserved* calendar: ``/v4/fixtures`` costs one billable
+        request per league, so the feed routes to it only after every earlier
+        calendar for the league has failed or returned nothing. The endpoint
+        does not carry final scores, so a finished row is a verified finished
+        *identity without a scoreline* -- never a result the model can train on
+        or a settlement can grade. OddsPapi stays a prematch/identity source,
+        never a settlement authority.
+        """
+        target = TOURNAMENTS.get(sport_key)
+        if target is None:
+            return FixturesResult(NAME, sport_key, ())
+        if not self.key:
+            raise ProviderNotAvailableError('ODDSPAPI_KEY is missing', provider=NAME)
+        catalog = self._get('tournaments', {'sportId': 10, 'language': 'en'}, ttl=604800)
+        selected = [r for r in catalog if isinstance(r, dict) and type(r.get('tournamentId')) is int
+                    and (r.get('categorySlug'), r.get('tournamentSlug')) == target]
+        if len(selected) != 1:
+            return FixturesResult(NAME, sport_key, (), warnings=(
+                'OddsPapi catalogue did not resolve exactly one tournament for '
+                'this league; no verified calendar claimed.',))
+        now = datetime.now(timezone.utc)
+        params = {'tournamentId': str(selected[0]['tournamentId']), 'language': 'en',
+                  'from': (now - timedelta(hours=72)).strftime('%Y-%m-%d'),
+                  'to': (now + timedelta(days=60)).strftime('%Y-%m-%d')}
+        rows = self._get('fixtures', params, ttl=self.poll_interval_sec)
+        if isinstance(rows, dict):
+            rows = [rows]
+        if not isinstance(rows, list):
+            raise ValueError('Unexpected OddsPapi fixtures envelope')
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            fixture = self._to_fixture(row, sport_key)
+            if fixture is not None:
+                out.append(fixture)
+        return FixturesResult(NAME, sport_key, tuple(out))
+
+    @staticmethod
+    def _to_fixture(row: Any, sport_key: str) -> Optional[dict[str, Any]]:
+        if not isinstance(row, dict):
+            return None
+        identity = row.get('fixtureId')
+        kickoff = timestamp(row.get('startTime'))
+        home, away = row.get('participant1Name'), row.get('participant2Name')
+        if (not isinstance(identity, str) or not identity or kickoff is None
+                or row.get('sportId') != 10 or not home or not away):
+            return None
+        fixture = normalise_fixture(
+            provider=NAME, sport_key=sport_key, match_id=identity,
+            kickoff_epoch=kickoff.timestamp(), home=str(home).strip(), away=str(away).strip(),
+            status=_FIXTURE_STATUS.get(row.get('statusId'), 'SCHEDULED'))
+        external = row.get('externalProviders')
+        ids = {k: v for k, v in (external.items() if isinstance(external, dict) else ())
+               if k in _EXTERNAL_IDENTITY_KEYS and v is not None and not isinstance(v, bool)}
+        if ids:
+            fixture['external_provider_ids'] = ids
+        fixture['has_odds'] = row.get('hasOdds') is True
+        return fixture
 
     def _cached(self, path, params, ttl):
         identity = 'oddspapi:cache:' + hashlib.sha256(json.dumps(

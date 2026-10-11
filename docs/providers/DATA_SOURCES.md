@@ -11,7 +11,7 @@ Provider access, historical model coverage and usable prices are separate.
 | football-data.org | Verified timed fixtures/results and fallback history | Requires an entitled token and competition mapping |
 | AllSports | Supporting calendars, results and available team/player observations | Missing fields and unavailable account scopes remain missing |
 | API-Football | Supporting fixtures, history and bounded statistics/corners | Account/season limits and settlement reserves constrain collection |
-| The Odds API / direct OddsPapi | Exact bookmaker offers and lines | Quotas, matching and bookmaker timestamps govern eligibility |
+| The Odds API / direct OddsPapi | Exact bookmaker offers and lines; reserved last-resort verified calendar (`/v4/fixtures`, identity without scores) | Quotas, matching and bookmaker timestamps govern eligibility |
 | SharpAPI | Optional supported bookmaker prices | Constructed when configured; does not block other adapters |
 | TheSportsDB | Optional supplementary calendar discovery | Opt-in; clipped responses do not prove completeness |
 | Scalper | Stored calendars, results, statistics and verified browser offers | Independent collectors, source-specific league/book/contract scope |

@@ -293,6 +293,12 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
             reserve=settings.oddspapi_reserve, poll_interval_sec=settings.oddspapi_poll_interval_sec,
             bookmakers=settings.oddspapi_bookmakers)
         price_sources.append(odds)
+        # The same object is also a *reserved* calendar source. calendar_routes
+        # orders it last (outside the explicit priority list), so /v4/fixtures
+        # is only spent after every earlier calendar for a league has failed or
+        # returned nothing. Its rows carry verified kickoffs and third-party
+        # match identity, never a scoreline, so it cannot satisfy settlement.
+        providers.append(odds)
         statuses.append(ProviderStatus(name=odds.name, configured=True, used=True,
             leagues=tuple(odds.leagues()), tier=odds.tier.value))
     if getattr(settings, 'allsports_api_key', ''):

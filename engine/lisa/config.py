@@ -108,6 +108,10 @@ class Settings:
     #   football-data.org   free token, 12 tier-one comps, 10 req/min
     #   TheSportsDB         public key "3", clipped to a handful of rows
     #   SharpAPI            free key, DraftKings + FanDuel, 12 req/min, 60s delay
+    #   OddsPapi            free key, 250 billable calls/mo (odds + fixtures);
+    #                       /v4/historical-odds always unmetered; reserved
+    #                       last-resort verified calendar, never settlement-ish
+    #                       results (the /fixtures endpoint carries no scores)
     football_data_token: str = ""
     sportsdb_key: str = "3"
     #: Optional supporting price source alongside the quota-limited adapters.

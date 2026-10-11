@@ -10,6 +10,7 @@ says otherwise. Configuration defaults are defined in `.env.example` and
 
 - [Local server and workers](operations/LOCAL_RUNNING.md)
 - [Vercel and Supabase production testing](operations/VERCEL.md)
+- [Hybrid deployment: Vercel jobs + native Scalper worker](operations/HYBRID.md)
 - [Isolated Docker/PostgreSQL paper pilot](operations/PAPER_PILOT.md)
 - [Checks and deployment acceptance](operations/CHECKS.md)
 - [Manual paper grading and tier verification](operations/MANUAL_VERIFICATION.md)
