@@ -2261,12 +2261,28 @@ function renderTicker() {
 //   2. The earning ladder is rendered empty when nothing is priced. Filling it
 //      with model-only rows would present a fair price as an offer.
 
-/** Fetch the board. Never throws; failures land in state, not the console. */
+// Guards against overlapping board fetches. This cannot ride on
+// state.modelBoardState because a background poll no longer flips into the
+// loading state, which used to be the implicit in-flight marker.
+let modelBoardInFlight = false;
+
+/** Fetch the board. Never throws; failures land in state, not the console.
+ *  A background poll (force=false) keeps the last published board visible and
+ *  treats a slow, aborted, or non-success cycle as transient, so the fixed 20s
+ *  poll can no longer flash the loading or failure card over good content.
+ *  Only a user refresh or a first load (nothing on screen yet) shows those. */
 async function refreshModelBoard(force) {
-  if (state.modelBoardState === 'loading') return;
-  state.modelBoardState = 'loading';
-  state.modelBoardError = '';
-  renderModelBoard();
+  if (modelBoardInFlight) return;
+  modelBoardInFlight = true;
+
+  // There is nothing to preserve on first load, and a user refresh is expected
+  // to show progress, so only those paths blank the view.
+  const showLoading = force || !state.modelBoard || state.modelBoardState === 'idle';
+  if (showLoading) {
+    state.modelBoardState = 'loading';
+    state.modelBoardError = '';
+    renderModelBoard();
+  }
 
   const url = '/api/opportunity-board' + (force ? '?refresh=1' : '');
   try {
@@ -2277,18 +2293,30 @@ async function refreshModelBoard(force) {
     } catch (e) {
       throw new Error(`HTTP ${res.status}: response was not JSON`);
     }
-    // A 503 carries a real explanation and board:null. Treat it as a failed
-    // cycle to display, not as a transport problem to swallow.
-    state.modelBoard = payload;
-    state.modelBoardState = (payload && payload.success) ? 'ready' : 'failed';
-    if (!payload.success) {
+    if (payload && payload.success) {
+      state.modelBoard = payload;
+      state.modelBoardState = 'ready';
+      state.modelBoardError = '';
+    } else if (showLoading) {
+      // A 503 carries a real explanation and board:null. Treat it as a failed
+      // cycle to display, not as a transport problem to swallow.
+      state.modelBoard = payload;
+      state.modelBoardState = 'failed';
       state.modelBoardError = (payload && payload.error) ||
         'the board cycle did not complete';
     }
+    // Background poll with a non-success payload: leave the last published
+    // board on screen. The next successful poll replaces it.
   } catch (err) {
-    state.modelBoard = null;
-    state.modelBoardState = 'failed';
-    state.modelBoardError = String(err && err.message ? err.message : err);
+    if (showLoading) {
+      state.modelBoard = null;
+      state.modelBoardState = 'failed';
+      state.modelBoardError = String(err && err.message ? err.message : err);
+    }
+    // Otherwise this is a transient transport error, often the 10s abort on a
+    // cold function. Keep the last board rather than repaint a failure card.
+  } finally {
+    modelBoardInFlight = false;
   }
   renderModelBoard();
 }
