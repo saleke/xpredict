@@ -28,6 +28,5 @@
     {"path": "/api/cron/history", "schedule": "17 2 * * *"},
     {"path": "/api/cron/generation", "schedule": "17 5 * * *"},
     {"path": "/api/cron/settlement", "schedule": "17 23 * * *"}
-  ],
-  "git": {"deploymentEnabled": false}
+  ]
 }
