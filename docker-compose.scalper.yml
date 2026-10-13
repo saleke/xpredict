@@ -30,8 +30,10 @@ services:
     entrypoint: ["python3", "-m", "lisa.scalper"]
     command: ["run", "--interval", "60"]
     stop_grace_period: 45s
-    security_opt:
-      - no-new-privileges:true
+    # The scalper runs no HTTP server, so the image's port-8080 HEALTHCHECK is
+    # meaningless here; Docker's own liveness check covers the process.
+    healthcheck:
+      disable: true
     cap_drop:
       - ALL
     logging:
