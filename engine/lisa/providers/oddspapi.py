@@ -38,6 +38,21 @@ TOURNAMENTS = {
 #: a cancellation (stakes refunded), never a scoreless draw.
 _FIXTURE_STATUS = {0: 'SCHEDULED', 1: 'LIVE', 2: 'FINISHED', 3: 'CANCELED'}
 
+#: A descriptive User-Agent. The default ``Python-urllib/x`` is rejected by the
+#: provider's edge (HTTP 403 ``http_access_denied``) from some hosts, and a
+#: named client is simply the correct way to identify the caller.
+_USER_AGENT = 'xPredict-LISA/1.0 (+https://xpredict-three.vercel.app)'
+
+#: Preferred books when ``LISA_ODDSPAPI_BOOKMAKERS`` is blank. The
+#: ``/v4/odds-by-tournaments`` endpoint accepts exactly one bookmaker per
+#: request, so a single liquid book is chosen from those the account entitles.
+_PREFERRED_BOOKMAKERS = (
+    'pinnacle', 'bet365', 'draftkings', 'fanduel', 'betmgm', 'williamhill')
+
+#: ``/v4/odds-by-tournaments`` caps a request at five tournament IDs, so the
+#: selected leagues are chunked; each chunk is its own billable request.
+_MAX_TOURNAMENTS_PER_REQUEST = 5
+
 #: Third-party match identities OddsPapi publishes beside its own ``fixtureId``.
 #: They are provenance for cross-source joins (Sofascore, Flashscore, Pinnacle,
 #: Betradar...), never a substitute for the local match identity.
@@ -80,7 +95,8 @@ class PrivateTransport:
             self.next_request = time.monotonic() + (5.1 if path == 'historical-odds' else 1.1)
             try:
                 request = Request('https://api.oddspapi.io/v4/' + path + '?' +
-                    urlencode(dict(params, apiKey=key)), headers={'Accept': 'application/json'})
+                    urlencode(dict(params, apiKey=key)), headers={
+                        'Accept': 'application/json', 'User-Agent': _USER_AGENT})
                 with self.opener.open(request, timeout=bounded_timeout(10)) as response:
                     raw = response.read(10_000_001)
                 if len(raw) > 10_000_000:
@@ -310,27 +326,44 @@ class OddsPapiProvider:
             if not selected:
                 snapshot.stopped_because = 'no_verified_competitions'
                 return snapshot
-            markets = {str(m['marketId']): m for m in self._get('markets', {'language': 'en'}, ttl=604800)}
+            markets = {str(m['marketId']): m for m in self._get('markets', {'language': 'en', 'sportId': 10}, ttl=604800)}
             participants = self._get('participants', {'sportId': 10, 'language': 'en'}, ttl=604800)
             account = self.account()
-            books = list(self.bookmakers or account['books'][:3])
-            if 'betfair-ex' in books and len(books) > 1:
-                if self.bookmakers:
-                    raise ValueError('Betfair Exchange requires a separate single-bookmaker request')
-                books = [b for b in books if b != 'betfair-ex']
-            if not books or any(b not in account['books'] for b in books):
+            # /v4/odds-by-tournaments accepts exactly one bookmaker per request
+            # (the documented `bookmaker` parameter). Sending several is rejected
+            # with INVALID_PARAMETER, and each extra book would be a separate,
+            # billable request against a 250/month budget -- so one book is
+            # selected: an explicit configuration wins, otherwise the first
+            # preferred book the account entitles (falling back to whatever it
+            # does entitle, so a single-book account still prices).
+            entitled = set(account['books'])
+            candidates = list(self.bookmakers) if self.bookmakers else \
+                list(_PREFERRED_BOOKMAKERS) + sorted(entitled)
+            books = [b for b in candidates if b in entitled][:1]
+            if not books:
                 raise ProviderNotAvailableError('OddsPapi bookmaker entitlement unavailable', provider=NAME)
             if deadline and datetime.now(timezone.utc) >= deadline:
                 snapshot.stopped_because = 'deadline'
                 return snapshot
-            rows = self._get('odds-by-tournaments', {'tournamentIds': ','.join(sorted(selected)),
-                'bookmakers': ','.join(books), 'language': 'en', 'verbosity': 3}, ttl=self.poll_interval_sec)
-            if isinstance(rows, dict) and 'fixtureId' in rows:
-                rows = [rows]
-            if not isinstance(rows, list):
-                raise ValueError('Unexpected OddsPapi event envelope')
+            # The endpoint caps a request at five tournament IDs and one
+            # bookmaker, so the leagues are chunked; each chunk is metered.
+            rows = []
+            tournament_ids = sorted(selected)
+            batches = [tournament_ids[i:i + _MAX_TOURNAMENTS_PER_REQUEST] for i in
+                       range(0, len(tournament_ids), _MAX_TOURNAMENTS_PER_REQUEST)]
+            for batch in batches:
+                if deadline and datetime.now(timezone.utc) >= deadline:
+                    snapshot.stopped_because = 'deadline'
+                    break
+                payload = self._get('odds-by-tournaments', {'tournamentIds': ','.join(batch),
+                    'bookmaker': books[0], 'language': 'en', 'verbosity': 3}, ttl=self.poll_interval_sec)
+                if isinstance(payload, dict) and 'fixtureId' in payload:
+                    payload = [payload]
+                if not isinstance(payload, list):
+                    raise ValueError('Unexpected OddsPapi event envelope')
+                rows.extend(payload)
             quotes, observations = [], []
-            observed = self.received_at['odds-by-tournaments']
+            observed = self.received_at.get('odds-by-tournaments')
             for row in rows:
                 snapshot.rows += 1
                 league = selected.get(str(row.get('tournamentId')))
@@ -372,7 +405,7 @@ class OddsPapiProvider:
                                     snapshot.count('unsupported_contract_or_identity')
             if self.storage:
                 OddsHistoryRepository(self.storage).ingest(observations)
-            snapshot.quotes, snapshot.pages = tuple(quotes), 1
+            snapshot.quotes, snapshot.pages = tuple(quotes), len(batches)
             snapshot.stopped_because = 'batched_competitions'
         except Exception as exc:
             snapshot.error = 'OddsPapi request failed: ' + safe_error_summary(exc)

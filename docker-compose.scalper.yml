@@ -1,0 +1,41 @@
+# Always-on Scalper worker against the SHARED production database.
+#
+# Vercel cannot host the continuous Scalper, so this compose file runs the
+# collector as a persistent container on a worker host while Vercel keeps
+# serving the dashboard and finite jobs. Both sides must point at the same
+# PostgreSQL database and use LISA_SCALPER_PRIVATE_SCHEMA=1 so the worker
+# writes the lisa_private schema Vercel reads.
+#
+# Usage:
+#   cp .env.scalper.example .env.scalper   # then fill in real values
+#   docker-compose -f docker-compose.scalper.yml up -d --build
+#   docker-compose -f docker-compose.scalper.yml logs -f
+#   docker-compose -f docker-compose.scalper.yml down
+#
+# This file deliberately does NOT include the local PostgreSQL service: the
+# worker reads the already-deployed Supabase database.
+services:
+  scalper:
+    build: .
+    image: lisa-scalper:local
+    restart: unless-stopped
+    env_file: .env.scalper
+    environment:
+      # Forced so a missing/mistaken value in .env.scalper cannot silently
+      # write a separate public schema the board never sees.
+      LISA_STORAGE: postgres
+      LISA_PROVIDER_CREDENTIALS_BACKEND: postgres
+      LISA_SCALPER_PRIVATE_SCHEMA: "1"
+      LISA_SCALPER_MODE: supporting
+    entrypoint: ["python3", "-m", "lisa.scalper"]
+    command: ["run", "--interval", "60"]
+    stop_grace_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

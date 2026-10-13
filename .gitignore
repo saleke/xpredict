@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 .env
 .env.pilot
+# Production secrets file (no leading dot, so the .env.* rule below misses it).
+env.production
+env.production.*
 env
 .api_key
 data/
@@ -17,6 +20,7 @@ public/
 .vercel_python_packages/
 .env.*
 !.env.example
+!.env.scalper.example
 
 # Deploy updater bookkeeping: runtime log, not source.
 deploy/update.log
