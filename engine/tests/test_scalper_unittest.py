@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +24,55 @@ from lisa.storage import SqliteStorage
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
 LEAGUE = 'soccer_epl'
+
+
+class _EmptySnapshot:
+    """A price snapshot that quoted nothing, as the bridge does with no odds."""
+
+    rows = 0
+    pages = 0
+    error = None
+    quotes = ()
+    truncated = False
+    dropped = {}
+    stopped_because = 'stored_observations_only'
+
+    @property
+    def dropped_total(self):
+        return 0
+
+    def to_dict(self):
+        return {'source': 'scalper', 'quotes': 0, 'rows': 0, 'pages': 0, 'dropped': {},
+                'truncated': False, 'error': None,
+                'stopped_because': 'stored_observations_only'}
+
+
+class _EmptyOutcome:
+    prices = {}
+    matched_events = 0
+    unmatched_events = 0
+    ambiguous_events = 0
+    contested_fixtures = 0
+
+    def to_dict(self):
+        return {'matched_events': 0, 'unmatched_events': 0,
+                'ambiguous_events': 0, 'contested_fixtures': 0}
+
+
+class _ZeroPriceScalper:
+    """A source that is both calendar and price and matched no prices."""
+
+    name = 'scalper'
+    storage = None
+
+    def is_available(self):
+        return True
+
+    def fetch(self, **kwargs):
+        return _EmptySnapshot()
+
+    def match(self, quotes, fixtures, **kwargs):
+        return _EmptyOutcome()
 
 
 def interchange(*, now=NOW, eid='e1', source='local_book', quotes=True):
@@ -292,6 +342,34 @@ class ScalperTests(unittest.TestCase):
         providers = feed.build_providers(settings)
         self.assertEqual([p.name for p in providers.calendar], ['scalper'])
         self.assertEqual([p.name for p in providers.prices], ['scalper'])
+
+    def test_unknown_board_league_is_dropped_not_fatal(self):
+        # A stale or hand-edited env value must never take the whole cycle down.
+        settings = config.Settings(scalper_mode='supporting',
+            board_leagues=(LEAGUE, 'soccer_not_a_real_league'))
+        providers = feed.build_providers(settings)
+        scalper = next(p for p in providers.calendar if p.name == 'scalper')
+        self.assertEqual(scalper.leagues(), (LEAGUE,))
+
+    def test_string_board_league_value_cannot_explode_into_letters(self):
+        settings = config.Settings(scalper_mode='supporting',
+            board_leagues=f'{LEAGUE},soccer_spain_la_liga')
+        providers = feed.build_providers(settings)
+        scalper = next(p for p in providers.calendar if p.name == 'scalper')
+        self.assertEqual(scalper.leagues(), (LEAGUE, 'soccer_spain_la_liga'))
+
+    def test_price_stage_does_not_clobber_the_calendar_fixture_count(self):
+        status = feed.ProviderStatus(name='scalper', configured=True, used=True,
+            fixtures=27, leagues=(LEAGUE,))
+        report = feed.FeedReport(began=NOW, providers=[status])
+        providers = feed.ProviderSet(calendar=[], statuses=[status], prices=[_ZeroPriceScalper()])
+        feed.fetch_prices(providers, [types.SimpleNamespace(sport_key=LEAGUE)],
+            types.SimpleNamespace(sharpapi_max_pages=1, sharpapi_max_kickoff_gap_h=6.0),
+            report, window=48.0, now=NOW)
+        self.assertEqual(status.fixtures, 27)
+        self.assertEqual(status.prices, 0)
+        self.assertEqual(status.to_dict()['prices'], 0)
+        self.assertEqual(status.to_dict()['fixtures'], 27)
 
     def test_history_only_scalper_does_not_block_calendar_fallback(self):
         payload = interchange(quotes=False)

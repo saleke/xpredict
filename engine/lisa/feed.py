@@ -78,7 +78,13 @@ class ProviderStatus:
     configured: bool
     used: bool
     leagues: tuple[str, ...] = ()
+    #: Calendar fixtures this source contributed this cycle. Never reused for
+    #: the price stage: a provider can be both (the Scalper bridge is), and the
+    #: price row count must not overwrite the fixture count it just earned.
     fixtures: int = 0
+    #: Price rows this source matched this cycle, counted separately so the two
+    #: roles stay distinguishable in the report.
+    prices: int = 0
     error: str = ""
     degraded: bool = False
     tier: str = SourceTier.OFFICIAL.value
@@ -87,6 +93,7 @@ class ProviderStatus:
         return {
             "name": self.name, "configured": self.configured, "used": self.used,
             "leagues": list(self.leagues), "fixtures": self.fixtures,
+            "prices": self.prices,
             "error": self.error, "degraded": self.degraded, "tier": self.tier,
         }
 
@@ -230,7 +237,18 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
     scalper = None
     if scalper_mode != 'off':
         from .providers.scalper import ScalperProvider
-        scalper = ScalperProvider(leagues=getattr(settings, 'board_leagues', ()),
+        # A stale or hand-edited configuration value must never take the whole
+        # cycle down. Normalise it, then keep only keys this build understands:
+        # an unrecognised league is dropped (and logged) instead of raising
+        # ``Scalper requires known league keys`` from provider construction.
+        requested = getattr(settings, 'board_leagues', ())
+        if isinstance(requested, str):
+            requested = tuple(part.strip() for part in requested.split(',') if part.strip())
+        requested = tuple(requested or ())
+        unknown = sorted({key for key in requested if key not in LEAGUES})
+        if unknown:
+            logger.warning('scalper: ignoring unrecognised board league(s): %s', ', '.join(unknown))
+        scalper = ScalperProvider(leagues=tuple(key for key in requested if key in LEAGUES),
             fixture_max_age=getattr(settings, 'scalper_fixture_max_age_sec', 900),
             quote_max_age=getattr(settings, 'scalper_quote_max_age_sec', 300))
         providers.append(scalper)
@@ -805,7 +823,7 @@ def fetch_prices(provider_set: ProviderSet, fixtures: Sequence[Fixture],
         report.price_match.update(matched_fixtures=len(priced), sources=match_sources)
         for status in report.providers:
             if status.name == source.name:
-                status.fixtures = len(outcome.prices)
+                status.prices = len(outcome.prices)
                 if snapshot.error:
                     status.error = (status.error+'; '+snapshot.error).strip('; ')
                     status.degraded = True

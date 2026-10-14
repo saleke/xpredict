@@ -165,7 +165,7 @@ class NearestFixtureTests(unittest.TestCase):
                     self.assertIsNotNone(publication)
                     self.assertEqual(publication['forecast']['count'], 1)
                     self.assertTrue(publication['window_selection']['expanded'])
-                    upcoming = saved_daily_board(store, runtime.settings())['board']
+                    upcoming = saved_daily_board(store, runtime.settings(), now=NOW)['board']
                     self.assertEqual(len(upcoming['all_upcoming']), 1)
                     self.assertEqual(upcoming['this_week'], [])
                     count = store.count_picks()['total']

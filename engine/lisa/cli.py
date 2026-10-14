@@ -84,7 +84,8 @@ def _cmd_feed(args: argparse.Namespace) -> int:
         else:
             state = "ok"
         detail = provider.error or (
-            f"{provider.fixtures} fixtures across {len(provider.leagues)} league(s)"
+            f"{provider.fixtures} fixtures, {provider.prices} price rows "
+            f"across {len(provider.leagues)} league(s)"
         )
         print(f"  [{state:8s}] {provider.name:20s} {detail}")
     for err in report.errors:
