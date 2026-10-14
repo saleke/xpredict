@@ -2663,13 +2663,15 @@ function renderModelBoardAccumulators() {
           </div>
           <div class="table-scroll-container" style="margin-top:12px;"><table class="data-table">${MB_HEAD}
             <tbody>${matchesByKickoff(a.legs).map(mbOpportunityRow).join('')}</tbody></table></div>
-          ${Array.isArray(a.warnings) && a.warnings.length ? `
-            <ul style="margin-top:10px; font-size:12px; color: var(--warn);">
-              ${a.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
         </div>`;
       }).join('')
     : `<p class="alpha-sub">No accumulators built for this cycle${
         anyPriced ? '' : ' &mdash; parlays need a real price per leg to be worth publishing'}.</p>`;
+
+  // The same caveats apply to nearly every slip, so state them once here rather
+  // than repeating the same warnings under every card. The per-slip figure that
+  // actually differs -- the correlation penalty -- is already shown on each card.
+  const caveats = [...new Set(accas.flatMap(a => Array.isArray(a.warnings) ? a.warnings : []))];
 
   el.innerHTML = `
     <div class="alpha-card">
@@ -2679,6 +2681,8 @@ function renderModelBoardAccumulators() {
           applied to the joint probability and the naive product is shown beside it,
           because multiplying leg probabilities assumes independence and
           same-matchday legs are not independent.</p>
+        ${caveats.length ? `<ul class="alpha-sub" style="margin:6px 0 0 0; padding-left:16px; color: var(--text-muted);">
+          ${caveats.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
       </div>
       <span class="pill-accent">${accas.length}</span></div>
       ${body}
