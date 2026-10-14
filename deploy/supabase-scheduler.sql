@@ -56,7 +56,7 @@ REVOKE ALL ON FUNCTION lisa_scheduler.enqueue(TEXT) FROM PUBLIC;
 -- Named jobs are updated when this setup is rerun. These are UTC schedules.
 SELECT cron.schedule('xpredict-history','7 * * * *',
                      $job$SELECT lisa_scheduler.enqueue('history');$job$);
-SELECT cron.schedule('xpredict-generation','17 * * * *',
+SELECT cron.schedule('xpredict-generation','2,17,32,47 * * * *',
                      $job$SELECT lisa_scheduler.enqueue('generation');$job$);
 SELECT cron.schedule('xpredict-settlement','*/15 * * * *',
                      $job$SELECT lisa_scheduler.enqueue('settlement');$job$);

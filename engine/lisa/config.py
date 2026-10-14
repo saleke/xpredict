@@ -136,6 +136,9 @@ class Settings:
     api_football_key: str = ""
     api_football_daily_limit: int = 100
     api_football_bookmakers: tuple[str, ...] = ()
+    #: Disable without discarding the key (e.g. a subscription that does not
+    #: cover the current season). ESPN supplies corners/shots/results instead.
+    api_football_enabled: bool = True
     model_validation_path: str = ""
     allsports_api_key: str = ""
     allsports_hourly_limit: int = 260
@@ -417,6 +420,7 @@ def load_settings() -> Settings:
         api_football_key=os.getenv("API_FOOTBALL_KEY", "").strip(),
         api_football_daily_limit=_int("LISA_API_FOOTBALL_DAILY_LIMIT", 100),
         api_football_bookmakers=_tuple("LISA_API_FOOTBALL_BOOKMAKERS", ()),
+        api_football_enabled=_bool("LISA_ENABLE_API_FOOTBALL", True),
         model_validation_path=os.getenv('LISA_MODEL_VALIDATION_PATH', '').strip(),
         allsports_api_key=os.getenv('ALLSPORTS_API_KEY', '').strip(),
         allsports_hourly_limit=_int('LISA_ALLSPORTS_HOURLY_LIMIT', 260),

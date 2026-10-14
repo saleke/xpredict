@@ -18,7 +18,7 @@ from .job_budget import execution_budget, check_budget
 _context = None
 _context_lock = threading.Lock()
 JOBS = frozenset(('generation', 'settlement', 'history'))
-JOB_INTERVALS = {'generation': 3600, 'settlement': 900, 'history': 3600}
+JOB_INTERVALS = {'generation': 900, 'settlement': 900, 'history': 3600}
 FAILED_JOB_RETRY_SEC = 300
 
 

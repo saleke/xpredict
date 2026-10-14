@@ -311,7 +311,7 @@ def build_providers(settings: Any, *, transport: Optional[HttpTransport] = None,
             price_sources.append(supporting)
         statuses.append(ProviderStatus(name=supporting.name, configured=True, used=True,
             leagues=tuple(supporting.leagues()), tier=supporting.tier.value))
-    if getattr(settings, 'api_football_key', ''):
+    if getattr(settings, 'api_football_key', '') and getattr(settings, 'api_football_enabled', True):
         from .providers.api_football import ApiFootballProvider
         api = ApiFootballProvider(settings.api_football_key,
             daily_limit=settings.api_football_daily_limit, bookmakers=settings.api_football_bookmakers)

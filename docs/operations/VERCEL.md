@@ -87,8 +87,11 @@ dashboard. In Vault, create:
 | `xpredict_vercel_bypass` | Optional deployment-protection automation bypass secret, if the stable origin is protected |
 
 Run the prepared SQL in the dedicated project's SQL Editor. It schedules
-history hourly at minute 7, generation hourly at minute 17, and settlement every
-15 minutes. Named schedules can be updated by rerunning the SQL. Requests are
+history hourly at minute 7, generation every 15 minutes (minutes 2, 17, 32 and
+47), and settlement every 15 minutes. Published prices stay usable for 30
+minutes, so the 15-minute generation cadence keeps the board continuously
+priced; the same cadence is enforced by the job guard (`JOB_INTERVALS`).
+Named schedules can be updated by rerunning the SQL. Requests are
 asynchronous and the database does not hold an application transaction while
 the provider work runs. Scheduler requests allow up to 300 seconds; the app
 has a 210-second cooperative work budget, small resumable history batches, and
