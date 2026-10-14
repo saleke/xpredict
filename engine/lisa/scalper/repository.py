@@ -80,6 +80,18 @@ class ScalperRepository:
                                (source, resource)).fetchone()
         return dict(row) if row else None
 
+    def resources(self, source):
+        """Every cached resource for a source in ONE round-trip.
+
+        The calendar planner inspects every league/day before it fetches, which
+        is hundreds of point reads per cycle; against a high-latency database
+        those reads alone exhaust the cycle budget. Callers read this dict
+        instead of calling ``resource`` in a loop.
+        """
+        with self.storage._tx() as conn:
+            rows = conn.execute('SELECT * FROM scalper_resources WHERE source=?', (source,)).fetchall()
+        return {row['resource']: dict(row) for row in rows}
+
     def source_state(self, source):
         with self.storage._tx() as conn:
             row = conn.execute('SELECT * FROM scalper_sources WHERE source=?', (source,)).fetchone()

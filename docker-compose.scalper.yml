@@ -28,7 +28,11 @@ services:
       LISA_SCALPER_PRIVATE_SCHEMA: "1"
       LISA_SCALPER_MODE: supporting
     entrypoint: ["python3", "-m", "lisa.scalper"]
-    command: ["run", "--interval", "60"]
+    # The worker talks to a remote database (this host is ~190 ms from
+    # eu-west-1), so repository calls are expensive. The planner batches its
+    # cache reads, and the cycle budget is raised well above the default 45 s so
+    # a cold pass still completes instead of timing out before its first fetch.
+    command: ["run", "--interval", "60", "--cycle-seconds", "300"]
     stop_grace_period: 45s
     # The scalper runs no HTTP server, so the image's port-8080 HEALTHCHECK is
     # meaningless here; Docker's own liveness check covers the process.

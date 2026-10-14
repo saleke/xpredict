@@ -63,7 +63,7 @@ handler enforce zero stakes).
 LISA_SCALPER_PRIVATE_SCHEMA=1 python3 -m lisa.scalper once --leagues soccer_epl
 
 # Continuous worker (all 14 ESPN leagues), 60s between cycles:
-LISA_SCALPER_PRIVATE_SCHEMA=1 python3 -m lisa.scalper run --interval 60
+LISA_SCALPER_PRIVATE_SCHEMA=1 python3 -m lisa.scalper run --interval 60 --cycle-seconds 300
 
 # Health/lease/request-state of the shared repository:
 python3 -m lisa.scalper status
@@ -80,6 +80,23 @@ Then confirm from the deployed dashboard (or `scripts/run_deployed_jobs.py
 --verify-data`) that fixtures carry `scalper:espn:...` identities and corners
 start appearing in the priced feed. Settlement consumes the ESPN final scores;
 verify later final scores and ledger grades appear without delay.
+
+## Remote database latency
+
+The worker assumes a database within a few milliseconds. Pointed at a remote
+Supabase region it is tens to hundreds of times slower per call (a Lagos host to
+`eu-west-1` measures ~190 ms round-trip, ~1 s per `_tx`), so the cycle budget
+must cover that:
+
+- The calendar planner reads every cached resource for a source in **one**
+  query (`ScalperRepository.resources`) and reuses it, instead of one lookup per
+  league/day. Source circuits are cached for the duration of a tick and evicted
+  on any failure or merge, so a cooldown still takes effect mid-tick.
+- Run with `--cycle-seconds 300` (the maximum). A cold pass over 14 leagues
+  otherwise exhausts the default 45 s budget while still planning, and logs
+  `{"requests": 0, "error": "cycle_budget_exhausted"}` without fetching anything.
+- For a permanent fix, co-locate the worker with the database; batching only
+  papers over the round-trip cost.
 
 ## Supervision
 

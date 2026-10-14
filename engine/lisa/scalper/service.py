@@ -15,6 +15,8 @@ from .sources import ESPN_LEAGUES, EspnSource, OpenFootballSource, SportyBetSour
 
 MAX_BYTES = 3_000_000
 
+_UNSET = object()
+
 
 class ScalperTransport(HttpTransport):
     def _single(self, parts, headers, state, host, *, method='GET', body=None):
@@ -91,12 +93,26 @@ class ScalperService:
         self.owner = uuid.uuid4().hex
         self._lock = threading.Lock()
         self.requests = 0
+        self._state_cache = {}
 
-    def request(self, source, resource, url, parser, *, ttl, now):
+    def _source_state(self, source):
+        """Source circuit cached for the duration of a tick.
+
+        A single tick asks for the same source's state dozens of times (every
+        calendar day, feed and summary); on a high-latency database those reads
+        alone consume the cycle budget. Failures and successful merges evict the
+        cache, so a cooldown still takes effect mid-tick.
+        """
+        if source not in self._state_cache:
+            self._state_cache[source] = self.repository.source_state(source)
+        return self._state_cache[source]
+
+    def request(self, source, resource, url, parser, *, ttl, now, cached=_UNSET):
         """Last good state is committed only AFTER schema validation."""
         check_budget()
-        cached = self.repository.resource(source, resource)
-        if self.repository.source_state(source)['next_attempt'] > now.timestamp():
+        if cached is _UNSET:
+            cached = self.repository.resource(source, resource)
+        if self._source_state(source)['next_attempt'] > now.timestamp():
             return {'source': source, 'resource': resource, 'state': 'source_cooldown'}
         if cached and cached['next_attempt'] > now.timestamp():
             return {'source': source, 'resource': resource, 'state': 'resource_cooldown'}
@@ -142,11 +158,13 @@ class ScalperService:
             return self._request_failure(source, resource, cached, now, exc)
         # Database failures belong to the worker, not a publisher's circuit.
         HistoryRepository(self.storage).ingest(accepted, observed_at=now)
+        self._state_cache.pop(source, None)  # accept() reset the source circuit
         return dict(source=source, resource=resource, state='updated', fixtures=len(batch.fixtures),
                     quotes=len(batch.quotes), merge_ms=merge_ms,
                     warnings=list(batch.warnings))
 
     def _request_failure(self, source, resource, cached, now, exc):
+        self._state_cache.pop(source, None)  # a failure may open a source circuit
         status = getattr(exc, 'http_status', None)
         failures = max((cached or {}).get('failures', 0), self.repository.source_state(source)['failures'])
         error = ('access_denied' if status in (401, 403) else 'rate_limited' if status == 429 else
@@ -162,6 +180,8 @@ class ScalperService:
     def _calendar(self, now):
         tasks = []
         rows = self.repository.fixtures(self.leagues, now=now, include_stale=True)
+        # ONE read for every cached calendar instead of one read per league/day.
+        resources = self.repository.resources(self.espn.name)
         live = {(r['sport_key'], datetime.fromtimestamp(r['epoch'], timezone.utc).date())
                 for r in rows if r['status'] in ('LIVE', 'HT')}
         for league in self.leagues:
@@ -171,7 +191,7 @@ class ScalperService:
             # Soccer's inspected endpoint rejects date ranges (HTTP 400).
             # Each successful daily response contains ALL fixtures for that
             # league/day. Known season calendars prune irrelevant future days.
-            today_resource = self.repository.resource(self.espn.name, f'calendar:{league}:{today}')
+            today_resource = resources.get(f'calendar:{league}:{today}')
             calendar = None
             if today_resource and today_resource['payload']:
                 metadata = json.loads(today_resource['payload'])
@@ -190,7 +210,7 @@ class ScalperService:
                 if offset > 0 and calendar is not None and day not in calendar:
                     continue
                 resource = f'calendar:{league}:{day}'
-                previous = self.repository.resource(self.espn.name, resource)
+                previous = resources.get(resource)
                 active = (league, day) in live
                 if previous and previous['expires_at'] > now.timestamp():
                     continue
@@ -204,8 +224,9 @@ class ScalperService:
                 break
             results.append(self.request(self.espn.name, resource, self.espn.scoreboard_url(league, day),
                 lambda p, now, league=league: self.espn.parse_scoreboard(p, league, now=now),
-                ttl=lambda batch, ttl=ttl: ttl if batch.fixtures else 1800, now=now))
-            if self.repository.source_state(self.espn.name)['next_attempt'] > now.timestamp():
+                ttl=lambda batch, ttl=ttl: ttl if batch.fixtures else 1800, now=now,
+                cached=resources.get(resource)))
+            if self._source_state(self.espn.name)['next_attempt'] > now.timestamp():
                 break
         return results
 
@@ -231,7 +252,8 @@ class ScalperService:
             if previous and previous['expires_at'] > now.timestamp():
                 continue
             result = self.request(self.espn.name, key, self.espn.summary_url(league, eid),
-                lambda p, now, league=league, eid=eid: self.espn.parse_summary(p, league, eid, now=now), ttl=ttl, now=now)
+                lambda p, now, league=league, eid=eid: self.espn.parse_summary(p, league, eid, now=now),
+                ttl=ttl, now=now, cached=previous)
             results.append(result)
         return results
 
@@ -260,13 +282,14 @@ class ScalperService:
         if not self.openfootball:
             return []
         current = now.year if now.month >= 7 else now.year - 1
+        resources = self.repository.resources(self.openfootball.name)
         tasks = []
         for league in self.leagues:
             if league not in self.openfootball.leagues:
                 continue
             for year in (current, current - 1):
                 resource = f'season:{league}:{year}'
-                previous = self.repository.resource(self.openfootball.name, resource)
+                previous = resources.get(resource)
                 if previous and previous['expires_at'] > now.timestamp():
                     continue
                 if previous and previous['next_attempt'] > now.timestamp():
@@ -279,7 +302,7 @@ class ScalperService:
         year = -negative_year
         result = self.request(self.openfootball.name, resource, self.openfootball.url(league, year, now=now),
             lambda p, now: self.openfootball.parse(p, league, year, now=now),
-            ttl=86400 if year == current else 30 * 86400, now=now)
+            ttl=86400 if year == current else 30 * 86400, now=now, cached=resources.get(resource))
         return [result]
 
     def tick(self, *, now=None):
@@ -289,6 +312,7 @@ class ScalperService:
         claimed = False
         outcomes = []
         self.requests = 0
+        self._state_cache = {}
         try:
             claimed = self.repository.claim(self.owner, now, self.cycle_seconds + 30)
             if not claimed:
