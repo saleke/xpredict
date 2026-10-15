@@ -320,10 +320,13 @@ def build_dashboard(
         "won": sum(1 for p in settled if p.get("result") == "WIN"),
         "lost": sum(1 for p in settled if p.get("result") == "LOSS"),
         "void": sum(1 for p in settled if p.get("result") == "VOID"),
+        "half_win": sum(1 for p in settled if p.get("result") == "HALF_WIN"),
+        "half_loss": sum(1 for p in settled if p.get("result") == "HALF_LOSS"),
     }
     if storage is not None and hasattr(storage, "count_picks"):
         try:
-            counts = storage.count_picks()
+            sc = storage.count_picks()
+            counts.update({k: v for k, v in sc.items() if k not in ("half_win", "half_loss")})
         except Exception:
             pass
 
@@ -391,7 +394,7 @@ def build_dashboard(
             "won_count": counts.get("won"),
             "lost_count": counts.get("lost"),
             "win_rate": (cal_rep.get("win_rate") if cal_rep else None),
-            "win_rate_effective": (counts.get("won") / counts.get("settled")) if (counts.get("settled") or 0) > 0 else None,
+            "win_rate_effective": ((counts.get("won",0) + 0.5*counts.get("half_win",0)) / counts.get("settled")) if (counts.get("settled") or 0) > 0 else None,
             "win_rate_scope": "all_settled_ledger",
             "win_rate_calibration_binary": (cal_rep.get("win_rate") if cal_rep else None),
             "brier_score": cal_rep.get("brier_score") if cal_rep else None,
