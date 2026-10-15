@@ -226,7 +226,8 @@ def project_board_access(publication, settings, tier, *, telegram_verified=False
     board['accumulators'] = sorted(accumulators, key=lambda acca: (kickoff_order(acca['legs'][0]), -acca['p_adjusted']))
     board['execution_locked'] = rank < 1
     board['research_access'] = {'available': rank >= 3, 'minimum_tier': 'tier3',
-        'candidate_count': len(alternatives), 'evaluated_candidates': len(population),
+        'candidate_count': len(board.get('research', [])),
+        'evaluated_candidates': len(population),
         'qualifying_candidates': info['qualifying_candidates'], 'max_alternatives_per_match': 2}
     publication['pick_feed'] = dict(info, tier=tier, unlocked_count=len(allowed))
     publication['active_picks'] = visible
