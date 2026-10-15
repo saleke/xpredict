@@ -158,6 +158,21 @@ def _quota_state(settings: Any, remaining: Optional[int]) -> str:
     return "ok"
 
 
+def _effective_win_rate(counts: dict) -> Optional[float]:
+    """Full-ledger win rate with half-wins/half-losses counted as 0.5.
+
+    Returns ``None`` when nothing has settled, so the UI can show "n/a" rather
+    than a misleading 0%. VOID rows are excluded from the denominator upstream.
+    """
+    settled = counts.get("settled") or 0
+    if settled <= 0:
+        return None
+    won = counts.get("won") or 0
+    half_win = counts.get("half_win") or 0
+    half_loss = counts.get("half_loss") or 0
+    return (won + 0.5 * half_win + 0.5 * half_loss) / settled
+
+
 def _pick_row_to_card(p: dict) -> dict:
     """Presentation-only shaping of a ledger row. No values are invented."""
     best_odds = p.get("best_odds")
@@ -393,8 +408,13 @@ def build_dashboard(
             "total_matches_evaluated": int((snapshot or {}).get("matches_observed") or 0),
             "won_count": counts.get("won"),
             "lost_count": counts.get("lost"),
-            "win_rate": (cal_rep.get("win_rate") if cal_rep else None),
-            "win_rate_effective": ((counts.get("won",0) + 0.5*counts.get("half_win",0)) / counts.get("settled")) if (counts.get("settled") or 0) > 0 else None,
+            "half_win_count": counts.get("half_win"),
+            "half_loss_count": counts.get("half_loss"),
+            # Headline win rate is the full settled ledger, counting half-wins
+            # and half-losses as 0.5, so it reconciles with the Won/Lost record.
+            # The binary-only calibration subset is kept under an explicit name.
+            "win_rate": _effective_win_rate(counts),
+            "win_rate_effective": _effective_win_rate(counts),
             "win_rate_scope": "all_settled_ledger",
             "win_rate_calibration_binary": (cal_rep.get("win_rate") if cal_rep else None),
             "brier_score": cal_rep.get("brier_score") if cal_rep else None,

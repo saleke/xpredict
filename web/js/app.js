@@ -838,12 +838,15 @@ function renderTargetLandingData() {
     }
   }
 
-  // 4. Model accuracy = the ledger's own win rate, or n/a.
+  // 4. Model accuracy = the ledger's own win rate, or n/a. Prefer the
+  // full-ledger effective rate (half-wins counted as 0.5) so the number
+  // matches the Won/Lost tallies shown beside it.
   const accVal = document.getElementById('target-model-acc-val');
+  const accRate = (typeof s.win_rate_effective === 'number') ? s.win_rate_effective : s.win_rate;
   if (accVal) {
-    if (typeof s.win_rate === 'number') {
-      accVal.textContent = `${(s.win_rate * 100).toFixed(1)}%`;
-      accVal.title = `Win rate across ${s.settled_picks_count || 0} settled real matches`;
+    if (typeof accRate === 'number') {
+      accVal.textContent = `${(accRate * 100).toFixed(1)}%`;
+      accVal.title = `Win rate across ${s.settled_picks_count || 0} settled real matches (half-wins counted as 0.5)`;
     } else {
       accVal.textContent = 'n/a';
       accVal.title = 'No settled picks yet';
@@ -967,11 +970,17 @@ function renderKPIs() {
 
   const wonCount = settled.filter(r => r.result === 'WIN').length;
   const lostCount = settled.filter(r => r.result === 'LOSS').length;
+  const halfWinCount = settled.filter(r => r.result === 'HALF_WIN').length;
+  const halfLossCount = settled.filter(r => r.result === 'HALF_LOSS').length;
   // Counts come from the ledger. With no graded history every rate is n/a
   // rather than a plausible-looking default.
   const totalSettled = settled.length || Number(s.settled_picks_count) || 0;
-  const winRate = (typeof s.win_rate === 'number') ? s.win_rate
-    : (totalSettled > 0 ? (wonCount / totalSettled) : null);
+  // Headline accuracy is the full-ledger effective rate (half-wins count as
+  // 0.5), so it matches the Won/Lost record shown beside it. The binary-only
+  // calibration rate stays available for the calibration charts.
+  const winRate = (typeof s.win_rate_effective === 'number') ? s.win_rate_effective
+    : ((typeof s.win_rate === 'number') ? s.win_rate
+      : (totalSettled > 0 ? ((wonCount + 0.5 * halfWinCount) / totalSettled) : null));
   const clvVal = (typeof s.mean_clv === 'number') ? s.mean_clv * 100 : null;
   const fmtRate = (v) => (v === null || v === undefined) ? 'n/a' : `${(v * 100).toFixed(1)}%`;
 
@@ -982,7 +991,8 @@ function renderKPIs() {
     heroWinRate.textContent = fmtRate(winRate);
   }
   if (heroWinRateCap) {
-    heroWinRateCap.textContent = `${wonCount} wins out of ${totalSettled} recent audited predictions`;
+    const split = halfWinCount || halfLossCount ? ` (${halfWinCount} half-win, ${halfLossCount} half-loss)` : '';
+    heroWinRateCap.textContent = `${wonCount} wins out of ${totalSettled} recent audited predictions${split}`;
   }
 
   const heroRecord = document.getElementById('hero-kpi-record');
@@ -1087,7 +1097,8 @@ function renderKPIs() {
   }
   const winRateSub = document.getElementById('kpi-win-rate-sub');
   if (winRateSub) {
-    winRateSub.textContent = `${wonCount} Won · ${lostCount} Lost · Rolling ${totalSettled}`;
+    const split = halfWinCount || halfLossCount ? ` · ${halfWinCount} HW · ${halfLossCount} HL` : '';
+    winRateSub.textContent = `${wonCount} Won · ${lostCount} Lost${split} · Rolling ${totalSettled}`;
   }
 
   const brierEl = document.getElementById('kpi-brier');
@@ -1889,8 +1900,13 @@ function renderCalibration() {
   const precision = s.brier_score !== null && s.brier_score !== undefined
     ? `${((1 - s.brier_score) * 100).toFixed(1)}%`
     : '—';
-  const verifiedWin = s.win_rate !== null && s.win_rate !== undefined
-    ? `${(s.win_rate * 100).toFixed(1)}%`
+  // "Verified Win Rate" describes actual recommended-pick results, so show the
+  // full-ledger effective rate (half-wins as 0.5) rather than the binary-only
+  // calibration subset.
+  const verifiedWinRaw = (s.win_rate_effective !== null && s.win_rate_effective !== undefined)
+    ? s.win_rate_effective : s.win_rate;
+  const verifiedWin = verifiedWinRaw !== null && verifiedWinRaw !== undefined
+    ? `${(verifiedWinRaw * 100).toFixed(1)}%`
     : '—';
   const oddsAdv = s.mean_clv !== null && s.mean_clv !== undefined
     ? `${s.mean_clv >= 0 ? '+' : ''}${(s.mean_clv * 100).toFixed(2)}%`
