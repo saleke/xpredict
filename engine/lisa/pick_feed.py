@@ -211,8 +211,9 @@ def project_board_access(publication, settings, tier, *, telegram_verified=False
         seen_markets.add(identity)
         alternative_counts[row['match_id']] += 1
         alternatives.append(copy.deepcopy(indexed[row['dedupe_key']]))
-    board['research'] = sorted(alternatives, key=kickoff_order) if rank >= 3 else []
-    board['micro_bets'] = copy.deepcopy(board['research'])
+    if rank < 3:
+        board['research'] = []
+        board['micro_bets'] = []
     qualifying_keys = {row['dedupe_key'] for row in qualified}
     accumulators = []
     min_joint = max(getattr(settings, 'board_min_accumulator_prob', .02),
