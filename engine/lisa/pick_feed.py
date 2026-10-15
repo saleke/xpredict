@@ -202,15 +202,6 @@ def project_board_access(publication, settings, tier, *, telegram_verified=False
     # stay private; do not sell negative-edge or unoffered lines as research.
     primary = {row['match_id']: row for row in rows}
     seen_markets = {(row['match_id'], row['market']) for row in rows}
-    alternative_counts = Counter()
-    alternatives = []
-    for row in qualified:
-        identity = (row['match_id'], row['market'])
-        if row['match_id'] not in primary or identity in seen_markets or alternative_counts[row['match_id']] >= 2:
-            continue
-        seen_markets.add(identity)
-        alternative_counts[row['match_id']] += 1
-        alternatives.append(copy.deepcopy(indexed[row['dedupe_key']]))
     if rank < 3:
         board['research'] = []
         board['micro_bets'] = []
